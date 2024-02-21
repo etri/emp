@@ -821,9 +821,9 @@ struct emp_ext {
 #endif
 
 	/* extensions for emp_page_fault_hva */
-	bool (*prepare_map_hva)(struct emp_mm *, struct vm_area_struct *, 
-			struct vm_fault *);
-	bool (*early_handle_fault_hva)(struct emp_mm *, struct vm_area_struct *, 
+	bool (*prepare_map_hva)(struct emp_mm *, struct emp_vmr *,
+						struct vm_fault *);
+	bool (*early_handle_fault_hva)(struct emp_mm *, struct emp_vmr *,
 			struct vm_fault *, struct emp_gpa *, unsigned long);
 	bool (*prepare_install_hptes)(struct emp_mm *, struct emp_gpa *,
 			struct emp_gpa *, unsigned long, struct emp_gpa *,

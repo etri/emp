@@ -291,7 +291,6 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 {
 	int ret = 0, r, errcode = 0;
-	struct vm_area_struct *vma = vmf->vma;
 	struct emp_mm *emm;
 	struct emp_vmr *vmr;
 
@@ -312,7 +311,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	s64 __num_emp_hva_fault;
 #endif
 
-	vmr = __get_emp_vmr(vma);
+	vmr = __get_emp_vmr(vmf->vma);
 	if (!vmr || ((emm = vmr->emm) == NULL)) {
 		printk(KERN_ERR "failed to find a proper vma.\n");
 		return VM_FAULT_SIGSEGV;
@@ -354,7 +353,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.prepare_map_hva)
-		skip_fetch = emp_ext.prepare_map_hva(emm, vma, vmf);
+		skip_fetch = emp_ext.prepare_map_hva(emm, vmr, vmf);
 	
 	if (!skip_fetch)
 	/* if the gpa->local_page is NULL,
@@ -440,7 +439,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.early_handle_fault_hva) {
-		if (emp_ext.early_handle_fault_hva(emm, vma, vmf,
+		if (emp_ext.early_handle_fault_hva(emm, vmr, vmf,
 						demand, demand_sb_off)) {
 			debug_progress(head, 0);
 			goto _emp_page_fault_hva_out;
