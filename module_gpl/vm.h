@@ -204,7 +204,6 @@ struct emp_vmdesc {
 struct emp_vmr {
 	unsigned int        magic; // magic value
 	int                 id;
-	int                 pvid;
 	struct emp_mm       *emm;
 	struct vm_area_struct *host_vma;
 	struct mm_struct      *host_mm;

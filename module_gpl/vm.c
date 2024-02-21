@@ -446,7 +446,6 @@ static void emp_update_descs_vmr_id(struct emp_vmr *vmr)
 				break;
 
 			debug_BUG_ON(g->local_page == NULL);
-			debug_BUG_ON(g->local_page->vmr_id != vmr->pvid);
 			g->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(g->local_page, vmr->id);
 		}
@@ -471,7 +470,6 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm)
 
 	new_vmr->magic = EMP_VMR_MAGIC_VALUE;
 	new_vmr->emm = emm;
-	new_vmr->pvid = -1;
 	new_vmr->new_gpadesc = new_gpadesc;
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
 	new_vmr->set_gpadesc_alloc_at = set_gpadesc_alloc_at;
@@ -505,7 +503,6 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 
 	new_vmr->host_vma = new_vma;
 	new_vmr->host_mm = new_vma->vm_mm;
-	new_vmr->pvid = prev_vmr->id;
 
 	if (!is_emm_with_kvm(emm)) {
 		if (emp_get_mmu_notifier(new_vmr))
@@ -556,7 +553,6 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 		prev_vmr->split_addr = 0;
 		prev_vmr->new_vmr = NULL;
 
-		new_vmr->pvid = prev_vmr->id;
 		new_vmr->host_vma = new_vma;
 		new_vmr->host_mm = new_vma->vm_mm;
 
