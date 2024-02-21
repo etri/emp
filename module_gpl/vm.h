@@ -205,6 +205,8 @@ struct emp_vmr {
 	unsigned int        magic; // magic value
 	int                 id;
 	struct emp_mm       *emm;
+	unsigned long       vm_start;
+	unsigned long       vm_end;
 	struct vm_area_struct *host_vma;
 	struct mm_struct      *host_mm;
 	atomic_long_t       rss_cache;
@@ -631,13 +633,13 @@ emp_vmr_lookup(struct emp_mm *emm, struct vm_area_struct *vma)
 	return NULL;
 }
 
-#define VA_IN_VMA(vma, va) \
-	!((va < vma->vm_start) || (hva >= vma->vm_end))
+#define VA_IN_VMR(vmr, hva) \
+	!(((hva) < (vmr)->vm_start) || ((hva) >= (vmr)->vm_end))
 static inline struct emp_vmr *
 emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 {
 	int p, count;
-	if (emm->last_vmr && (VA_IN_VMA(emm->last_vmr->host_vma, hva)))
+	if (emm->last_vmr && (VA_IN_VMR(emm->last_vmr, hva)))
 		return emm->last_vmr;
 
 	p = 0;
@@ -645,7 +647,7 @@ emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
 		if (count++ >= emm->vmrs_len)
 			break;
-		if (VA_IN_VMA(emm->vmrs[p]->host_vma, hva)) {
+		if (VA_IN_VMR(emm->vmrs[p], hva)) {
 			emm->last_vmr = emm->vmrs[p];
 			return emm->vmrs[p];
 		}

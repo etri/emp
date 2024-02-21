@@ -58,9 +58,9 @@ pmd_t *get_pmd(struct mm_struct *mm, unsigned long address, pmd_t **pmd)
  * @param vma virtual memory info
  * @param vmf fault address info
  */
-static void __pmd_populate(struct vm_area_struct *vma, struct vm_fault *vmf)
+static void __pmd_populate(struct mm_struct *mm, struct vm_fault *vmf)
 {
-	vmf->ptl = pmd_lock(vma->vm_mm, vmf->pmd);
+	vmf->ptl = pmd_lock(mm, vmf->pmd);
 
 	if (unlikely(!pmd_none(*vmf->pmd))) {
 		spin_unlock(vmf->ptl);
@@ -68,13 +68,12 @@ static void __pmd_populate(struct vm_area_struct *vma, struct vm_fault *vmf)
 	}
 
 	if (vmf->prealloc_pte == NULL) {
-		vmf->prealloc_pte = kernel_pte_alloc_one(vma->vm_mm,
-							 vmf->address);
+		vmf->prealloc_pte = kernel_pte_alloc_one(mm, vmf->address);
 		smp_wmb();
 	}
 
-	mm_inc_nr_ptes(vma->vm_mm);
-	pmd_populate(vma->vm_mm, vmf->pmd, vmf->prealloc_pte);
+	mm_inc_nr_ptes(mm);
+	pmd_populate(mm, vmf->pmd, vmf->prealloc_pte);
 	spin_unlock(vmf->ptl);
 
 	vmf->prealloc_pte = NULL;
@@ -151,6 +150,7 @@ emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 	unsigned int sb_order, sb_mask;
 	bool csf_prefetching;
 	struct vm_fault fault;
+	struct vm_area_struct *vma = vmr->host_vma;
 
 	set_vmf_pgoff(&fault, vmf->pgoff & gpa_block_mask(demand));
 	set_vmf_address(&fault, (unsigned long)vmf->address & gpa_page_mask(demand));
@@ -190,7 +190,7 @@ emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 		emp_get_subblock(sb_head, true);
 		debug_page_ref_will_pte_end(sb_head->local_page, gpa_subblock_size(sb_head));
 
-		r = pte_install(bvma, vmr->host_vma, &fault, sb_order, pmd, orig_pmd, head);
+		r = pte_install(bvma, vma, &fault, sb_order, pmd, orig_pmd, head);
 
 		debug_check_notnull_pointer(sb_head->local_page->w);
 
@@ -253,7 +253,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 
 	orig_pmd = *pmd;
 	if (pmd_none(*pmd))
-		__pmd_populate(vmr->host_vma, vmf);
+		__pmd_populate(vmr->host_mm, vmf);
 
 	demand_check = prefetch_hit && (prefetched_sb == demand);
 	emp_hpt_fetch_barrier(emm, head, demand, demand_idx, fs, fe,

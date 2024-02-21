@@ -27,7 +27,7 @@ __hva_to_gfn(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long hva)
 	unsigned long start, end;
 
 	if (emm->ekvm.memslot_len == 0)
-		return GPA_TO_GFN(hva - vmr->host_vma->vm_start);
+		return GPA_TO_GFN(hva - vmr->vm_start);
 	FOR_EACH_MEMSLOT(emm, i) {
 		start = emm->ekvm.memslot[i].hva;
 		end = start + emm->ekvm.memslot[i].size;
@@ -37,7 +37,7 @@ __hva_to_gfn(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long hva)
 	}
 	BUG();
 #else
-	return GPA_TO_GFN(hva - vmr->host_vma->vm_start);
+	return GPA_TO_GFN(hva - vmr->vm_start);
 #endif
 }
 
@@ -51,7 +51,7 @@ __gfn_to_hva(struct emp_mm *bvma, struct emp_vmr *vmr, unsigned long gfn)
 	unsigned long addr;
 
 	if (bvma->ekvm.memslot_len == 0)
-		return (vmr->host_vma->vm_start + gpa);
+		return (vmr->vm_start + gpa);
 	FOR_EACH_MEMSLOT(bvma, i) {
 		start = bvma->ekvm.memslot[i].gpa;
 		end = start + bvma->ekvm.memslot[i].size;
@@ -64,7 +64,7 @@ __gfn_to_hva(struct emp_mm *bvma, struct emp_vmr *vmr, unsigned long gfn)
 	BUG();
 #else
 	unsigned long gpa = GFN_TO_GPA(gfn);
-	return (vmr->host_vma->vm_start + gpa);
+	return (vmr->vm_start + gpa);
 #endif
 }
 
@@ -98,16 +98,15 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 #ifdef CONFIG_EMP_USER
 // get hva and number of pages with consideration of partial map
 #define ____partial_gpa_to_page_len(vmr, g, idx, hva) ({ \
-	struct vm_area_struct *____vma = (vmr)->host_vma; \
 	unsigned long ____end = (hva) + ((1 << PAGE_SHIFT) << (g)->sb_order); \
 	unsigned long ____ret = 1 << (g)->sb_order; \
 	debug_assert((g)->sb_order == (g)->block_order); \
-	if ((hva) < ____vma->vm_start) { \
-		____ret -= (____vma->vm_start - (hva)) >> PAGE_SHIFT; \
-		(hva) = ____vma->vm_start; \
+	if ((hva) < (vmr)->vm_start) { \
+		____ret -= ((vmr)->vm_start - (hva)) >> PAGE_SHIFT; \
+		(hva) = (vmr)->vm_start; \
 	} \
-	if (____end > ____vma->vm_end) \
-		____ret -= (____end - ____vma->vm_end) >> PAGE_SHIFT; \
+	if (____end > (vmr)->vm_end) \
+		____ret -= (____end - (vmr)->vm_end) >> PAGE_SHIFT; \
 	____ret; \
 })
 

@@ -339,9 +339,6 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 			unsigned long sb_at_head, unsigned long sb_at_tail)
 {
 	struct emp_mm *emm = vmr->emm;
-#ifdef CONFIG_EMP_USER
-	struct vm_area_struct *vma = vmr->host_vma;
-#endif
 	struct emp_vmdesc *desc = vmr->descs;
 	struct gpadesc_region *regions = desc->regions;
 	unsigned long gpa_len = desc->gpa_len;
@@ -382,8 +379,8 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 
 	/* gather information */
 #ifdef CONFIG_EMP_USER
-	partial_at_head = vma->vm_start != vm_start ? true : false;
-	partial_at_tail = vma->vm_end != vm_end ? true : false;
+	partial_at_head = vmr->vm_start != vm_start ? true : false;
+	partial_at_tail = vmr->vm_end != vm_end ? true : false;
 #endif
 	block_aligned_start = sb_at_head;
 	block_aligned_end = sb_at_tail < gpa_len ? gpa_len - sb_at_tail : 0;
@@ -546,12 +543,11 @@ allocate_gpas(struct emp_mm *emm, struct emp_vmr *vmr)
 	unsigned long sb_at_tail; // number of subblocks which are not block-aligned at tail
 	unsigned long gpa_dir_alloc_size, gpa_dir_offset;
 	unsigned long va_sb_order;
-	struct vm_area_struct *vma = vmr->host_vma;
 
 	va_sb_order = bvma_va_subblock_order(emm);
 
-	vm_start = VA_ROUND_DOWN_ORDER(vma->vm_start, va_sb_order);
-	vm_end = VA_ROUND_UP_ORDER(vma->vm_end, va_sb_order);
+	vm_start = VA_ROUND_DOWN_ORDER(vmr->vm_start, va_sb_order);
+	vm_end = VA_ROUND_UP_ORDER(vmr->vm_end, va_sb_order);
 
 	/* number of subblocks in the first partial block.
 	 * If vm_start is aligned in block size, this is 0.
@@ -571,18 +567,18 @@ allocate_gpas(struct emp_mm *emm, struct emp_vmr *vmr)
 	/* For partial subblock, its block order should be same with subblock
 	 * order. If there is no partial block but partial subblock, we split
 	 * the block that the partial subblocks belong to.
-	 * The partial subblocks exist when vma->vm_start/end != vm_start/end.
+	 * The partial subblocks exist when vmr->vm_start/end != vm_start/end.
 	 */
-	if (sb_at_head == 0 && vma->vm_start != vm_start)
+	if (sb_at_head == 0 && vmr->vm_start != vm_start)
 		sb_at_head = bvma_sib_size(emm);
-	if (sb_at_tail == 0 && vma->vm_end != vm_end)
+	if (sb_at_tail == 0 && vmr->vm_end != vm_end)
 		sb_at_tail = bvma_sib_size(emm);
 
 	gpa_len = (vm_end - vm_start) >> va_sb_order;
 
-	dprintk("%s vma:0x%lx--0x%lx gpa_len: 0x%lx block_order: 0x%x sb_order: 0x%x va_sb_order: 0x%lx sb_at_head: 0x%lx sb_at_tail: 0x%lx\n",
+	dprintk("%s vmr:0x%lx--0x%lx gpa_len: 0x%lx block_order: 0x%x sb_order: 0x%x va_sb_order: 0x%lx sb_at_head: 0x%lx sb_at_tail: 0x%lx\n",
 			__func__,
-			vma->vm_start, vma->vm_end,
+			vmr->vm_start, vmr->vm_end,
 			gpa_len,
 			bvma_block_order(emm),
 			bvma_subblock_order(emm),
@@ -852,6 +848,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	struct emp_gpa *sb_head;
 	struct emp_mm *emm = vmr->emm;
 	struct mm_struct *mm = vmr->host_mm;
+	struct vm_area_struct *vma = vmr->host_vma;
 	unsigned int sb_order, sb_pages_len;
 	bool mapped, accessed, dirty, tlb_flush_needed = false;
 	int i;
@@ -911,7 +908,6 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 				continue;
 #ifdef CONFIG_EMP_DEBUG
 			if (unlikely(pte_pfn(pte) != page_to_pfn(page))) {
-				struct vm_area_struct *vma = vmr->host_vma;
 				printk(KERN_ERR "%s ERROR: page is not ours. "
 					"addr: %016lx "
 					"idx: %d pte: %016lx pfn: %lx "
@@ -926,13 +922,13 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 					sb_page->flags,
 					i, (unsigned long) (page + i),
 					page_to_pfn(page + i), (page + i)->flags,
-					vma->vm_start, vma->vm_end,
+					vmr->vm_start, vmr->vm_end,
 					vma->vm_flags,
 					vmr->descs->vm_base);
 			}
 #endif
 			native_pte_clear(NULL, 0, ptep);
-			flush_cache_page(vmr->host_vma, addr, pfn);
+			flush_cache_page(vma, addr, pfn);
 			/* THKIM: Temporally remove the code for TLB */
 			tlb_remove_tlb_entry(tlb, ptep, addr);
 			pte_clear_count++;
@@ -943,7 +939,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 				accessed = true;
 			if (!dirty && pte_dirty(pte))
 				dirty = true;
-			kernel_page_remove_rmap(page, vmr->host_vma, false);
+			kernel_page_remove_rmap(page, vma, false);
 		}
 
 		page_ref_sub(sb_page, pte_clear_count);
@@ -1198,6 +1194,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	pte_t *ptep;
 	struct page *page;
 	unsigned long pfn, i;
+	struct vm_area_struct *vma = vmr->host_vma;
 
 	debug_progress(gpa, vmr->id);
 	debug_lru_progress_mark(gpa->local_page, vmr->id);
@@ -1216,9 +1213,9 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			continue;
 		debug_BUG_ON(pte_pfn(*ptep) != page_to_pfn(page));
 		native_pte_clear(NULL, 0, ptep);
-		flush_cache_page(vmr->host_vma, hva, pfn);
+		flush_cache_page(vma, hva, pfn);
 		tlb_remove_tlb_entry((&vmr->close_tlb), ptep, hva);
-		kernel_page_remove_rmap(page, vmr->host_vma, false);
+		kernel_page_remove_rmap(page, vma, false);
 	}
 
 	/* We do not use wrapper __emp_put_pages_map(),
@@ -1666,11 +1663,11 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 			(unsigned long) vmr->host_mm, (unsigned long) vmr->host_vma,
 			vmr->descs->vm_base,
 			vmr->descs->gpa_len << (vmr->descs->subblock_order + PAGE_SHIFT),
-			vmr->host_vma->vm_start, vmr->host_vma->vm_end);
+			vmr->vm_start, vmr->vm_end);
 
 	if (do_unmap)
 		kernel_tlb_gather_mmu(&vmr->close_tlb, vmr->host_mm,
-				vmr->host_vma->vm_start, vmr->host_vma->vm_end);
+					vmr->vm_start, vmr->vm_end);
 
 	/* if the gpas pointer is still used, free the allocated memory and
 	 * save NULL */
@@ -1681,7 +1678,7 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 
 	if (do_unmap)
 		kernel_tlb_finish_mmu(&vmr->close_tlb,
-				vmr->host_vma->vm_start, vmr->host_vma->vm_end);
+					vmr->vm_start, vmr->vm_end);
 #ifdef CONFIG_EMP_USER
 	dup_list_del(vmr);
 #endif

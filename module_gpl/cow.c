@@ -491,9 +491,9 @@ show_new:
 #define debug_show_gpa_state_cow(emm, v, c, f, o, n, h, e) do {} while (0)
 #endif
 
-static void __cow_pmd_populate(struct vm_area_struct *vma, pmd_t *pmd, unsigned long hva)
+static void __cow_pmd_populate(struct mm_struct *mm, pmd_t *pmd, unsigned long hva)
 {
-	spinlock_t *ptl = pmd_lock(vma->vm_mm, pmd);
+	spinlock_t *ptl = pmd_lock(mm, pmd);
 	pgtable_t prealloc_pte;
 
 	if (unlikely(!pmd_none(*pmd))) {
@@ -501,10 +501,10 @@ static void __cow_pmd_populate(struct vm_area_struct *vma, pmd_t *pmd, unsigned 
 		return;
 	}
 
-	prealloc_pte = kernel_pte_alloc_one(vma->vm_mm, hva);
+	prealloc_pte = kernel_pte_alloc_one(mm, hva);
 
-	mm_inc_nr_ptes(vma->vm_mm);
-	pmd_populate(vma->vm_mm, pmd, prealloc_pte);
+	mm_inc_nr_ptes(mm);
+	pmd_populate(mm, pmd, prealloc_pte);
 	spin_unlock(ptl);
 }
 
@@ -569,7 +569,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 			"pmd: 0x%016lx addr: 0x%016lx",
 			__func__, vmr->id, head->local_page->gpa_index,
 			(unsigned long) pmd, addr))
-		__cow_pmd_populate(vmr->host_vma, pmd, addr);
+		__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
 
 	for_each_gpas(gpa, head) {
@@ -645,7 +645,7 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 			"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
 			"pmd: 0x%016lx hva: 0x%016lx",
 			__func__, vmr->id, head_idx, (unsigned long) pmd, addr))
-		__cow_pmd_populate(vmr->host_vma, pmd, addr);
+		__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
 	for_each_gpas(gpa, head) {
 		debug_assert(emp_lp_count_pmd(gpa->local_page) == 1);
@@ -1624,8 +1624,8 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 	unsigned long vpn_base, vpn_start, vpn_end;
 	struct mapped_pmd *mapped, *mapped2;
 
-	vpn_start = vmr->host_vma->vm_start >> PAGE_SHIFT;
-	vpn_end = vmr->host_vma->vm_end >> PAGE_SHIFT;
+	vpn_start = vmr->vm_start >> PAGE_SHIFT;
+	vpn_end = vmr->vm_end >> PAGE_SHIFT;
 	vpn_base = vmr->descs->vm_base >> PAGE_SHIFT;
 
 	index_start = (vpn_start - vpn_base) >> bvma_subblock_order(emm);
@@ -1634,7 +1634,7 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 
 	printk(KERN_ERR "[DEBUG] %s: emm: %d vmr: %d addr: %016lx ~ %016lx index: %lx ~ %lx\n",
 			__func__, emm->id, vmr->id,
-			vmr->host_vma->vm_start, vmr->host_vma->vm_end,
+			vmr->vm_start, vmr->vm_end,
 			index_start, index_end);
 
 	raw_for_all_gpa_heads_range(vmr, index, head, index_start, index_end) {
@@ -1665,8 +1665,8 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 	unsigned long vpn_base, vpn_start, vpn_end;
 	struct mapped_pmd *mapped, *mapped2;
 
-	vpn_start = vmr->host_vma->vm_start >> PAGE_SHIFT;
-	vpn_end = vmr->host_vma->vm_end >> PAGE_SHIFT;
+	vpn_start = vmr->vm_start >> PAGE_SHIFT;
+	vpn_end = vmr->vm_end >> PAGE_SHIFT;
 	vpn_base = vmr->descs->vm_base >> PAGE_SHIFT;
 
 	index_start = (vpn_start - vpn_base) >> bvma_subblock_order(emm);
@@ -1675,7 +1675,7 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 
 	printk(KERN_ERR "[DEBUG] %s: emm: %d vmr: %d addr: %016lx ~ %016lx index: %lx ~ %lx\n",
 			__func__, emm->id, vmr->id,
-			vmr->host_vma->vm_start, vmr->host_vma->vm_end,
+			vmr->vm_start, vmr->vm_end,
 			index_start, index_end);
 
 	raw_for_all_gpa_heads_range(vmr, index, head, index_start, index_end) {
@@ -1810,8 +1810,8 @@ emp_mmu_notifier_invalidate_range_start(struct mmu_notifier *notifier,
 		if (vmr == NULL)
 			break;
 
-		if (range->start != vmr->host_vma->vm_start
-				|| range->end != vmr->host_vma->vm_end)
+		if (range->start != vmr->vm_start
+				|| range->end != vmr->vm_end)
 			break;
 		__emp_vmr_local_page_dup_beg(emm, vmr);
 		break;
@@ -1956,7 +1956,6 @@ void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool 
 {
 	struct emp_mm *emm = new_vmr->emm;
 	struct mm_struct *new_mm = new_vmr->host_mm;
-	struct vm_area_struct *new_vma = new_vmr->host_vma;
 	struct emp_vmdesc *desc = new_vmr->descs;
 	unsigned long head_idx, idx;
 	struct emp_gpa *gpa, *head;
@@ -1965,8 +1964,8 @@ void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool 
 	pmd_t *pmd;
 	struct mapped_pmd *mapped, *mapped2;
 
-	vpn_start = new_vma->vm_start >> PAGE_SHIFT;
-	vpn_end = new_vma->vm_end >> PAGE_SHIFT;
+	vpn_start = new_vmr->vm_start >> PAGE_SHIFT;
+	vpn_end = new_vmr->vm_end >> PAGE_SHIFT;
 	vpn_base = new_vmr->descs->vm_base >> PAGE_SHIFT;
 
 	index_start = (vpn_start - vpn_base) >> bvma_subblock_order(emm);

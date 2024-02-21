@@ -1450,7 +1450,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 		return -EINVAL;
 
 	/* For low memory region, let KVM handles */
-	if (vmr->id == 0 && (hva - vmr->host_vma->vm_start) <= LOW_MEMORY_REGION_SIZE)
+	if (vmr->id == 0 && (hva - vmr->vm_start) <= LOW_MEMORY_REGION_SIZE)
 		return -EINVAL;
 
 #ifdef CONFIG_EMP_SHOW_FAULT_PROGRESS

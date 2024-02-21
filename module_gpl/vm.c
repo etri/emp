@@ -420,14 +420,12 @@ static void emp_update_descs_vmr_id(struct emp_vmr *vmr)
 	unsigned long start, end, i, j;
 	struct emp_gpa *g, *head;
 	struct emp_vmdesc *d;
-	struct vm_area_struct *vma;
 
 	d = vmr->descs;
-	vma = vmr->host_vma;
 
-	start = (vma->vm_start - d->vm_base)
+	start = (vmr->vm_start - d->vm_base)
 			>> (PAGE_SHIFT + vmdesc_subblock_order(d));
-	end = (((vma->vm_end - d->vm_base) >> PAGE_SHIFT)
+	end = (((vmr->vm_end - d->vm_base) >> PAGE_SHIFT)
 			+ vmdesc_subblock_size(d) - 1)
 					>> vmdesc_subblock_order(d);
 
@@ -454,7 +452,15 @@ static void emp_update_descs_vmr_id(struct emp_vmr *vmr)
 }
 #endif /* CONFIG_EMP_USER */
 
-static struct emp_vmr *create_vmr(struct emp_mm *emm)
+static void __copy_vma_info(struct emp_vmr *vmr, struct vm_area_struct *vma)
+{
+	vmr->vm_start = vma->vm_start;
+	vmr->vm_end = vma->vm_end;
+	vmr->host_vma = vma;
+	vmr->host_mm = vma->vm_mm;
+}
+
+static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma)
 {
 	const size_t emp_vmr_size = sizeof(struct emp_vmr);
 	struct emp_vmr *new_vmr;
@@ -470,6 +476,8 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm)
 
 	new_vmr->magic = EMP_VMR_MAGIC_VALUE;
 	new_vmr->emm = emm;
+	if (vma)
+		__copy_vma_info(new_vmr, vma);
 	new_vmr->new_gpadesc = new_gpadesc;
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
 	new_vmr->set_gpadesc_alloc_at = set_gpadesc_alloc_at;
@@ -497,12 +505,9 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	bool vm_wipeonfork = new_vma->vm_flags & VM_WIPEONFORK ? true : false;
 	bool new_vmdesc, dup_dir; // options of dup_vmdesc
 
-	new_vmr = create_vmr(emm);
+	new_vmr = create_vmr(emm, new_vma);
 	if (new_vmr == NULL)
 		return NULL;
-
-	new_vmr->host_vma = new_vma;
-	new_vmr->host_mm = new_vma->vm_mm;
 
 	if (!is_emm_with_kvm(emm)) {
 		if (emp_get_mmu_notifier(new_vmr))
@@ -553,8 +558,7 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 		prev_vmr->split_addr = 0;
 		prev_vmr->new_vmr = NULL;
 
-		new_vmr->host_vma = new_vma;
-		new_vmr->host_mm = new_vma->vm_mm;
+		__copy_vma_info(new_vmr, new_vma);
 
 		spin_lock(&prev_vmr->descs->lock);
 		new_vmr->descs = prev_vmr->descs;
@@ -610,7 +614,7 @@ static int emp_vma_split(struct vm_area_struct *vma, unsigned long addr)
 				__func__, (u64)vma, addr);
 	}
 
-	new_vmr = create_vmr(vmr->emm);
+	new_vmr = create_vmr(vmr->emm, NULL);
 	if (new_vmr == NULL) {
 		printk("%s cannot allocate memory for new_vmr.\n", __func__);
 		return -ENOMEM;
@@ -744,11 +748,9 @@ vm_start_aligned:
 	if (mem_size < (vma->vm_end - vma->vm_start))
 		return -ENOMEM;
 
-	vmr = create_vmr(bvma);
+	vmr = create_vmr(bvma, vma);
 	if (vmr == NULL)
 		return -ENOMEM;
-	vmr->host_vma = vma;
-	vmr->host_mm = vma->vm_mm;
 
 #ifdef CONFIG_EMP_USER
 	if (!is_emm_with_kvm(bvma)) {
@@ -778,7 +780,6 @@ vm_start_aligned:
 	vma->vm_private_data = (void *)vmr;
 
 #ifdef CONFIG_EMP_VM
-	// GPN_TO_HVA requires vmr.host_vma
 	if (bvma->ekvm.kvm && (bvma->ekvm.apic_base_hva == 0UL))
 		bvma->ekvm.apic_base_hva = GPN_TO_HVA(bvma, vmr,
 				APIC_DEFAULT_PHYS_BASE >> PAGE_SHIFT);
