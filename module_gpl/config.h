@@ -1,7 +1,7 @@
 #ifndef __CONFIG_H__
 #define __CONFIG_H__
 
-#define CONFIG_EMP_SHOW_FAULT_PROGRESS // show page fault address at every CONFIG_EMP_FAULT_PROGRESS_PERIOD faults
+#define CONFIG_EMP_SHOW_FAULT_PROGRESS // show page fault address at every CONFIG_EMP_SHOW_FAULT_PROGRESS_PERIOD faults
 
 #ifdef CONFIG_EMP_DEBUG
 //#define CONFIG_EMP_DEBUG_PROGRESS

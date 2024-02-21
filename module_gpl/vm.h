@@ -17,7 +17,7 @@
 #ifdef CONFIG_EMP_SHOW_FAULT_PROGRESS
 extern atomic64_t num_emp_gpa_fault;
 extern atomic64_t num_emp_hva_fault;
-#define CONFIG_EMP_SHOW_FAULT_PROGRESS_PERIOD (10000000)
+#define CONFIG_EMP_SHOW_FAULT_PROGRESS_PERIOD (1000000)
 #endif
 
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)) \
