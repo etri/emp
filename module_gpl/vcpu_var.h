@@ -78,6 +78,6 @@ struct vcpu_var {
 };
 
 #define VCPU_WB_REQUEST_EMPTY(v) (list_empty(&(v)->wb_request_list))
-#define VCPU_WB_REQUEST_LE_SINGLULAR(v) \
+#define VCPU_WB_REQUEST_LE_SINGULAR(v) \
 	(*v->wb_request_list.next == *v->wb_request_list.prev)
 #endif /* __VCPU_VAR_H__ */

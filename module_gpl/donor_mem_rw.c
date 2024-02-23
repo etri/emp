@@ -233,7 +233,7 @@ remove_first_wb_request(struct emp_mm *bvma, struct vcpu_var *cpu)
 
 	wb_request_list = &cpu->wb_request_list;
 
-	if (VCPU_WB_REQUEST_LE_SINGLULAR(&cpu))
+	if (VCPU_WB_REQUEST_LE_SINGULAR(&cpu))
 		goto out;
 
 	w = list_first_entry(wb_request_list, struct work_request, sibling);
