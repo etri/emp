@@ -278,7 +278,7 @@ u64 hva_to_gpa(struct emp_mm *, u64, struct kvm_memory_slot **);
 
 struct emp_vmdesc *alloc_vmdesc(struct emp_vmdesc *prev);
 int gpas_open(struct emp_vmr *);
-void gpas_close(struct emp_vmr *, bool);
+void gpas_close(struct emp_vmr *, bool, bool);
 int gpa_init(struct emp_mm *);
 void gpa_exit(struct emp_mm *);
 

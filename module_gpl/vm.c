@@ -396,7 +396,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	/* gpas_close() may have been called by mmu notifier.
 	 * In such case, vmr->descs == NULL and nothing happens by gpas_close().
 	 */
-	gpas_close(vmr, false); // also free the remote page
+	gpas_close(vmr, false, true); // also free the remote page
 
 #ifdef CONFIG_EMP_DEBUG_RSS
 	emp_update_rss_show(vmr);
@@ -479,14 +479,13 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 	new_vmr->set_gpadesc_alloc_at = set_gpadesc_alloc_at;
 #endif
 
-	spin_lock_init(&new_vmr->gpas_close_lock);
-
 #ifdef CONFIG_EMP_USER
 	INIT_LIST_HEAD(&new_vmr->dup_shared);
 	// new_vmr->dup_parent = NULL due to kzalloc()
 	INIT_LIST_HEAD(&new_vmr->dup_children);
 	INIT_LIST_HEAD(&new_vmr->dup_sibling);
 #endif
+	init_waitqueue_head(&new_vmr->gpas_close_wq);
 
 	return new_vmr;
 }
@@ -513,11 +512,9 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	new_vma->vm_private_data = (void *)new_vmr;
 
 	if (vm_shared) {
-		spin_lock(&prev_vmr->descs->lock);
 		new_vmr->descs = prev_vmr->descs;
 		atomic_inc(&prev_vmr->descs->refcount);
 		dup_list_add(new_vmr, prev_vmr, vm_shared);
-		spin_unlock(&prev_vmr->descs->lock);
 		new_vmdesc = false;
 		dup_dir = false;
 	} else if (vm_wipeonfork) {
@@ -590,11 +587,9 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 		prev_vmr->vm_end = new_vmr->vm_start;
 	}
 
-	spin_lock(&prev_vmr->descs->lock);
 	new_vmr->descs = prev_vmr->descs;
 	atomic_inc(&prev_vmr->descs->refcount);
 	dup_list_add(new_vmr, prev_vmr, true);
-	spin_unlock(&prev_vmr->descs->lock);
 
 	new_vmr->vmr_closing = false;
 	new_vma->vm_private_data = (void *)new_vmr;
@@ -838,7 +833,7 @@ vm_start_aligned:
 	return ret;
 
 mmap_fail:
-	gpas_close(vmr, false);
+	gpas_close(vmr, false, false);
 	emp_vmr_release(vmr);
 	return -ENOMEM;
 }

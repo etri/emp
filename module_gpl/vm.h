@@ -180,7 +180,6 @@ struct gpadesc_region {
 };
 
 struct emp_vmdesc {
-	atomic_t	        refcount;
 	// length of vm descriptors
 	unsigned long       	gpa_len;
 	// directory of vm descriptors
@@ -197,7 +196,12 @@ struct emp_vmdesc {
 	// allocated virtually contiguous array from host
 	void                	*gpa_dir_alloc;
 	unsigned long           gpa_dir_alloc_size;
-	spinlock_t		lock; // assure @refcount stable
+#ifdef CONFIG_EMP_USER
+	// for shared mappings
+	atomic_t	        refcount;
+	atomic_t                is_closing;
+	wait_queue_head_t       closing_wq;
+#endif
 };
 
 // virtual memory region for a contiguous host virtual (mmaped) memory
@@ -230,7 +234,8 @@ struct emp_vmr {
 
 	int                 vmr_closing;
 
-	spinlock_t          gpas_close_lock;
+	atomic_t            gpas_closing;
+	wait_queue_head_t   gpas_close_wq;
 	/* for unmapping on gpas_close() */
 	struct mmu_gather   close_tlb;
 

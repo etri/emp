@@ -1639,16 +1639,30 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	if (unlikely(!desc->gpa_dir_alloc))
 		return 0;
 	
+	atomic_inc(&desc->is_closing);
 	cpu = emp_this_cpu_ptr(emm->pcpus);
 #ifdef CONFIG_EMP_VM
-	if (emm->ekvm.kvm) // this locking can be long, but VM is terminating.
+	if (emm->ekvm.kvm) {
+		/* This locking can be long, but VM is terminating. In addition,
+		 * there is no shared mapping for VM. Thus, free_gpa_dir_region()
+		 * will not request I/O for writeback.
+		 * => No scheduling (due to I/O) in atomic. */
 		lock_kvm_mmu_lock(emm->ekvm.kvm);
+	}
 #endif /* CONFIG_EMP_VM */
 
-	spin_lock(&desc->lock); // Assure desc->refcnt is stable
 	vm_refcnt = atomic_dec_return(&desc->refcount);
+	if (vm_refcnt == 0) {
+		/* This is the last (previously shared) mapping.
+		 * Wait for the other closes and perfetcly close this vmdesc */
+		if (!atomic_dec_and_test(&desc->is_closing)) {
+			/* Other shared mappings are closing. Wait for it. */
+			wait_event_interruptible(desc->closing_wq,
+					atomic_read(&desc->is_closing) == 0);
+		}
+	}
 #ifdef CONFIG_EMP_USER
-	if (vm_refcnt > 0) {
+	else { // vm_refcnt > 0
 		spin_lock(&emm->dup_list_lock);
 		next_vmr_shared = list_next_entry(vmr, dup_shared);
 		spin_unlock(&emm->dup_list_lock);
@@ -1682,7 +1696,6 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 #ifdef CONFIG_EMP_USER
 	dup_list_del(vmr);
 #endif
-	spin_unlock(&desc->lock);
 
 #ifdef CONFIG_EMP_VM
 	if (emm->ekvm.kvm)
@@ -1693,8 +1706,12 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 				num_allocated * 100 / desc->gpa_len,
 				num_allocated * 10000 / desc->gpa_len % 100);
 
-	if (vm_refcnt > 0)
+	if (vm_refcnt > 0) {
+		if (atomic_dec_and_test(&desc->is_closing))
+			wake_up_interruptible(&desc->closing_wq);
 		return vm_refcnt;
+	}
+	/* if vm_refcnt == 0, desc->is_closing was already decremented. */
 
 	desc->gpa_dir = (struct emp_gpa **) NULL;
 	emp_vfree(desc->gpa_dir_alloc);
@@ -1771,8 +1788,8 @@ struct emp_vmdesc *alloc_vmdesc(struct emp_vmdesc *prev)
 		return NULL;
 	if (prev)
 		memcpy(desc, prev, sizeof(struct emp_vmdesc));
-	spin_lock_init(&desc->lock);
 	atomic_set(&desc->refcount, 1);
+	init_waitqueue_head(&desc->closing_wq);
 	return desc;
 }
 
@@ -1806,27 +1823,42 @@ out:
  * gpas_close - cloase and remove emp_gpa and remote_page
  * @param vmr vmr to be closed
  * @param do_unmap if true, we need to unmap page table. if false, kernel already did unmap.
+ * @parem must_wait if true, wait until the closing gpas are finished.
  */
-void COMPILER_DEBUG gpas_close(struct emp_vmr *vmr, bool do_unmap)
+void COMPILER_DEBUG gpas_close(struct emp_vmr *vmr, bool do_unmap, bool must_wait)
 {
-	if (spin_trylock(&vmr->gpas_close_lock) == false)
-		return;
-
-	if (!vmr->descs) {
-		spin_unlock(&vmr->gpas_close_lock);
+#ifdef CONFIG_EMP_BLOCKDEV
+	bool blockdev_used = vmr->emm->mrs.blockdev_used;
+#endif
+	if (atomic_fetch_inc(&vmr->gpas_closing) > 0) {
+		/* other thread have started closing gpas. */
+		if (must_wait)
+			wait_event_interruptible(vmr->gpas_close_wq,
+							vmr->descs == NULL);
+		else
+			/* I will not wait. Restore the value. */
+			atomic_dec(&vmr->gpas_closing);
 		return;
 	}
+
+	if (!vmr->descs)
+		return;
 
 	if (close_and_free_gpas(vmr, do_unmap) == 0)
 		/* No other vmr use the vm_desc. Free it */
 		emp_kfree(vmr->descs);
 
 	vmr->descs = NULL;
+	if (atomic_read(&vmr->gpas_closing) > 1)
+		/* Other thread is waiting for me.
+		 * Note that we do not decrement gpas_closing.
+		 * It marks that the gpas are closed. */
+		wake_up_interruptible(&vmr->gpas_close_wq);
 
-	spin_unlock(&vmr->gpas_close_lock);
 #ifdef CONFIG_EMP_BLOCKDEV
-	/* NOTE: io_schedule() should be called after all locks have been released. */
-	if (vmr->emm->mrs.blockdev_used)
+	/* NOTE: io_schedule() should be called after all locks have been released.
+	 *       Also, we cannot ensure @vmr is alive. Use the backup value. */
+	if (blockdev_used)
 		io_schedule();
 #endif
 }

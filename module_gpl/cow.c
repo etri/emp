@@ -1704,7 +1704,7 @@ static inline void emp_mmu_noti_unmap(struct emp_vmr *vmr)
 {
 	vmr->vmr_closing = true;
 	smp_mb();
-	gpas_close(vmr, true);
+	gpas_close(vmr, true, false);
 }
 
 static void
