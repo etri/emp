@@ -63,11 +63,6 @@ struct vcpu_var {
 	/* list of free pages which is maintained locally */
 	struct emp_list         local_free_page_list;
 
-	struct {
-		int             length;
-		int             weight;
-	} post_writeback;
-
 #ifdef CONFIG_EMP_STAT
 	/* statistics */
 	struct {

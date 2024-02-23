@@ -219,8 +219,6 @@ static void init_vcpu_var(struct vcpu_var *v, int id)
 	init_emp_list(&v->local_free_page_list);
 	spin_lock_init(&(v)->wb_request_lock);
 	INIT_LIST_HEAD(&(v)->wb_request_list);
-	(v)->post_writeback.length = 1;
-	(v)->post_writeback.weight = 2;
 	(v)->id = id;
 }
 

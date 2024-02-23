@@ -558,9 +558,6 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 			if (unlikely(check_alloc_pages_available(bvma)))
 				break;
 
-			/* Increasing the size of window for writeback requests */
-			cpu->post_writeback.weight++;
-
 			/* (3)-4 wait for global free page list to be filled.
 			 * The code below wakes up this thread when there is
 			 * a new insertion to global free page list */
