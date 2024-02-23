@@ -75,6 +75,10 @@ struct emp_ops emp_ops;
 #define BVMA_SIZE (sizeof(struct emp_mm))
 #endif
 
+#ifdef CONFIG_EMP_USER
+static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked);
+#endif
+
 /* ----- functions from procfs.c ----- */
 int emp_procfs_add(struct emp_mm *bvma, int id);
 void emp_procfs_del(struct emp_mm *bvma);
@@ -356,6 +360,10 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	if (vmr == NULL)
 		return;
 
+	/* TODO: we may call finish_emp_vam_split early,
+	 *       on gpas_close() from mmu notifier. */
+	finish_emp_vma_split(vmr, false);
+
 	printk(KERN_NOTICE "%s emm_id: %d vmr_id: %d vma:%p virt %lx vmr: %lx\n",
 				__func__, vmr->emm->id, vmr->id,
 				vma, vma->vm_start, (unsigned long) vmr);
@@ -395,18 +403,6 @@ static void emp_vma_close(struct vm_area_struct *vma)
 #endif
 
 	emp_vmr_release(vmr);
-
-#ifdef CONFIG_EMP_USER
-	if (vmr->new_vmr) {
-		dprintk("[WARN] vmr->new_vmr is not NULL. emm: %d vmr: %d "
-			"vma: %016lx range: %016lx ~ %016lx new_vmr: %d\n",
-			vmr->emm->id, vmr->id,
-			(unsigned long) vma, vma->vm_start, vma->vm_end,
-			vmr->new_vmr->id);
-		emp_vmr_release(vmr->new_vmr);
-		emp_kfree(vmr->new_vmr);
-	}
-#endif
 
 	vmr->emm->last_mm = vma->vm_mm;
 	vmr->host_vma = NULL;
@@ -545,6 +541,67 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	return new_vmr;
 }
 
+static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
+ {
+	if (!locked)
+		spin_lock(&vmr->emm->split_link_lock);
+
+	if (vmr->split_new_vmr) {
+		struct emp_vmr *split_vmr = vmr->split_new_vmr;
+		debug_assert(split_vmr->split_prev_vmr == vmr);
+		debug_assert(split_vmr->split_new_vmr == NULL);
+		split_vmr->split_prev_vmr = NULL;
+#ifdef CONFIG_EMP_DEBUG
+		split_vmr->split_addr = 0;
+		vmr->split_new_vmr = NULL;
+#endif
+	}
+
+	if (vmr->split_prev_vmr) {
+		struct emp_vmr *split_vmr = vmr->split_prev_vmr;
+		debug_assert(split_vmr->split_new_vmr == vmr);
+		debug_assert(split_vmr->split_prev_vmr == NULL);
+		split_vmr->split_new_vmr = NULL;
+#ifdef CONFIG_EMP_DEBUG
+		split_vmr->split_addr = 0;
+		vmr->split_prev_vmr = NULL;
+#endif
+	}
+
+	if (!locked)
+		spin_unlock(&vmr->emm->split_link_lock);
+}
+
+static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
+				struct vm_area_struct *new_vma)
+{
+	debug_assert(prev_vmr->split_addr = new_vmr->split_addr);
+	debug_assert(new_vmr->split_addr == new_vma->vm_start
+			|| new_vmr->split_addr == new_vma->vm_end);
+
+	__copy_vma_info(new_vmr, new_vma);
+
+	if (prev_vmr->vm_start == new_vmr->vm_start) {
+		debug_assert(new_vmr->vm_end == new_vmr->split_addr);
+		prev_vmr->vm_start = new_vmr->vm_end;
+	} else {
+		debug_assert(new_vmr->vm_start == new_vmr->split_addr);
+		debug_assert(prev_vmr->vm_end == new_vmr->vm_end);
+		prev_vmr->vm_end = new_vmr->vm_start;
+	}
+
+	spin_lock(&prev_vmr->descs->lock);
+	new_vmr->descs = prev_vmr->descs;
+	atomic_inc(&prev_vmr->descs->refcount);
+	dup_list_add(new_vmr, prev_vmr, true);
+	spin_unlock(&prev_vmr->descs->lock);
+
+	new_vmr->vmr_closing = false;
+	new_vma->vm_private_data = (void *)new_vmr;
+
+	emp_update_descs_vmr_id(new_vmr);
+}
+
 // consider only the vma_open right after vma_ops->split
 // argument vma is newly created vma and vma stored in vmr is prevous one
 static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
@@ -552,29 +609,10 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 	struct emp_vmr *prev_vmr = (struct emp_vmr *)new_vma->vm_private_data;
 	struct emp_vmr *new_vmr;
 
-	new_vmr = prev_vmr->new_vmr;
+	new_vmr = prev_vmr->split_new_vmr;
 	if (new_vmr) {
 		// emp_vma_split allocated new_vmr pointed by new_vmr of prev_vmr
-		prev_vmr->split_addr = 0;
-		prev_vmr->new_vmr = NULL;
-
-		__copy_vma_info(new_vmr, new_vma);
-
-		spin_lock(&prev_vmr->descs->lock);
-		new_vmr->descs = prev_vmr->descs;
-		atomic_inc(&prev_vmr->descs->refcount);
-		dup_list_add(new_vmr, prev_vmr, true);
-		spin_unlock(&prev_vmr->descs->lock);
-
-		new_vmr->vmr_closing = false;
-
-		new_vmr->split_addr = 0;
-		new_vmr->new_vmr = NULL;
-
-		new_vma->vm_private_data = (void *)new_vmr;
-
-		emp_update_descs_vmr_id(new_vmr);
-
+		__emp_vma_split(prev_vmr, new_vmr, new_vma);
 	} else {
 		// open of dup_mmap reaches here
 		new_vmr = __emp_vma_open(prev_vmr, new_vma);
@@ -606,28 +644,36 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 
 static int emp_vma_split(struct vm_area_struct *vma, unsigned long addr)
 {
-	struct emp_vmr *vmr = vma->vm_private_data;
+	struct emp_vmr *prev_vmr = vma->vm_private_data;
 	struct emp_vmr *new_vmr;
 
-	if (addr & bvma_va_subblock_mask(vmr->emm)) {
+	if (addr & bvma_va_subblock_mask(prev_vmr->emm)) {
 		printk(KERN_NOTICE "%s vma split. vma %llx addr %lx\n",
 				__func__, (u64)vma, addr);
 	}
 
-	new_vmr = create_vmr(vmr->emm, NULL);
+	new_vmr = create_vmr(prev_vmr->emm, NULL);
 	if (new_vmr == NULL) {
 		printk("%s cannot allocate memory for new_vmr.\n", __func__);
 		return -ENOMEM;
 	}
 
-	vmr->new_vmr = new_vmr;
-	vmr->split_addr = addr;
 	/* NOTE: we don't call emp_get_mmu_notifier() here.
 	 * Since this is split of previous emp_vmr, which already registered
 	 * emp's mmu notifier to its mm.
 	 * In addition, new_vmr is created but has no host_vma. This causes
 	 * errors in emp_get_mmu_notifier().
 	 */
+
+	spin_lock(&prev_vmr->emm->split_link_lock);
+	finish_emp_vma_split(prev_vmr, true);
+	prev_vmr->split_new_vmr = new_vmr;
+	new_vmr->split_prev_vmr = prev_vmr;
+#ifdef CONFIG_EMP_DEBUG
+	prev_vmr->split_addr = addr;
+	new_vmr->split_addr = addr;
+#endif
+	spin_unlock(&prev_vmr->emm->split_link_lock);
 
 	return 0;
 }

@@ -235,9 +235,6 @@ struct emp_vmr {
 	struct mmu_gather   close_tlb;
 
 #ifdef CONFIG_EMP_USER
-	unsigned long       split_addr;
-	struct emp_vmr      *new_vmr;
-
 	struct emp_mmu_notifier *mmu_notifier;
 
 	/* The following variables are protected by vmr->emm->dup_list_lock */
@@ -245,7 +242,14 @@ struct emp_vmr {
 	struct emp_vmr		*dup_parent;  /* MAP_PRIVATE, parent */
 	struct list_head	dup_children; /* MAP_PRIVATE, children */
 	struct list_head	dup_sibling;  /* MAP_PRIVATE, sibling */
-#endif
+
+	/* The following variables are protected by vmr->emm->split_link_lock */
+	struct emp_vmr      *split_new_vmr;
+	struct emp_vmr      *split_prev_vmr;
+#ifdef CONFIG_EMP_DEBUG
+	unsigned long       split_addr;
+#endif /* CONFIG_EMP_DEBUG */
+#endif /* CONFIG_EMP_USER */
 };
 
 struct emp_ftm {
@@ -497,6 +501,9 @@ struct emp_mm {
 
 	/* protect dup_* variables of struct emp_vmr */
 	spinlock_t         dup_list_lock;
+
+	/* protect split_* variables of struct emp_vmr */
+	spinlock_t         split_link_lock;
 #endif
 };
 
