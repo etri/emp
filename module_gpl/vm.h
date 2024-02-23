@@ -366,7 +366,12 @@ struct emp_gpadesc_alloc {
 #ifdef CONFIG_EMP_DEBUG
 #define get_gpadesc_alloc(emm, order) ({ \
 	BUG_ON(!(emm)); \
-	BUG_ON(!(emm)->gpadesc_alloc.alloc[order]); \
+	if (unlikely(!(emm)->gpadesc_alloc.alloc[order])) { \
+		printk(KERN_ERR "[ERROR] get_gpadesc_alloc(%d, %d) from %s " \
+				"returns NULL\n", \
+				(emm)->id, (order), __func__); \
+		BUG(); \
+	} \
 	__get_gpadesc_alloc(emm, order); \
 })
 
