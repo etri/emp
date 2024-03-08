@@ -1639,7 +1639,9 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	if (unlikely(!desc->gpa_dir_alloc))
 		return 0;
 	
+#ifdef CONFIG_EMP_USER
 	atomic_inc(&desc->is_closing);
+#endif
 	cpu = emp_this_cpu_ptr(emm->pcpus);
 #ifdef CONFIG_EMP_VM
 	if (emm->ekvm.kvm) {
@@ -1651,6 +1653,7 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	}
 #endif /* CONFIG_EMP_VM */
 
+#ifdef CONFIG_EMP_USER
 	vm_refcnt = atomic_dec_return(&desc->refcount);
 	if (vm_refcnt == 0) {
 		/* This is the last (previously shared) mapping.
@@ -1661,14 +1664,15 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 					atomic_read(&desc->is_closing) == 0);
 		}
 	}
-#ifdef CONFIG_EMP_USER
 	else { // vm_refcnt > 0
 		spin_lock(&emm->dup_list_lock);
 		next_vmr_shared = list_next_entry(vmr, dup_shared);
 		spin_unlock(&emm->dup_list_lock);
 		debug_assert(next_vmr_shared != vmr);
 	}
-#endif /* CONFIG_EMP_USER */
+#else /* !CONFIG_EMP_USER */
+	vm_refcnt = 0;
+#endif /* !CONFIG_EMP_USER */
 
 	if (do_unmap)
 		dprintk("[DEBUG] %s: UNMAP emm: %d vmr: %d mm: %lx vma: %lx "
@@ -1706,12 +1710,14 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 				num_allocated * 100 / desc->gpa_len,
 				num_allocated * 10000 / desc->gpa_len % 100);
 
+#ifdef CONFIG_EMP_USER
 	if (vm_refcnt > 0) {
 		if (atomic_dec_and_test(&desc->is_closing))
 			wake_up_interruptible(&desc->closing_wq);
 		return vm_refcnt;
 	}
 	/* if vm_refcnt == 0, desc->is_closing was already decremented. */
+#endif
 
 	desc->gpa_dir = (struct emp_gpa **) NULL;
 	emp_vfree(desc->gpa_dir_alloc);
@@ -1788,8 +1794,10 @@ struct emp_vmdesc *alloc_vmdesc(struct emp_vmdesc *prev)
 		return NULL;
 	if (prev)
 		memcpy(desc, prev, sizeof(struct emp_vmdesc));
+#ifdef CONFIG_EMP_USER
 	atomic_set(&desc->refcount, 1);
 	init_waitqueue_head(&desc->closing_wq);
+#endif
 	return desc;
 }
 

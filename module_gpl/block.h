@@ -259,7 +259,7 @@ static inline void _emp_unlock_block(struct emp_gpa *head)
 #define gpa_block_offset(gpa, offset) (0)
 #define gpa_page_mask(gpa) (~((1UL << PAGE_SHIFT) - 1))
 
-#define emp_get_block_head(vmr, g) (g)
+#define emp_get_block_head(g) (g)
 
 #define _emp_get_block_head_index(vmr, index, order) \
 				({ debug_assert((order) == 0); (index); })

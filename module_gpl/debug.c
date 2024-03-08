@@ -549,6 +549,7 @@ void debug_show_gpa_state(struct emp_vmr *vmr, const char *func)
 	struct emp_vmdesc *desc = vmr->descs;
 	struct emp_mm *emm = vmr->emm;
 	unsigned long i, gpa_len;
+	int desc_refcount = 1;
 
 	if (unlikely(!desc))
 		return;
@@ -567,9 +568,12 @@ void debug_show_gpa_state(struct emp_vmr *vmr, const char *func)
 	}
 
 	gpa_len = desc->gpa_len;
+#ifdef CONFIG_EMP_USER
+	desc_refcount = atomic_read(&desc->refcount);
+#endif
 	printk(KERN_ERR "[SHOW_GPA] (%d-%d) VMDESC(0x%lx) refcount: %d gpa_len: 0x%lx vm_base: 0x%lx block_aligned_start: 0x%lx gpa_dir_alloc_size: 0x%lx\n",
 			emm->id, vmr->id, (unsigned long) desc,
-			atomic_read(&desc->refcount), gpa_len,
+			desc_refcount, gpa_len,
 			desc->vm_base, desc->block_aligned_start,
 			desc->gpa_dir_alloc_size);
 

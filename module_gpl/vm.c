@@ -376,9 +376,11 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	if (vmr == NULL)
 		return;
 
+#ifdef CONFIG_EMP_USER
 	/* TODO: we may call finish_emp_vam_split early,
 	 *       on gpas_close() from mmu notifier. */
 	finish_emp_vma_split(vmr, false);
+#endif
 
 	printk(KERN_NOTICE "%s emm_id: %d vmr_id: %d vma:%p virt %lx vmr: %lx\n",
 				__func__, vmr->emm->id, vmr->id,
