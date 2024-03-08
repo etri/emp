@@ -48,8 +48,7 @@ error:
 #define emp_alloc_pcdata(type) \
 	(typeof(type) **)__pcalloc_data(sizeof(type) + __alignof__(type))
 
-#define emp_ptr_pcdata(array, cpu) ((typeof(*(array)))array[cpu])
-#define emp_pc_ptr(array, cpu) ((typeof(*(array)))array[cpu])
+#define emp_pc_ptr(array, cpu) (array[cpu])
 
 #define emp_this_cpu_ptr(var) ({ \
 	typeof(var) ____ret; \
