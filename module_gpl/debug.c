@@ -1963,6 +1963,6 @@ void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa,
 	gpa->contrib_last_val = -gpa_block_size(gpa);
 }
 EXPORT_SYMBOL(__debug_sub_inactive_list_page_len);
-#endif
+#endif /* CONFIG_EMP_DEBUG_LRU_LIST */
 
 #endif

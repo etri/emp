@@ -491,6 +491,9 @@ struct emp_mm {
 	struct vcpu_var     *vcpus;
 #endif
 	struct vcpu_var __percpu *pcpus;
+#ifdef CONFIG_EMP_DEBUG
+	struct vcpu_var **debug_pcpus;
+#endif
 
 #ifdef CONFIG_EMP_STAT
 	/* variables for collecting stats */

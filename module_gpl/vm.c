@@ -290,9 +290,21 @@ static int get_pcpus_var(struct emp_mm *emm)
 	if (emm->pcpus == NULL)
 		return -ENOMEM;
 
+#ifdef CONFIG_EMP_DEBUG
+	emm->debug_pcpus = emp_kzalloc(nr_cpu_ids * sizeof(struct vcpu_var *),
+						GFP_KERNEL);
+	if (emm->debug_pcpus == NULL) {
+		emp_free_percpu(emm->pcpus);
+		return -ENOMEM;
+	}
+#endif
+
 	for_each_possible_cpu(cpu) {
 		v = per_cpu_ptr(emm->pcpus, cpu);
 		init_vcpu_var(v, VCPU_ID(emm, cpu));
+#ifdef CONFIG_EMP_DEBUG
+		emm->debug_pcpus[cpu] = v;
+#endif
 	}
 	return 0;
 }
@@ -316,6 +328,12 @@ static void put_pcpus_var(struct emp_mm *emm)
 
 	emp_free_percpu(emm->pcpus);
 	emm->pcpus = NULL;
+#ifdef CONFIG_EMP_DEBUG
+	if (emm->debug_pcpus) {
+		emp_kfree(emm->debug_pcpus);
+		emm->debug_pcpus = NULL;
+	}
+#endif
 }
 
 static int emp_vmr_find_and_set(struct emp_mm *emm, struct emp_vmr *vmr)
