@@ -1433,7 +1433,7 @@ next_vmr_found:
 #endif /* CONFIG_EMP_USER */
 
 		debug_lru_progress_mark(head->local_page, head->r_state);
-		debug_lru_progress_mark(head->local_page, head->flags);
+		debug_lru_progress_mark(head->local_page, __get_gpa_flags(head));
 		debug_lru_progress_mark(head->local_page, head->local_page->flags);
 		/* For GPA_ACTIVE and GPA_INACTIVE, remove from the list */
 #ifdef CONFIG_EMP_EXT
@@ -1442,7 +1442,7 @@ next_vmr_found:
 		remove_gpa_from_lru(emm, head);
 #endif
 
-		debug_lru_progress_mark(head->local_page, head->flags);
+		debug_lru_progress_mark(head->local_page, __get_gpa_flags(head));
 		debug_lru_progress_mark(head->local_page, head->local_page->flags);
 		debug_lru_progress_mark(head->local_page, refcnt);
 		debug_lru_progress_mark(head->local_page, vm_refcnt);

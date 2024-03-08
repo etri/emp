@@ -114,7 +114,7 @@ struct cow_remote_page {
 
 struct emp_gpa {
 	atomic_t                lock;
-	unsigned int            flags; // refer to enum gpa_flags in gpa.h
+	unsigned int            _flags; // refer to enum gpa_flags in gpa.h
 	
 	atomic_t                refcnt;
 

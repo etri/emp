@@ -499,7 +499,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 
 			idx,
 			(unsigned long) gpa,
-			gpa->flags,
+			__get_gpa_flags(gpa),
 			__get_r_state_str(gpa->r_state),
 			atomic_read(&gpa->refcnt),
 			gpa->block_order, gpa->sb_order,
@@ -1191,7 +1191,7 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 	} else if (head->r_state == GPA_FETCHING) {
 		printk(KERN_ERR "WARN: gpa will be unlocked with "
 				"r_state = GPA_FETCHING. flags: 0x%x\n",
-				head->flags);
+				__get_gpa_flags(head));
 		BUG();
 	} else
 		BUG();

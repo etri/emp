@@ -134,37 +134,37 @@ enum gpa_state {
 #define gpa_subblock_page_size(g)  (1 << gpa_subblock_page_order(g))
 #define gpa_subblock_page_mask(g)  (gpa_subblock_page_size(g) - 1)
 
-static inline unsigned int get_gpa_flags(struct emp_gpa *gpa)
+static inline unsigned int __get_gpa_flags(struct emp_gpa *gpa)
 {
-	return gpa->flags;
+	return gpa->_flags;
 }
 
-static inline bool is_gpa_flags_set(struct emp_gpa *gpa, unsigned int mask)
+static inline bool __is_gpa_flags_set(struct emp_gpa *gpa, unsigned int mask)
 {
-	return (gpa->flags & mask);
+	return (gpa->_flags & mask);
 }
 
-static inline bool is_gpa_flags_same(struct emp_gpa *gpa, unsigned int mask,
+static inline bool __is_gpa_flags_same(struct emp_gpa *gpa, unsigned int mask,
 		unsigned int value)
 {
-	return (gpa->flags & mask) == value;
+	return (gpa->_flags & mask) == value;
 }
 
 static inline void __init_gpa_flags(struct emp_gpa *gpa, unsigned int flag)
 {
-	gpa->flags = flag;
+	gpa->_flags = flag;
 }
 
 static inline void __set_gpa_flags(struct emp_gpa *gpa, unsigned int flag)
 {
-	gpa->flags |= flag;
+	gpa->_flags |= flag;
 }
 
 /* return the previous value */
 static inline bool __set_gpa_flags_if_unset(struct emp_gpa *gpa, unsigned int mask)
 {
-	if (!is_gpa_flags_same(gpa, mask, mask)) {
-		gpa->flags |= mask;
+	if (!__is_gpa_flags_same(gpa, mask, mask)) {
+		gpa->_flags |= mask;
 		return false;
 	}
 	return true;
@@ -173,12 +173,27 @@ static inline bool __set_gpa_flags_if_unset(struct emp_gpa *gpa, unsigned int ma
 /* return the previous value */
 static inline bool __clear_gpa_flags_if_set(struct emp_gpa *gpa, unsigned int mask)
 {
-	if (!is_gpa_flags_same(gpa, mask, 0)) {
-		gpa->flags &= ~mask;
+	if (!__is_gpa_flags_same(gpa, mask, 0)) {
+		gpa->_flags &= ~mask;
 		return true;
 	}
 	return false;
 }
+
+#define get_gpa_flags(gpa) ({ \
+	debug_progress_flag(gpa, 0); \
+	__get_gpa_flags(gpa); \
+})
+
+#define is_gpa_flags_set(gpa, flag) ({ \
+	debug_progress_flag(gpa, flag); \
+	__is_gpa_flags_set(gpa, flag); \
+})
+
+#define is_gpa_flags_same(gpa, mask, value) ({ \
+	debug_progress_flag(gpa, mask); \
+	__is_gpa_flags_same(gpa, mask, value); \
+})
 
 #define init_gpa_flags(gpa, flag) do { \
 	debug_progress_flag(gpa, flag); \

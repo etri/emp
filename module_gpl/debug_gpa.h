@@ -166,7 +166,7 @@ struct debug_gpa_refcnt {
 
 #ifdef CONFIG_EMP_DEBUG_GPA_STATE
 #define debug_progress_flag(gpa, flag) do { \
-	unsigned long long ____d = (((unsigned long long) (gpa)->flags) << 32) \
+	unsigned long long ____d = (((unsigned long long) (gpa)->_flags) << 32) \
 					| (flag); \
 	debug_progress(gpa, ____d); \
 } while (0)
