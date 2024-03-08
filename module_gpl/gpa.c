@@ -1641,7 +1641,10 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 		return 0;
 	
 #ifdef CONFIG_EMP_USER
-	atomic_inc(&desc->is_closing);
+	if (atomic_cmpxchg(&desc->is_closing, 0, 1) != 0)
+		/* The other thread is closing this vmdesc. Wait for it. */
+		wait_event_interruptible(desc->closing_wq,
+				atomic_cmpxchg(&desc->is_closing, 0, 1) == 0);
 #endif
 	cpu = emp_this_cpu_ptr(emm->pcpus);
 #ifdef CONFIG_EMP_VM
@@ -1656,16 +1659,7 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 
 #ifdef CONFIG_EMP_USER
 	vm_refcnt = atomic_dec_return(&desc->refcount);
-	if (vm_refcnt == 0) {
-		/* This is the last (previously shared) mapping.
-		 * Wait for the other closes and perfetcly close this vmdesc */
-		if (!atomic_dec_and_test(&desc->is_closing)) {
-			/* Other shared mappings are closing. Wait for it. */
-			wait_event_interruptible(desc->closing_wq,
-					atomic_read(&desc->is_closing) == 0);
-		}
-	}
-	else { // vm_refcnt > 0
+	if (vm_refcnt > 0) { // vm_refcnt > 0
 		spin_lock(&emm->dup_list_lock);
 		next_vmr_shared = list_next_entry(vmr, dup_shared);
 		spin_unlock(&emm->dup_list_lock);
@@ -1713,11 +1707,9 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 
 #ifdef CONFIG_EMP_USER
 	if (vm_refcnt > 0) {
-		if (atomic_dec_and_test(&desc->is_closing))
-			wake_up_interruptible(&desc->closing_wq);
+		wake_up_interruptible(&desc->closing_wq);
 		return vm_refcnt;
 	}
-	/* if vm_refcnt == 0, desc->is_closing was already decremented. */
 #endif
 
 	desc->gpa_dir = (struct emp_gpa **) NULL;
