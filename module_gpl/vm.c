@@ -213,17 +213,18 @@ static inline void set_kvm_emp_mm(struct kvm *kvm, void *emp_mm) {
 }
 #endif
 
-static void init_vcpu_var(struct vcpu_var *v, int id) 
+static int init_vcpu_var(struct vcpu_var *v, int id)
 {
 	memset(v, 0, sizeof(*v));
 	init_emp_list(&v->local_free_page_list);
 	spin_lock_init(&(v)->wb_request_lock);
 	INIT_LIST_HEAD(&(v)->wb_request_list);
 	(v)->id = id;
+	return emp_pf_history_init(v);
 }
 
 #ifdef CONFIG_EMP_VM
-static void put_vcpus_var(struct emp_mm *emm);
+static void __put_vcpus_var(struct emp_mm *bvma, int cpus_len);
 /**
  * get_vcpus_var - Initialize vcpu_var data structure
  * @param bvma bvma data structure
@@ -231,22 +232,29 @@ static void put_vcpus_var(struct emp_mm *emm);
 static int get_vcpus_var(struct emp_mm *bvma)
 {
 	struct vcpu_var *v;
-	int i, vcpus_size, vcpus_len = EMP_KVM_VCPU_LEN(bvma);
+	int i = 0, vcpus_size, vcpus_len = EMP_KVM_VCPU_LEN(bvma);
+	int ret;
 
 	vcpus_size = sizeof(struct vcpu_var) * vcpus_len;
 	bvma->vcpus = emp_kmalloc(vcpus_size, GFP_KERNEL);
-	if (!bvma->vcpus)
+	if (!bvma->vcpus) {
+		ret = -ENOMEM;
 		goto get_vcpus_var_fail;
+	}
 
 	for (i = 0; i < vcpus_len; i++) {
 		v = &bvma->vcpus[i];
-		init_vcpu_var(v, i);
+		ret = init_vcpu_var(v, i);
+		if (ret)
+			goto get_vcpus_var_fail;
 	}
 	return 0;
 
 get_vcpus_var_fail:
 	if (bvma->vcpus)
-		put_vcpus_var(bvma);
+		__put_vcpus_var(bvma, i);
+	printk(KERN_ERR "ERROR: failed to %s(). errno: %d\n",
+				__func__, ret);
 	return -ENOMEM;
 }
 
@@ -264,6 +272,10 @@ static void __put_vcpus_var(struct emp_mm *bvma, int cpus_len)
 	for (cpu = 0; cpu < cpus_len; cpu++) {
 		v = &bvma->vcpus[cpu];
 		flush_local_free_pages(bvma, v);
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+		if (v->pf_history)
+			emp_kfree(v->pf_history);
+#endif
 	}
 	emp_list_unlock(free_page_list);
 
@@ -281,35 +293,49 @@ static void put_vcpus_var(struct emp_mm *emm)
 }
 #endif /* CONFIG_EMP_VM */
 
+static void __put_pcpus_var(struct emp_mm *emm, int max_cpu_id);
+
 static int get_pcpus_var(struct emp_mm *emm)
 {
-	int cpu;
+	int ret, cpu = 0;
 	struct vcpu_var *v;
 
 	emm->pcpus = emp_alloc_percpu(struct vcpu_var);
-	if (emm->pcpus == NULL)
-		return -ENOMEM;
+	if (emm->pcpus == NULL) {
+		ret = -ENOMEM;
+		goto put_pcpus_var_fail;
+	}
 
 #ifdef CONFIG_EMP_DEBUG
 	emm->debug_pcpus = emp_kzalloc(nr_cpu_ids * sizeof(struct vcpu_var *),
 						GFP_KERNEL);
 	if (emm->debug_pcpus == NULL) {
 		emp_free_percpu(emm->pcpus);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto put_pcpus_var_fail;
 	}
 #endif
 
 	for_each_possible_cpu(cpu) {
 		v = per_cpu_ptr(emm->pcpus, cpu);
-		init_vcpu_var(v, VCPU_ID(emm, cpu));
+		ret = init_vcpu_var(v, VCPU_ID(emm, cpu));
+		if (ret)
+			goto put_pcpus_var_fail;
 #ifdef CONFIG_EMP_DEBUG
 		emm->debug_pcpus[cpu] = v;
 #endif
 	}
 	return 0;
+
+put_pcpus_var_fail:
+	if (emm->pcpus == NULL)
+		__put_pcpus_var(emm, cpu);
+	printk(KERN_ERR "ERROR: failed to %s(). errno: %d\n",
+				__func__, ret);
+	return ret;
 }
 
-static void put_pcpus_var(struct emp_mm *emm)
+static void __put_pcpus_var(struct emp_mm *emm, int max_cpu_id)
 {
 	int cpu;
 	struct vcpu_var *v;
@@ -321,19 +347,32 @@ static void put_pcpus_var(struct emp_mm *emm)
 	free_page_list = &emm->ftm.free_page_list;
 	emp_list_lock(free_page_list);
 	for_each_possible_cpu(cpu) {
+		if (unlikely(cpu >= max_cpu_id))
+			break;
 		v = per_cpu_ptr(emm->pcpus, cpu);
 		flush_local_free_pages(emm, v);
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+		if (v->pf_history)
+			emp_kfree(v->pf_history);
+#endif
 	}
 	emp_list_unlock(free_page_list);
 
-	emp_free_percpu(emm->pcpus);
-	emm->pcpus = NULL;
+	if (emm->pcpus) {
+		emp_free_percpu(emm->pcpus);
+		emm->pcpus = NULL;
+	}
 #ifdef CONFIG_EMP_DEBUG
 	if (emm->debug_pcpus) {
 		emp_kfree(emm->debug_pcpus);
 		emm->debug_pcpus = NULL;
 	}
 #endif
+}
+
+static void put_pcpus_var(struct emp_mm *emm)
+{
+	__put_pcpus_var(emm, nr_cpu_ids);
 }
 
 static int emp_vmr_find_and_set(struct emp_mm *emm, struct emp_vmr *vmr)

@@ -12,6 +12,29 @@
 void emp_debug_bulk_msg_lock(void);
 void emp_debug_bulk_msg_unlock(void);
 
+/******************** EMP DEBUG PAGEFAULT HISTORY ***********************/
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+/* struct emp_pf_data and struct emp_pf_history are defined in vcpu_var.h */
+int emp_pf_history_init(struct vcpu_var *);
+void emp_pf_history_beg(struct vcpu_var *, int, unsigned long);
+#define __emp_pf_history_add(data, var, val) do { \
+		(data)->var = (val); \
+} while (0)
+#define emp_pf_history_add(cpu, var, val) do { \
+	if (likely((cpu)->pf_history)) { \
+		long ____curr_idx = atomic64_read(&(cpu)->pf_history->curr_idx); \
+		(cpu)->pf_history->data[____curr_idx].var = (val); \
+	} \
+} while (0)
+void __emp_pf_history_end(struct vcpu_var *, const char *);
+#define emp_pf_history_end(v) __emp_pf_history_end(v, __func__)
+#else
+#define emp_pf_history_init(v) (0)
+#define emp_pf_history_beg(v, vmr_id, addr) do {} while (0)
+#define emp_pf_history_add(v, var, val) do {} while (0)
+#define emp_pf_history_end(v) do {} while (0)
+#endif
+
 /******************** EMP DEBUG RSS *************************************/
 #ifdef CONFIG_EMP_DEBUG_RSS
 #define DEBUG_RSS_BITMAP_U64LEN ((CONFIG_EMP_DEBUG_RSS_MAX_VMRS + (sizeof(u64)*8) - 1) \

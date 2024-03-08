@@ -337,6 +337,8 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 #ifdef CONFIG_EMP_STAT
 	inc_vma_fault(cpu);
 #endif
+	emp_pf_history_beg(cpu, vmr->id, vmf->address);
+	emp_pf_history_add(cpu, hva_or_gpa, 0);
 
 	sb_order = bvma_subblock_order(emm);
 	demand_off = (vmf->address - vmr->descs->vm_base);
@@ -345,9 +347,11 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	set_vmf_pgoff(vmf, demand_off);
 	demand_sb_off = demand_off >> sb_order;
 	demand = get_gpadesc(vmr, demand_sb_off);
+	emp_pf_history_add(cpu, gpa_offset, demand_sb_off);
 	if (unlikely(!demand)) {
 		errcode = -ENOMEM;
 		ret = VM_FAULT_SIGBUS;
+		emp_pf_history_add(cpu, goto_code, 1);
 		goto _emp_page_fault_hva_out_unlocked;
 	}
 
@@ -378,10 +382,16 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 				);
 	/* Assume that gpa descriptors in a block reside on a contiguous memory */
 	head_idx = demand_sb_off - (demand - head);
+	emp_pf_history_add(cpu, gpa_flag_beg, __get_gpa_flags(demand));
+	emp_pf_history_add(cpu, head_flag_beg, __get_gpa_flags(head));
+	emp_pf_history_add(cpu, head_state_beg, head->r_state);
+	emp_pf_history_add(cpu, head_offset, head_idx);
+	emp_pf_history_add(cpu, is_write, vmf_write_fault(vmf));
 
 #ifdef CONFIG_EMP_USER
 	if (vmf_write_fault(vmf)) {
 		r = emm->cops.handle_emp_cow_fault_hva(emm, vmr, head, head_idx, vmf);
+		emp_pf_history_add(cpu, cow_ret, r);
 		debug_progress(head, r);
 		if (r != 0) {
 			/* If CoW fault is detected or error occurs,
@@ -391,6 +401,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 				errcode = -ENOMEM;
 				ret = VM_FAULT_SIGBUS;
 				debug_progress(head, 0);
+				emp_pf_history_add(cpu, goto_code, 2);
 				goto _emp_page_fault_hva_out_unlocked;
 			}
 			head = emp_get_block_head(demand);
@@ -400,6 +411,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 
 		if (unlikely(r < 0)) { // error occurs.
 			ret = VM_FAULT_SIGBUS;
+			emp_pf_history_add(cpu, goto_code, 3);
 			goto _emp_page_fault_hva_out;
 		}
 	}
@@ -442,6 +454,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		if (emp_ext.early_handle_fault_hva(emm, vmr, vmf,
 						demand, demand_sb_off)) {
 			debug_progress(head, 0);
+			emp_pf_history_add(cpu, goto_code, 4);
 			goto _emp_page_fault_hva_out;
 		}
 	}
@@ -459,22 +472,27 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		emp_unlock_subblock(head);
 		
 		debug_progress(head, 0);
+		emp_pf_history_add(cpu, goto_code, 5);
 		goto _emp_page_fault_hva_fetch_posted;
 	}
 #endif
 
 	// all or nothing policy is assumed for a block
+	emp_pf_history_add(cpu, head_state_mid, head->r_state);
 	if (head->r_state != GPA_INIT) {
 #ifdef CONFIG_EMP_STAT
 		inc_local_fault(cpu);
 #endif
 		r = handle_local_fault(vmr, &head, demand, cpu, vmf, &ret);
 		debug_progress(head, r);
+		emp_pf_history_add(cpu, local_fault_ret, r);
+		emp_pf_history_add(cpu, remote_fault_ret, -1);
 		if (r != 0) {
 			if (unlikely(r < 0)) {
 				errcode = r;
 				ret = VM_FAULT_SIGBUS;
 			}
+			emp_pf_history_add(cpu, goto_code, 6);
 			goto _emp_page_fault_hva_out;
 		}
 		// head is updated if the gpa is stretched
@@ -491,6 +509,8 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		r = handle_remote_fault(vmr, &head, head_idx, demand,
 					demand_off, cpu, false);
 #endif
+		emp_pf_history_add(cpu, local_fault_ret, -1);
+		emp_pf_history_add(cpu, remote_fault_ret, r);
 		debug_progress(head, r);
 		if (likely(r >= 0)) {
 			fetch = r > 0 ? true : false;
@@ -498,6 +518,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 			clear_in_flight_fetching_block(vmr, cpu, head);
 			errcode = r;
 			ret = VM_FAULT_SIGBUS;
+			emp_pf_history_add(cpu, goto_code, 7);
 			goto _emp_page_fault_hva_out;
 		}
 	}
@@ -515,6 +536,7 @@ _emp_page_fault_hva_fetch_posted:
 		ret = VM_FAULT_RETRY;
 		set_gpa_flags_if_unset(head, GPA_IO_IP_MASK);
 		debug_progress(head, ret);
+		emp_pf_history_add(cpu, install_pte_ret, 0xFFFFFFFF);
 
 		debug_BUG_ON(PageLocked(head->local_page->page));
 		emp_lock_subblock(head);
@@ -524,6 +546,7 @@ _emp_page_fault_hva_fetch_posted:
 		ret = emp_page_fault_hptes_map(emm, vmr, head, demand,
 						demand_sb_off - head_idx,
 						fs, fe, fetch, vmf, false);
+		emp_pf_history_add(cpu, install_pte_ret, ret);
 		debug_progress(head, ret);
 	}
 
@@ -551,8 +574,12 @@ _emp_page_fault_hva_fetch_posted:
 #else
 	rss_count = gpa_block_size(head);
 #endif
+	emp_pf_history_add(cpu, rss_count, rss_count);
 
 _emp_page_fault_hva_out:
+	emp_pf_history_add(cpu, gpa_flag_end, __get_gpa_flags(demand));
+	emp_pf_history_add(cpu, head_flag_end, __get_gpa_flags(head));
+	emp_pf_history_add(cpu, head_state_end, head->r_state);
 	emp_unlock_block(head);
 _emp_page_fault_hva_out_unlocked:
 
@@ -572,5 +599,8 @@ _emp_page_fault_hva_out_unlocked:
 					? 'V' : 'N',
 				demand ? get_gpa_remote_page_val(demand) : -1,
 				fetch ? 1 : 0);
+	emp_pf_history_add(cpu, error_code, errcode);
+	emp_pf_history_add(cpu, page_fault_ret, ret);
+	emp_pf_history_end(cpu);
 	return ret;
 }

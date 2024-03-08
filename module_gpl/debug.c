@@ -37,6 +37,148 @@ inline void emp_debug_bulk_msg_unlock(void)
 }
 EXPORT_SYMBOL(emp_debug_bulk_msg_unlock);
 
+/******************** EMP DEBUG PAGEFAULT HISTORY ***********************/
+
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+
+#define PF_HISTORY_PREV_IDX(idx) ((idx) > 0 ? (idx) - 1 : (EMP_DEBUG_PF_HISTORY_LEN - 1))
+#define PF_HISTORY_NEXT_IDX(idx) ((idx) < (EMP_DEBUG_PF_HISTORY_LEN - 1) ? (idx) + 1 : 0)
+
+static void __emp_pf_history_show(struct emp_pf_history *history, long curr_idx)
+{
+	long idx = PF_HISTORY_NEXT_IDX(curr_idx);
+	int i = 0;
+	struct emp_pf_data *data;
+
+	BUG_ON(!history);
+
+	while (idx != curr_idx) {
+		data = &history->data[idx];
+		if (data->id < 0) { // invalid
+			idx = PF_HISTORY_NEXT_IDX(idx);
+			continue;
+		}
+		printk(KERN_ERR "[EMP_PF_HISTORY] (%02d) id: %ld vmr: %d "
+				"addr: 0x%016lx type: %s is_write: %d "
+				"offset: %lx,%lx "
+				"flag: %08x,%08x=>%08x,%08x state: %d-%d-%d "
+				"cow_ret: %d local_ret: %d remote_ret: %d install_pte: %d "
+				"rss_count: %d goto: %d error: %d ret: %d\n",
+			i, data->id, data->vmr_id, data->addr,
+			data->hva_or_gpa == 0 ? "hva" : "gpa",
+			data->is_write,
+			data->head_offset, data->gpa_offset,
+			data->head_flag_beg, data->gpa_flag_beg,
+			data->head_flag_end, data->gpa_flag_end,
+			data->head_state_beg, data->head_state_mid, data->head_state_end,
+			data->cow_ret, data->local_fault_ret, data->remote_fault_ret,
+			data->install_pte_ret, data->rss_count,
+			data->goto_code, data->error_code, data->page_fault_ret);
+		idx = PF_HISTORY_NEXT_IDX(idx);
+		i++;
+	}
+}
+
+static inline void __emp_pf_data_init(struct emp_pf_data *data, long id)
+{
+	memset(data, 0, sizeof(struct emp_pf_data));
+	data->id = id;
+	data->local_fault_ret = -1;
+	data->remote_fault_ret = -1;
+}
+
+int emp_pf_history_init(struct vcpu_var *cpu) {
+	struct emp_pf_history *history;
+	int i;
+
+	history = emp_kzalloc(sizeof(struct emp_pf_history), GFP_KERNEL);
+	if (unlikely(history == NULL))
+		return -ENOMEM;
+	spin_lock_init(&history->lock);
+	history->vcpu = cpu;
+	history->vcpu_id = cpu->id;
+	history->next_id = 0;
+	atomic64_set(&history->curr_idx, -1);
+	for (i = 0; i < EMP_DEBUG_PF_HISTORY_LEN; i++)
+		__emp_pf_data_init(&history->data[i], -1);
+	cpu->pf_history = history;
+	return 0;
+}
+
+void emp_pf_history_beg(struct vcpu_var *cpu, int vmr_id, unsigned long addr)
+{
+	struct emp_pf_history *history = cpu->pf_history;
+	long idx;
+	if (unlikely(!history))
+		return;
+
+	spin_lock(&history->lock);
+	idx = history->next_id % EMP_DEBUG_PF_HISTORY_LEN;
+	while (atomic64_cmpxchg(&history->curr_idx, -1, idx) >= 0) {
+		spin_unlock(&history->lock);
+		cond_resched();
+		spin_lock(&history->lock);
+		idx = history->next_id % EMP_DEBUG_PF_HISTORY_LEN;
+	}
+	__emp_pf_data_init(&history->data[idx], history->next_id);
+	__emp_pf_history_add(&history->data[idx], vmr_id, vmr_id);
+	__emp_pf_history_add(&history->data[idx], addr, addr);
+	spin_unlock(&history->lock);
+}
+
+void __emp_pf_history_end(struct vcpu_var *cpu, const char *func) {
+	struct emp_pf_history *history = cpu->pf_history;
+	long curr_idx, prev_idx;
+	struct emp_pf_data *curr, *prev;
+	int num_same_addr = 0;
+	if (unlikely(!history))
+		return;
+
+	curr_idx = atomic64_read(&history->curr_idx);
+	if (unlikely(curr_idx < 0)) {
+		printk(KERN_ERR "[ERROR] %s: history->curr_idx == %ld on vcpu%d\n",
+				__func__, curr_idx, cpu->id);
+		return;
+	}
+
+	curr = &history->data[curr_idx];
+	if (curr->vmr_id == history->last_show_vmr_id
+			&& curr->addr == history->last_show_addr)
+		goto skip_check;
+
+	prev_idx = PF_HISTORY_PREV_IDX(curr_idx);
+	for (num_same_addr = 0; num_same_addr < EMP_DEBUG_PF_HISTORY_LEN; num_same_addr++) {
+		prev = &history->data[prev_idx];
+		if (unlikely(prev->id < 0))
+			break;
+		if (curr->vmr_id != prev->vmr_id || curr->addr != prev->addr)
+			break;
+		/* vmr_id and address are same */
+		prev_idx = PF_HISTORY_PREV_IDX(prev_idx);
+	}
+
+	if (num_same_addr >= (EMP_DEBUG_PF_HISTORY_LEN / 2)) {
+		emp_debug_bulk_msg_lock();
+		printk(KERN_ERR "[ERROR] %s: repeated page fault on same address."
+				" vcpu: %d vmr: %d addr: 0x%lx"
+				" curr_idx: %lld next_id: %ld\n",
+				func, cpu->id, curr->vmr_id, curr->addr,
+				atomic64_read(&history->curr_idx), history->next_id);
+		__emp_pf_history_show(history, curr_idx);
+		emp_debug_bulk_msg_unlock();
+		history->last_show_vmr_id = curr->vmr_id;
+		history->last_show_addr = curr->addr;
+	}
+
+skip_check:
+	spin_lock(&history->lock);
+	history->next_id++;
+	atomic64_set(&history->curr_idx, -1);
+	spin_unlock(&history->lock);
+}
+
+#endif /* CONFIG_EMP_DEBUG_PF_HISTORY */
+
 /******************** EMP DEBUG RSS *************************************/
 #ifdef CONFIG_EMP_DEBUG_RSS
 const char *debug_rss_add_str[NUM_DEBUG_RSS_ADD_ID] = {

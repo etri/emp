@@ -53,6 +53,45 @@
 				: emp_get_next_cpu_id(emm, cpu_id), \
 			vcpu = emp_get_vcpu_from_id(emm, cpu_id))
 
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+#define EMP_DEBUG_PF_HISTORY_LEN 32
+struct emp_pf_data {
+	long id;
+	int vmr_id;
+	unsigned long addr;
+	int hva_or_gpa; // hva = 0, gpa = 1
+	unsigned long gpa_offset;
+	unsigned long head_offset;
+	int is_write;
+	int gpa_flag_beg;
+	int head_flag_beg;
+	int gpa_flag_end;
+	int head_flag_end;
+	int head_state_beg;
+	int head_state_mid;
+	int head_state_end;
+	int cow_ret;
+	int local_fault_ret;
+	int remote_fault_ret;
+	int install_pte_ret;
+	int rss_count;
+	int goto_code;
+	int error_code;
+	int page_fault_ret;
+};
+
+struct emp_pf_history {
+	spinlock_t lock;
+	struct vcpu_var *vcpu;
+	int vcpu_id;
+	long next_id;
+	atomic64_t curr_idx;
+	struct emp_pf_data data[EMP_DEBUG_PF_HISTORY_LEN];
+	int last_show_vmr_id;
+	unsigned long last_show_addr;
+};
+#endif /* CONFIG_EMP_DEBUG_PF_HISTORY */
+
 struct vcpu_var {
 	struct task_struct      *tsk;
 
@@ -75,6 +114,9 @@ struct vcpu_var {
 
 	int                     id;
 	u64                     private;
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+	struct emp_pf_history *pf_history;
+#endif
 };
 
 #define VCPU_WB_REQUEST_EMPTY(v) (list_empty(&(v)->wb_request_list))

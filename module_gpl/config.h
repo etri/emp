@@ -18,6 +18,7 @@
 //#define CONFIG_EMP_DEBUG_RSS
 //#define CONFIG_EMP_DEBUG_RSS_PROGRESS
 #define CONFIG_EMP_DEBUG_RSS_MAX_VMRS (128) // maximum number of vmr supported by RSS debugger
+//#define CONFIG_EMP_DEBUG_PF_HISTORY
 #endif
 
 #define COMPILER_OPT __attribute__((optimize("-O2")))

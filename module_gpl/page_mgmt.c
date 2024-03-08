@@ -1473,13 +1473,21 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	/* update stat */
 	inc_vma_fault(cpu);
 #endif	
+	emp_pf_history_beg(cpu, vmr->id, hva);
+	emp_pf_history_add(cpu, hva_or_gpa, 1);
+
 	/* hva to gpa */
 	sb_order = bvma_subblock_order(bvma);
 	demand_off = GPN_OFFSET(bvma, HVA_TO_GPN(bvma, vmr, hva));
 	demand_sb_off = demand_off >> sb_order;
 	demand = get_gpadesc(vmr, demand_sb_off);
-	if (unlikely(!demand))
+	emp_pf_history_add(cpu, gpa_offset, demand_sb_off);
+	if (unlikely(!demand)) {
+		emp_pf_history_add(cpu, goto_code, 1);
+		emp_pf_history_add(cpu, page_fault_ret, VM_FAULT_SIGBUS);
+		emp_pf_history_end(cpu);
 		return VM_FAULT_SIGBUS;
+	}
 
 	sb_mask = gpa_subblock_mask(demand);
 
@@ -1509,6 +1517,11 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	fe = head + num_subblock_in_block(head);
 	/* Assume that gpa descriptors in a block reside on a contiguous memory */
 	head_idx = demand_sb_off - (demand - head);
+	emp_pf_history_add(cpu, gpa_flag_beg, __get_gpa_flags(demand));
+	emp_pf_history_add(cpu, head_flag_beg, __get_gpa_flags(head));
+	emp_pf_history_add(cpu, head_state_beg, head->r_state);
+	emp_pf_history_add(cpu, head_offset, head_idx);
+	emp_pf_history_add(cpu, is_write, write_fault);
 
 #ifdef CONFIG_EMP_BLOCK
 	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
@@ -1539,6 +1552,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 #ifdef CONFIG_EMP_STAT
 				bvma->stat.csf_fault++;
 #endif
+				emp_pf_history_add(cpu, goto_code, 2);
 				goto return_to_fault_inst;
 			}
 		}
@@ -1557,8 +1571,10 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 			&& emp_ext.early_handle_fault_gpa(bvma, kvm_vcpu, vmr,
 						hva, write_fault, *writable,
 						demand, demand_sb_off,
-						gva, level, error_code))
+						gva, level, error_code)) {
+		emp_pf_history_add(cpu, goto_code, 3);
 		goto return_to_fault_inst;
+	}
 #endif
 #ifdef CONFIG_EMP_IO
 	// wait for completion of hva fault handling
@@ -1587,13 +1603,17 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	 * 1. the gpa is removed from victim_list and added to active_list again.
 	 * 2. Another processor handles the identical fault. 
 	 *    It should wait for the completion.  	*/
+	emp_pf_history_add(cpu, head_state_mid, head->r_state);
 	if (head->r_state != GPA_INIT) {
 #ifdef CONFIG_EMP_STAT
 		inc_local_fault(cpu);
 #endif
 		r = handle_local_fault(vmr, &head, demand, cpu, NULL, NULL);
+		emp_pf_history_add(cpu, local_fault_ret, r);
+		emp_pf_history_add(cpu, remote_fault_ret, -1);
 		if (unlikely(r < 0)) {
 			ret = r;
+			emp_pf_history_add(cpu, goto_code, 4);
 			goto skip_install_sptes;
 		}
 	} else {
@@ -1608,9 +1628,12 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 					demand, demand_off,
 					cpu, read_only_mapping);
 #endif
+		emp_pf_history_add(cpu, local_fault_ret, -1);
+		emp_pf_history_add(cpu, remote_fault_ret, r);
 		if (unlikely(r < 0)) {
 			clear_in_flight_fetching_block(vmr, cpu, head);
 			ret = r;
+			emp_pf_history_add(cpu, goto_code, 5);
 			goto skip_install_sptes;
 		}
 	}
@@ -1665,6 +1688,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	ret = emp_install_sptes(kvm_vcpu, bvma, cpu, head, demand, demand_off,
 			        gva, level, prefault, write_fault, *writable,
 				slot, fetch);
+	emp_pf_history_add(cpu, install_pte_ret, ret);
 
 	debug_emp_install_sptes2(bvma, head, demand);
 
@@ -1672,12 +1696,19 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK));
 #endif
 	if (!is_gpa_flags_set(head, GPA_HPT_MASK)
-			&& head->local_page->vmr_id != vmr->id)
+			&& head->local_page->vmr_id != vmr->id) {
 		emp_update_rss_add_force(vmr, gpa_block_size(head),
 					DEBUG_RSS_ADD_FAULT_GPA,
 					head, DEBUG_UPDATE_RSS_BLOCK);
+		emp_pf_history_add(cpu, rss_count, gpa_block_size(head));
+	} else {
+		emp_pf_history_add(cpu, rss_count, 0);
+	}
 
 skip_install_sptes:
+	emp_pf_history_add(cpu, gpa_flag_end, __get_gpa_flags(demand));
+	emp_pf_history_add(cpu, head_flag_end, __get_gpa_flags(head));
+	emp_pf_history_add(cpu, head_state_end, head->r_state);
 	emp_unlock_block(head);
 
 #ifdef CONFIG_EMP_EXT
@@ -1693,11 +1724,18 @@ skip_install_sptes:
 				(demand && demand->local_page)
 					? 'V' : 'N',
 				demand ? get_gpa_remote_page_val(demand) : -1);
+	emp_pf_history_add(cpu, page_fault_ret, ret);
+	emp_pf_history_end(cpu);
 	return ret;
 #ifdef CONFIG_EMP_BLOCK
 /* defined(CONFIG_EMP_BLOCK || defined(CONFIG_EMP_EXT) */
 return_to_fault_inst:
+	emp_pf_history_add(cpu, gpa_flag_end, __get_gpa_flags(demand));
+	emp_pf_history_add(cpu, head_flag_end, __get_gpa_flags(head));
+	emp_pf_history_add(cpu, head_state_end, head->r_state);
 	emp_unlock_block(head);
+	emp_pf_history_add(cpu, page_fault_ret, RET_PF_RETRY);
+	emp_pf_history_end(cpu);
 	return RET_PF_RETRY;
 #endif
 }
