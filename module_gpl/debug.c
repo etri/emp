@@ -1313,6 +1313,10 @@ static inline u64 get_gfn_offset(struct emp_gpa *g) {
 
 void debug_emp_unlock_block(struct emp_gpa *head) {
 	BUG_ON(!____emp_gpa_is_locked(head));
+	if (head != emp_get_block_head(head)) {
+		// _emp_lock_block() may unlock non-head gpa
+		return;
+	}
 	if (head->r_state == GPA_ACTIVE
 			|| head->r_state == GPA_INACTIVE) {
 		struct local_page *lp = head->local_page;
@@ -1813,12 +1817,11 @@ void debug_free_local_page(struct local_page *local_page) {
 
 void debug_unmap_ptes(struct emp_mm *emm, struct emp_gpa *heads, unsigned long size) {
 	struct emp_gpa *g, *heads_end;
-	bool warned;
+	bool warned = false;
 
 	heads_end = heads + (size >> (bvma_subblock_order(emm) + PAGE_SHIFT));
 
 	for (g = heads; g < heads_end; g++) {
-		warned = false;
 		if (page_mapcount(g->local_page->page)) {
 			printk(KERN_ERR "WARN: %s page mapcount is not matched. "
 					"gpa: %016lx idx: %lx page_mapcount(%016lx): %d != 0\n",
@@ -2111,4 +2114,25 @@ void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa,
 EXPORT_SYMBOL(__debug_sub_inactive_list_page_len);
 #endif /* CONFIG_EMP_DEBUG_LRU_LIST */
 
+void debug_handle_active_fault_handled(struct emp_vmr *vmr,
+				struct emp_gpa *head, struct vm_fault *vmf)
+{
+	struct mapped_pmd *p, *pp;
+	struct emp_gpa *gpa;
+	unsigned long hva;
+	pte_t *ptep;
+	unsigned long pfn_pte, pfn_page;
+
+	for_each_gpas(gpa, head) {
+		BUG_ON(!gpa->local_page);
+		BUG_ON(emp_lp_lookup_pmd(gpa->local_page, vmr->id, &p, &pp) == false);
+		hva = local_gpa_to_hva(vmr, gpa);
+		ptep = pte_offset_map(p->pmd, hva);
+		pfn_pte = pte_pfn(*ptep);
+		BUG_ON(pfn_pte == 0);
+		pfn_page = page_to_pfn(gpa->local_page->page);
+		BUG_ON(pfn_page != pfn_pte);
+	}
+}
+EXPORT_SYMBOL(debug_handle_active_fault_handled);
 #endif

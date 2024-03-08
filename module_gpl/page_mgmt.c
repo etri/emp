@@ -199,6 +199,7 @@ int handle_active_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 #endif
 
 	if (emp_lp_lookup_pmd(head->local_page, vmr->id, &p, &pp)) {
+		debug_handle_active_fault_handled(vmr, head, vmf);
 		*vmf_ret = VM_FAULT_NOPAGE;
 		return 1;
 	} else

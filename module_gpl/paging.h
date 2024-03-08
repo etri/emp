@@ -155,12 +155,27 @@ __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 		return ____partial_gpa_to_page_len(vmr, gpa, idx, hva);
 	}
 }
+
+#define local_gpa_to_hva(vmr, g) ({ \
+	unsigned long ____hva = GPN_OFFSET_TO_HVA(vmr, \
+			(g)->local_page->gpa_index, (g)->sb_order); \
+	if (likely(is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) { \
+		unsigned long ____len; \
+		/* (hva) may be updated in ____partial_gpa_to_page_len() */ \
+		____len = ____partial_gpa_to_page_len(vmr, g, \
+				(g)->local_page->gpa_index, ____hva); \
+	} \
+	____hva; \
+})
 #else /* !CONFIG_EMP_USER */
 static inline int
 __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 {
 	return 1 << gpa_subblock_order(gpa);
 }
+
+#define local_gpa_to_hva(vmr, g) GPN_OFFSET_TO_HVA(vmr, \
+				(g)->local_page->gpa_index, (g)->sb_order)
 #endif /* !CONFIG_EMP_USER */
 
 static inline int

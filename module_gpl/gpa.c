@@ -854,7 +854,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	int i;
 
 	sb_order = bvma_subblock_order(emm);
-	
+
 	// block-grained dirty management. need to more finer?
 	dirty = false;
 
@@ -1333,6 +1333,7 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 			i += num_subblock_in_block(head),
 			head += num_subblock_in_block(head)) {
 		unsigned long gpa_idx = max_head_idx + i;
+		debug_progress(head, (((u64) vmr->id) << 32) | head->r_state);
 		for_each_gpas(gpa, head) {
 			if (gpa->local_page)
 				__put_local_page_pmd(vmr, gpa);
@@ -1562,11 +1563,11 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 		if (!gpa_dir[i])
 			continue;
 		max_head = gpa_dir[i];
-		debug_free_gpa_dir_region(max_head, desc_order);
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
 		gpadesc_alloc_at_insert(&max_head->alloc_at, table);
 #endif
 		__lock_max_block(max_head, step);
+		debug_free_gpa_dir_region(max_head, desc_order);
 		if (do_unmap)
 			__unmap_max_block(vmr, max_head, i, step);
 #ifdef CONFIG_EMP_DEBUG_RSS
