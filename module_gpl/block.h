@@ -95,7 +95,8 @@ static inline void ____emp_gpa_unlock(struct emp_gpa *gpa)
 #define gpa_block_offset(gpa, offset)	((offset) & (gpa_block_size(gpa) - 1))
 #define gpa_page_mask(gpa)	~(__gpa_block_size(gpa, PAGE_SHIFT) - 1)
 
-#define gpa_desc_order(i) (gpa_block_order(i)-gpa_subblock_order(i))
+#define gpa_desc_order(gpa) ((gpa)->desc_order)
+#define gpa_max_block_order(gpa) ((gpa)->max_block_order)
 
 static inline unsigned long
 _emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index, int order)
