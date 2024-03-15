@@ -819,7 +819,7 @@ void clear_in_flight_fetching_block(struct emp_vmr *vmr,
 		page = lp->page;
 		emm->lops.free_local_page(emm, lp);
 		page->private = 0;
-		emp_clear_pg_mlocked(page, g->sb_order);
+		emp_clear_pg_mlocked(page, gpa_subblock_order(g));
 		g->local_page = NULL;
 		_refill_global_free_page(emm, page);
 		cnt_lp++;

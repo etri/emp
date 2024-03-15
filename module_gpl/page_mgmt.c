@@ -299,7 +299,7 @@ static int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	unsigned long offset;
 	struct work_request *head_wr = NULL;
 
-	WARN_ON_ONCE(head->block_order < bvma_subblock_order(bvma));
+	WARN_ON_ONCE(gpa_block_order(head) < bvma_subblock_order(bvma));
 
 	sb_order = gpa_subblock_order(head);
 	offset = demand_offset >> sb_order;
@@ -1337,7 +1337,7 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 			}
 
 			/* processed only a sub-block, not all */
-			if (gpa_subblock_order(head) != head->block_order) {
+			if (gpa_subblock_order(head) != gpa_block_order(head)) {
 				head->local_page->demand_offset = gpa_block_offset(head, gpa_off);
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);

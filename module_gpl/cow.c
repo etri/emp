@@ -349,7 +349,7 @@ dup_subblock_pages(struct emp_mm *emm, struct emp_gpa *gpa,
 			struct vcpu_var *cpu, bool is_stale)
 {
 	struct page *page;
-	page = _alloc_pages(emm, gpa->sb_order, 0, cpu);
+	page = _alloc_pages(emm, gpa_subblock_order(gpa), 0, cpu);
 	if (unlikely(IS_ERR_OR_NULL(page)))
 		return page;
 
@@ -560,8 +560,8 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 	debug_assert(emp_lp_count_pmd(head->local_page) == 1);
 	debug_assert(head->local_page->pmds.vmr_id == vmr->id);
 
-	debug_BUG_ON(page_len != (1 << head->sb_order)
-			&& head->block_order != head->sb_order);
+	debug_BUG_ON(page_len != (1 << gpa_subblock_order(head))
+			&& gpa_block_order(head) != gpa_subblock_order(head));
 
 	pmd = head->local_page->pmds.pmd;
 	if (debug_WARN_ONCE(pmd_none(*pmd),
@@ -581,7 +581,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 		 * can have only single subblock. */
 		__cow_update_pte(vmr->host_vma, gpa_page(gpa),
 					pmd, addr, page_len);
-		addr += PAGE_SIZE << gpa->sb_order;
+		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
 
 	/* TODO: Batch TLB flushing for block granularity.
@@ -637,8 +637,8 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 	debug_assert(head->local_page->pmds.vmr_id == vmr->id);
 
 	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
-	debug_BUG_ON((page_len != (1 << head->sb_order))
-			&& (head->block_order != head->sb_order));
+	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
+			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
 	pmd = head->local_page->pmds.pmd;
 	if (debug_WARN_ONCE(pmd_none(*pmd),
@@ -656,7 +656,7 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 		 * can have only single subblock. */
 		__cow_mkwrite_pte(vmr->host_vma, gpa_page(gpa),
 						pmd, addr, page_len);
-		addr += PAGE_SIZE << gpa->sb_order;
+		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
 }
 
@@ -740,7 +740,7 @@ __dup_partial_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 	int dst_vmr_id = dst_vmr ? dst_vmr->id : -1;
 
 	debug_assert(is_gpa_flags_set(src, GPA_PARTIAL_MAP_MASK));
-	debug_assert(src->block_order == src->sb_order);
+	debug_assert(gpa_block_order(src) == gpa_subblock_order(src));
 
 	/* NOTE: src_vmr and dst_vmr have same address range */
 	____gpa_to_hva_and_len(dst_vmr ? dst_vmr : src_vmr,
@@ -759,7 +759,7 @@ __dup_partial_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 
 	/* make local_page of @new */
 	dst->local_page = emm->lops.alloc_local_page(emm, dst_vmr_id,
-				NULL, page, src->sb_order, idx, dst);
+				NULL, page, gpa_subblock_order(src), idx, dst);
 	if (unlikely(dst->local_page == NULL)) {
 		printk(KERN_ERR "ERROR: %s failed to allocate local "
 				"page. emm: %d vmr: %d idx: 0x%lx\n",
@@ -802,7 +802,7 @@ __dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 
 		/* make local_page of @new */
 		dst->local_page = emm->lops.alloc_local_page(emm, dst_vmr_id,
-					NULL, page, src->sb_order, idx, dst);
+				NULL, page, gpa_subblock_order(src), idx, dst);
 		if (unlikely(dst->local_page == NULL)) {
 			printk(KERN_ERR "ERROR: %s failed to allocate local "
 					"page. emm: %d vmr: %d idx: 0x%lx\n",
@@ -825,7 +825,7 @@ error:
 		debug_assert(page);
 		emm->lops.free_local_page(emm, dst->local_page);
 		page->private = 0;
-		emp_clear_pg_mlocked(page, dst->sb_order);
+		emp_clear_pg_mlocked(page, gpa_subblock_order(dst));
 		_refill_global_free_page(emm, page);
 		dst->local_page = NULL;
 	}
@@ -1189,8 +1189,7 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		debug_BUG_ON(is_gpa_flags_set(new, GPA_IO_IP_MASK));
 #endif
 #ifdef CONFIG_EMP_BLOCK
-		new->block_order = old->block_order;
-		new->sb_order = old->sb_order;
+		copy_gpa_orders(new, old);
 #endif
 		new->last_mr_id = -1;
 		new->r_state = old->r_state;

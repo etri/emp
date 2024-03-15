@@ -121,9 +121,10 @@ enum gpa_state {
 
 
 #ifdef CONFIG_EMP_BLOCK
-#define gpa_subblock_order(g) ((g)->sb_order)
-#define gpa_subblock_size(g)  (1 << (g)->sb_order)
+#define gpa_subblock_order(g) ((g)->_sb_order)
+#define gpa_subblock_size(g)  (1 << gpa_subblock_order(g))
 #define gpa_subblock_mask(g)  (gpa_subblock_size(g) - 1)
+#define init_gpa_subblock_order(g, order) do { (g)->_sb_order = (order); } while (0)
 #else
 #define gpa_subblock_order(g) (0)
 #define gpa_subblock_size(g)  (1)

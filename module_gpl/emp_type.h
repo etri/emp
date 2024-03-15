@@ -120,10 +120,10 @@ struct emp_gpa {
 
 	// subblock order and block order of partial mapped block must be same
 	struct { /* 4-byte */
-		u8              sb_order:4;
-		u8              block_order:4;
-		u8		max_block_order:4;
-		u8		desc_order:4;
+		u8              _sb_order:4;
+		u8              _block_order:4;
+		u8		_max_block_order:4;
+		u8		_desc_order:4;
 		// for recording last memreg
 		u8              last_mr_id;
 		// r_state and cpu are updated together in add_gpas_to_inactive

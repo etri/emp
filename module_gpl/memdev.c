@@ -215,7 +215,7 @@ emp_memdev_post_write(struct connection *conn, struct work_request *w,
 		struct page *page;
 		struct page **memdev_map = conn->contexts[0]->memdev_map;
 		if (likely(w->gpa))
-			sb_order = w->gpa->sb_order;
+			sb_order = gpa_subblock_order(w->gpa);
 		else
 			sb_order = bvma_subblock_order((struct emp_mm *) conn->emm);
 		offset = pgoff >> sb_order;

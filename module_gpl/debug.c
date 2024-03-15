@@ -644,7 +644,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			__get_gpa_flags(gpa),
 			__get_r_state_str(gpa->r_state),
 			atomic_read(&gpa->refcnt),
-			gpa->block_order, gpa->sb_order,
+			gpa_block_order(gpa), gpa_subblock_order(gpa),
 
 			get_gpa_remote_page_val(gpa),
 			get_gpa_remote_page_refcnt(gpa),

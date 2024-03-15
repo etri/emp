@@ -87,16 +87,37 @@ static inline void ____emp_gpa_unlock(struct emp_gpa *gpa)
 			(index)++, \
 			(pos) = get_next_exist_gpadesc(vmr, &index))
 
-#define gpa_block_order(gpa) ((gpa)->block_order)
-#define gpa_block_size(gpa)	(1UL << ((gpa)->block_order))
-#define __gpa_block_size(gpa, order) (1UL << ((gpa)->block_order + order))
+#define gpa_block_order(gpa) ((gpa)->_block_order)
+#define gpa_block_size(gpa)	(1UL << gpa_block_order(gpa))
+#define __gpa_block_size(gpa, order) (1UL << (gpa_block_order(gpa) + order))
 #define gpa_next_block(gpa) (gpa + num_subblock_in_block(gpa))
 #define gpa_block_mask(gpa)	(~(gpa_block_size(gpa) - 1))
 #define gpa_block_offset(gpa, offset)	((offset) & (gpa_block_size(gpa) - 1))
 #define gpa_page_mask(gpa)	~(__gpa_block_size(gpa, PAGE_SHIFT) - 1)
 
-#define gpa_desc_order(gpa) ((gpa)->desc_order)
-#define gpa_max_block_order(gpa) ((gpa)->max_block_order)
+#define gpa_desc_order(gpa) ((gpa)->_desc_order)
+#define gpa_max_block_order(gpa) ((gpa)->_max_block_order)
+
+#define __update_gpa_desc_order(gpa) do { \
+		(gpa)->_desc_order = (gpa)->_block_order - (gpa)->_sb_order; \
+} while (0)
+#define set_gpa_block_order(gpa, order) do { \
+		(gpa)->_block_order = (order); \
+		__update_gpa_desc_order(gpa); \
+} while (0)
+#define inc_gpa_block_order(gpa) do { \
+		(gpa)->_block_order++; \
+		__update_gpa_desc_order(gpa); \
+} while (0)
+#define set_gpa_max_block_order(gpa, order) do { \
+		(gpa)->_max_block_order = (order); \
+} while (0)
+#define copy_gpa_orders(dst, src) do { \
+		(dst)->_sb_order = (src)->_sb_order; \
+		(dst)->_block_order = (src)->_block_order; \
+		(dst)->_max_block_order = (src)->_max_block_order; \
+		(dst)->_desc_order = (src)->_desc_order; \
+} while (0)
 
 static inline unsigned long
 _emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index, int order)

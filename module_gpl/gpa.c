@@ -31,10 +31,9 @@ static inline void emp_init_gpa(struct emp_mm *b, struct emp_gpa *g) {
 	g->r_state = GPA_INIT;
 	set_gpa_remote_page_free(g);
 	g->last_mr_id = -1;
-	g->block_order = BLOCK_MAX_ORDER;
-	g->sb_order = bvma_subblock_order(b);
-	g->max_block_order = BLOCK_MAX_ORDER;
-	g->desc_order = g->block_order - g->sb_order;
+	init_gpa_subblock_order(g, bvma_subblock_order(b));
+	set_gpa_block_order(g, BLOCK_MAX_ORDER);
+	set_gpa_max_block_order(g, BLOCK_MAX_ORDER);
 	init_progress_info(g);
 	init_gpa_contrib_inactive(g);
 	debug_gpa_refcnt_init(g);
@@ -171,13 +170,12 @@ static unsigned long get_num_low_memory_pages(struct emp_mm *e)
 #endif /* CONFIG_EMP_VM */
 
 #ifdef CONFIG_EMP_BLOCK
-static inline void set_gpa_block_order(struct emp_gpa *g, int order) {
-	g->block_order = order;
-	g->max_block_order = order;
-	g->desc_order = g->block_order - g->sb_order;
+static inline void update_gpa_order(struct emp_gpa *g, int order) {
+	set_gpa_block_order(g, order);
+	set_gpa_max_block_order(g, order);
 }
 #else
-#define set_gpa_block_order(g, o) do {} while(0)
+#define update_gpa_block_order(g, o) do {} while(0)
 #endif
 
 #ifdef CONFIG_EMP_EXT
@@ -195,7 +193,7 @@ __set_gpadesc(struct emp_mm *emm, unsigned long idx, struct emp_gpa *g,
 					struct gpadesc_region *region)
 {
 	emp_init_gpa(emm, g);
-	set_gpa_block_order(g, region->block_order);
+	update_gpa_order(g, region->block_order);
 #ifdef CONFIG_EMP_VM
 	if (region->lowmem_block)
 		set_gpa_flags_if_unset(g, GPA_LOWMEM_BLOCK_MASK);
@@ -778,7 +776,7 @@ __get_sb_hva_base(struct vm_area_struct *vma, struct emp_gpa *head,u64 head_hva,
 {
 	u64 sb_hva;
 	int sb_dist = sb_head - head;
-	int sb_page_order = sb_head->sb_order + PAGE_SHIFT;
+	int sb_page_order = gpa_subblock_page_order(sb_head);
 
 	sb_hva = head_hva + (sb_dist << sb_page_order);
 
@@ -808,7 +806,7 @@ __get_sb_pages(struct vm_area_struct *vma, struct emp_gpa *head,
 	int sb_dist, sb_pages_len;
 
 	if (likely(!is_gpa_flags_set(sb_head, GPA_PARTIAL_MAP_MASK)))
-		return (1 << sb_head->sb_order);
+		return gpa_subblock_size(sb_head);
 
 	sb_dist = sb_head - head;
 	sb_hva = head_hva + (sb_dist << PAGE_SHIFT);
@@ -826,7 +824,7 @@ __get_sb_pages(struct vm_area_struct *vma, struct emp_gpa *head,
 
 	return sb_pages_len;
 #else /* !CONFIG_EMP_USER */
-	return (1 << sb_head->sb_order);
+	return gpa_subblock_size(sb_head);
 #endif
 }
 
@@ -1254,7 +1252,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		spin_lock(ptl);
 
 		head_idx = max_head_idx + i;
-		head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, head->sb_order);
+		head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, gpa_subblock_order(head));
 #ifdef CONFIG_EMP_USER
 		if (unlikely(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK))) {
 			sb_page_len = ____partial_gpa_to_page_len(vmr, head,
