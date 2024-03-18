@@ -6,12 +6,6 @@
 #include "vm.h"
 #include "remote_page.h"
 
-enum EMP_COW_CALLER {
-	EMP_COW_FROM_HVA_FAULT,
-	EMP_COW_FROM_MMU_NOTIFIER,
-	NUM_EMP_COW_CALLER
-};
-
 bool __put_cow_remote_page(struct emp_mm *emm, struct emp_gpa *gpa);
 /* return true if remote page of gpa still exist (not cleared by CoW) */
 static inline bool put_cow_remote_page(struct emp_mm *emm, struct emp_gpa *gpa)

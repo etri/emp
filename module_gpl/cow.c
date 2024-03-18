@@ -438,12 +438,21 @@ get_cow_remote_page_block(struct emp_mm *emm,
 	return ret;
 }
 
+#ifdef CONFIG_EMP_DEBUG
+#define FAULT_FLAG_EMP_MMU_NOTI (1 << (sizeof(enum fault_flag) * 8 - 1))
+
+enum EMP_COW_CALLER {
+	EMP_COW_FROM_HVA_FAULT,
+	EMP_COW_FROM_MMU_NOTIFIER,
+	NUM_EMP_COW_CALLER
+};
+#endif /* CONFIG_EMP_DEBUG */
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
 const static char *emp_cow_caller_str[NUM_EMP_COW_CALLER] = {
 	"hva_fault",
 	"mmu_notifier",
 };
-#endif
+#endif /* CONFIG_EMP_DEBUG_SHOW_GPA_STATE */
 
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
 static void debug_show_gpa_state_cow(struct emp_mm *emm, struct emp_vmr *vmr,
@@ -660,29 +669,22 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 	}
 }
 
-static inline int
-check_cow_fault_hva(struct emp_vmr *vmr, struct emp_gpa *head)
-{
-	debug_assert(____emp_gpa_is_locked(head));
-
-	if (atomic_read(&head->refcnt) <= 1)
-		return false;
-
-	if (vmr->host_vma->vm_flags & VM_SHARED)
-		return false;
-
-	return true;
+static inline bool
+check_cow_fault_vmr(struct emp_vmr *vmr) {
+	return (vmr->host_vma->vm_flags & VM_SHARED) == 0;
 }
 
-static inline int
-check_cow_fault_mmu(struct emp_vmr *vmr, struct emp_gpa *head)
+static inline bool
+check_cow_fault_gpa(struct emp_gpa *head)
 {
 	debug_assert(____emp_gpa_is_locked(head));
+	return atomic_read(&head->refcnt) > 1;
+}
 
-	if (atomic_read(&head->refcnt) <= 1)
-		return false;
-
-	debug_assert((vmr->host_vma->vm_flags & VM_SHARED) == 0);
+static inline bool
+check_cow_fault_mmu_only(struct emp_gpa *head)
+{
+	debug_assert(____emp_gpa_is_locked(head));
 
 	/* It is difficult to distinguish CoW fault (write fault on
 	 * read-only shared page in private mapping) on mmu notifier.
@@ -699,14 +701,6 @@ check_cow_fault_mmu(struct emp_vmr *vmr, struct emp_gpa *head)
 
 	return true;
 }
-
-#ifdef CONFIG_EMP_IO
-typedef int (*check_cow_fault_t)(struct emp_vmr *vmr, struct emp_gpa *head);
-static check_cow_fault_t check_cow_fault[NUM_EMP_COW_CALLER] = {
-	check_cow_fault_hva,
-	check_cow_fault_mmu,
-};
-#endif
 
 static inline struct emp_gpa *
 alloc_and_lock_gpadesc(struct emp_mm *emm, int desc_order) {
@@ -1270,7 +1264,7 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
  */
 static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx,
-			struct vm_fault *vmf, enum EMP_COW_CALLER caller)
+			struct vm_fault *vmf)
 {
 	int ret = 0;
 	int desc_order;
@@ -1279,6 +1273,15 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	struct emp_gpa *old_head, *new_head, *old, *new, *demand;
 	unsigned int sb_order, demand_off, demand_sb_off;
 	struct vcpu_var *cpu;
+#ifdef CONFIG_EMP_DEBUG
+	enum EMP_COW_CALLER caller;
+
+	if (vmf->flags & FAULT_FLAG_EMP_MMU_NOTI) {
+		vmf->flags = FAULT_FLAG_WRITE;
+		caller = EMP_COW_FROM_MMU_NOTIFIER;
+	} else
+		caller = EMP_COW_FROM_HVA_FAULT;
+#endif /* CONFIG_EMP_DEBUG */
 
 	/* Assert that demand is the block head */
 	debug_assert(head_idx == emp_get_block_head_index(vmr, head_idx));
@@ -1335,7 +1338,7 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 			head_idx = emp_get_block_head_index(vmr, head_idx);
 			debug_assert(head_idx != WRONG_GPA_IDX); // we already have @gpa
 		}
-		if (check_cow_fault[caller](vmr, head) == false)
+		if (check_cow_fault_gpa(head) == false)
 			return 0; /* Not a cow fault anymore */
 	}
 #endif
@@ -1424,7 +1427,7 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 
 static inline int _handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 					struct emp_gpa *head, unsigned long idx,
-					unsigned long va, enum EMP_COW_CALLER c)
+					unsigned long va)
 {
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	unsigned long gpa_idx = (va - vmr->descs->vm_base)
@@ -1434,13 +1437,17 @@ static inline int _handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	struct vm_fault vmf = {	.vma = vmr->host_vma,
 				.pgoff = GPN_OFFSET(emm, HVA_TO_GPN(emm, vmr, va)),
 				.address = va,
+#ifdef CONFIG_EMP_DEBUG
+				.flags = FAULT_FLAG_EMP_MMU_NOTI,
+#else
 				.flags = FAULT_FLAG_WRITE,
+#endif
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 				.page = gpa->local_page->page,
 #endif
 				.prealloc_pte = NULL,
 	};
-	return __handle_emp_cow_fault(emm, vmr, head, idx, &vmf, c);
+	return __handle_emp_cow_fault(emm, vmr, head, idx, &vmf);
 }
 
 /* @retval 1 handle cow fault
@@ -1453,11 +1460,11 @@ handle_emp_cow_fault_hva(struct emp_mm *emm, struct emp_vmr *vmr,
 				struct vm_fault *vmf)
 {
 	debug_assert(idx == emp_get_block_head_index(vmr, idx));
-	if (!check_cow_fault_hva(vmr, head))
+	if (!check_cow_fault_vmr(vmr)
+			|| !check_cow_fault_gpa(head))
 		return 0;
 	else {
-		int ret = __handle_emp_cow_fault(emm, vmr, head, idx,
-						vmf, EMP_COW_FROM_HVA_FAULT);
+		int ret = __handle_emp_cow_fault(emm, vmr, head, idx, vmf);
 		return ret >= 0 ? 1 : ret;
 	}
 }
@@ -1505,7 +1512,8 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 		goto out;
 	}
 
-	if (!check_cow_fault_mmu(vmr, head)) {
+	debug_assert(check_cow_fault_vmr(vmr));
+	if (!check_cow_fault_gpa(head) || !check_cow_fault_mmu_only(head)) {
 		debug_page_ref_mark_safe(vmr->id, head->local_page, 0);
 		goto out;
 	}
@@ -1522,8 +1530,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	}
 #endif
 
-	ret = _handle_emp_cow_fault(emm, vmr, head, head_idx,
-				va, EMP_COW_FROM_MMU_NOTIFIER);
+	ret = _handle_emp_cow_fault(emm, vmr, head, head_idx, va);
 	if (ret > 0) {
 		/* re-new gpa and head as they may be updated. */
 		gpa = get_gpadesc(vmr, gpa_idx);
