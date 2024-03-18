@@ -1258,6 +1258,61 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 	return ret;
 }
 
+/* @retval 1 head gpa has been unlocked and re-locked.
+ * @retval 0 head gpa remained locked.
+ */
+static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
+			struct emp_gpa *head, unsigned long head_idx,
+			struct vm_fault *vmf)
+{
+	int ret = 0;
+#ifdef CONFIG_EMP_BLOCK
+	/* Support CSF and CPF
+	 * - We should wait for fetching whole block and install ptes. */
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+		struct emp_gpa *demand;
+		unsigned long demand_sb_off;
+		demand_sb_off = head->local_page->demand_offset
+					>> bvma_subblock_order(emm);
+		demand = get_gpadesc(vmr, demand_sb_off);
+#ifdef CONFIG_EMP_VM
+		/* Since VM does not use fork */
+		debug_assert(is_gpa_flags_set(demand, GPA_EPT_MASK) == false);
+#endif
+		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
+			emp_page_fault_hptes_map(emm, vmr, head, demand,
+					demand_sb_off - head_idx,
+					head, head + num_subblock_in_block(head),
+					true, vmf, true);
+		}
+		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
+#ifdef CONFIG_EMP_STAT
+		emm->stat.csf_fault++;
+#endif
+	}
+#endif /* CONFIG_EMP_BLOCK */
+
+#ifdef CONFIG_EMP_IO
+	// wait for completion of IO in progress
+	// TODO: GPA_IO_IP_MASK may not be set in user-level. Check it later.
+	if (is_gpa_flags_set(head, GPA_IO_IP_MASK)) {
+		struct page *page;
+		struct emp_gpa *gpa = head;
+		debug_BUG_ON(!gpa->local_page);
+		debug_BUG_ON(!gpa->local_page->page);
+		page = gpa->local_page->page;
+		emp_unlock_block(gpa);
+
+		wait_on_page_locked(page);
+
+		head = emp_lock_block(vmr, NULL, head_idx);
+		debug_BUG_ON(!head); // gpa has existed.
+		ret = 1;
+	}
+#endif
+	return ret;
+}
+
 /* @retval 1 handle a CoW fault
  * @retval 0 not a CoW fault, but exit normally
  * @retval negative error occurs
@@ -1269,10 +1324,8 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	int ret = 0;
 	int desc_order;
 	struct emp_gpa **gpa_dir = vmr->descs->gpa_dir;
-	unsigned long i, end_idx, len;
-	struct emp_gpa *old_head, *new_head, *old, *new, *demand;
-	unsigned int sb_order, demand_off, demand_sb_off;
-	struct vcpu_var *cpu;
+	unsigned long i, end_idx;
+	struct emp_gpa *old_head, *new_head, *old, *new;
 #ifdef CONFIG_EMP_DEBUG
 	enum EMP_COW_CALLER caller;
 
@@ -1290,62 +1343,21 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	debug_assert(gpa_block_order(head) ==
 			get_gpadesc_region(vmr->descs, head_idx)->block_order);
 
-#ifdef CONFIG_EMP_BLOCK
-	/* Support CSF and CPF
-	 * - We should wait for fetching whole block and install ptes. */
-	cpu = emp_this_cpu_ptr(emm->pcpus);
-	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
-		sb_order = bvma_subblock_order(emm);
-		demand_off = head->local_page->demand_offset;
-		demand_sb_off = demand_off >> sb_order;
-		demand = get_gpadesc(vmr, demand_sb_off);
-#ifdef CONFIG_EMP_VM
-		/* Since VM does not use fork */
-		debug_assert(is_gpa_flags_set(old, GPA_EPT_MASK) == false);
-#endif
-		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
-			emp_page_fault_hptes_map(emm, vmr, head, demand,
-					demand_sb_off - head_idx,
-					head, head + num_subblock_in_block(head),
-					true, vmf, true);
-		}
-		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
-#ifdef CONFIG_EMP_STAT
-		emm->stat.csf_fault++;
-#endif
-	}
-#endif /* CONFIG_EMP_BLOCK */
-
-	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK));
-	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
-
-#ifdef CONFIG_EMP_IO
-	// wait for completion of IO in progress
-	// TODO: GPA_IO_IP_MASK may not be set in user-level. Check it later.
-	if (is_gpa_flags_set(head, GPA_IO_IP_MASK)) {
-		struct page *page;
-		struct emp_gpa *gpa = head;
-		debug_BUG_ON(!gpa->local_page);
-		debug_BUG_ON(!gpa->local_page->page);
-		page = gpa->local_page->page;
-		emp_unlock_block(gpa);
-
-		wait_on_page_locked(page);
-
-		head = emp_lock_block(vmr, NULL, head_idx);
-		debug_BUG_ON(!head); // gpa has existed.
-		if (gpa != head) {
-			head_idx = emp_get_block_head_index(vmr, head_idx);
-			debug_assert(head_idx != WRONG_GPA_IDX); // we already have @gpa
-		}
+	if (__clear_gpa_for_cow(emm, vmr, head, head_idx, vmf)) {
+		head_idx = emp_get_block_head_index(vmr, head_idx);
+		debug_assert(head_idx != WRONG_GPA_IDX); // we already have @gpa
+		head = get_gpadesc(vmr, head_idx);
 		if (check_cow_fault_gpa(head) == false)
 			return 0; /* Not a cow fault anymore */
 	}
-#endif
+
+	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK));
+	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
+	debug_BUG_ON(is_gpa_flags_set(head, GPA_IO_IP_MASK));
+
 
 	desc_order = gpa_desc_order(head);
-	len = 1UL << desc_order;
-	end_idx = head_idx + len;
+	end_idx = head_idx + (1UL << desc_order);
 	old_head = head;
 
 	debug_show_gpa_state_cow(emm, vmr, caller,
@@ -1364,6 +1376,12 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	/* Duplicate gpa descriptors */
 	ret = dup_cow_gpadesc(vmr, head_idx, old_head, new_head);
 
+	if (unlikely(ret < 0)) {
+		/* no need to unlock since we have not modified gpa_dir */
+		free_gpadesc(emm, desc_order, new_head);
+		return ret;
+	}
+
 	/* Add new gpa descriptors to gpa directory of vmr */
 	for_each_old_new_gpas(i, old, new, head_idx, old_head, new_head)
 		change_gpa_dir(vmr, gpa_dir, i, old, new);
@@ -1379,12 +1397,6 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	debug_show_gpa_state_cow(emm, vmr, caller,
 				"__handle_emp_cow_fault(after)",
 				old_head, new_head, head_idx, end_idx);
-
-	if (unlikely(ret < 0)) {
-		if (new_head)
-			free_gpadesc(emm, desc_order, new_head);
-		return ret;
-	}
 
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	if (caller == EMP_COW_FROM_MMU_NOTIFIER) {
