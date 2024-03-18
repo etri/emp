@@ -1532,7 +1532,8 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 			struct vm_fault vmf = {
 				.vma = vmr->host_vma,
 				.pgoff = GPN_OFFSET(bvma, HVA_TO_GPN(bvma, vmr, hva)),
-				.address = hva
+				.address = hva,
+				.prealloc_pte = NULL,
 			};
 
 			vmf.flags = FAULT_FLAG_WRITE;

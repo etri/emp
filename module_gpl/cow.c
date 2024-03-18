@@ -1262,28 +1262,33 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
  * @retval 0 head gpa remained locked.
  */
 static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
-			struct emp_gpa *head, unsigned long head_idx,
-			struct vm_fault *vmf)
+			struct emp_gpa *head, unsigned long head_idx)
 {
 	int ret = 0;
 #ifdef CONFIG_EMP_BLOCK
 	/* Support CSF and CPF
 	 * - We should wait for fetching whole block and install ptes. */
 	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
-		struct emp_gpa *demand;
-		unsigned long demand_sb_off;
-		demand_sb_off = head->local_page->demand_offset
-					>> bvma_subblock_order(emm);
-		demand = get_gpadesc(vmr, demand_sb_off);
 #ifdef CONFIG_EMP_VM
 		/* Since VM does not use fork */
-		debug_assert(is_gpa_flags_set(demand, GPA_EPT_MASK) == false);
+		debug_assert(is_gpa_flags_set(head, GPA_EPT_MASK) == false);
 #endif
 		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
+			unsigned long sb_off = head->local_page->demand_offset
+						>> bvma_subblock_order(emm);
+			struct emp_gpa *demand = get_gpadesc(vmr, sb_off);
+			unsigned long va = GPN_OFFSET_TO_HVA(vmr, sb_off,
+						gpa_subblock_order(demand));
+			struct vm_fault vmf = {
+				.vma = vmr->host_vma,
+				.pgoff = GPN_OFFSET(emm, HVA_TO_GPN(emm, vmr, va)),
+				.address = va,
+				.prealloc_pte = NULL,
+			};
 			emp_page_fault_hptes_map(emm, vmr, head, demand,
-					demand_sb_off - head_idx,
+					sb_off - head_idx,
 					head, head + num_subblock_in_block(head),
-					true, vmf, true);
+					true, &vmf, true);
 		}
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 #ifdef CONFIG_EMP_STAT
@@ -1317,24 +1322,21 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
  * @retval 0 not a CoW fault, but exit normally
  * @retval negative error occurs
  */
+#ifdef CONFIG_EMP_DEBUG
 static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx,
-			struct vm_fault *vmf)
+			unsigned long va,
+			enum EMP_COW_CALLER caller, struct page *vmf_page)
+#else
+static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
+			struct emp_gpa *head, unsigned long head_idx)
+#endif
 {
 	int ret = 0;
 	int desc_order;
 	struct emp_gpa **gpa_dir = vmr->descs->gpa_dir;
 	unsigned long i, end_idx;
 	struct emp_gpa *old_head, *new_head, *old, *new;
-#ifdef CONFIG_EMP_DEBUG
-	enum EMP_COW_CALLER caller;
-
-	if (vmf->flags & FAULT_FLAG_EMP_MMU_NOTI) {
-		vmf->flags = FAULT_FLAG_WRITE;
-		caller = EMP_COW_FROM_MMU_NOTIFIER;
-	} else
-		caller = EMP_COW_FROM_HVA_FAULT;
-#endif /* CONFIG_EMP_DEBUG */
 
 	/* Assert that demand is the block head */
 	debug_assert(head_idx == emp_get_block_head_index(vmr, head_idx));
@@ -1343,7 +1345,7 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	debug_assert(gpa_block_order(head) ==
 			get_gpadesc_region(vmr->descs, head_idx)->block_order);
 
-	if (__clear_gpa_for_cow(emm, vmr, head, head_idx, vmf)) {
+	if (__clear_gpa_for_cow(emm, vmr, head, head_idx)) {
 		head_idx = emp_get_block_head_index(vmr, head_idx);
 		debug_assert(head_idx != WRONG_GPA_IDX); // we already have @gpa
 		head = get_gpadesc(vmr, head_idx);
@@ -1402,15 +1404,14 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	if (caller == EMP_COW_FROM_MMU_NOTIFIER) {
 		/* kernel WILL decrement count on __wp_page_copy().
 		 * Mark it before unlock the old gpa */
-		unsigned long va = vmf->address;
 		unsigned long gpa_idx = (va - vmr->descs->vm_base)
 					>> (PAGE_SHIFT + bvma_subblock_order(emm));
 		old = old_head + (gpa_idx - head_idx);
 		new = new_head + (gpa_idx - head_idx);
-		if (old->local_page && old->local_page->page == vmf->page) {
+		if (old->local_page && old->local_page->page == vmf_page) {
 			debug_page_ref_mark(vmr->id, old->local_page, -1);
 			debug_page_ref_mmu_noti_end(old->local_page);
-		} else if (new->local_page && new->local_page->page == vmf->page) {
+		} else if (new->local_page && new->local_page->page == vmf_page) {
 			debug_page_ref_mark(vmr->id, new->local_page, -1);
 			debug_page_ref_mmu_noti_end(new->local_page);
 		}
@@ -1437,31 +1438,6 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	return 1;
 }
 
-static inline int _handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
-					struct emp_gpa *head, unsigned long idx,
-					unsigned long va)
-{
-#ifdef CONFIG_EMP_DEBUG_PAGE_REF
-	unsigned long gpa_idx = (va - vmr->descs->vm_base)
-					>> (PAGE_SHIFT + bvma_subblock_order(emm));
-	struct emp_gpa *gpa = get_gpadesc(vmr, gpa_idx);
-#endif
-	struct vm_fault vmf = {	.vma = vmr->host_vma,
-				.pgoff = GPN_OFFSET(emm, HVA_TO_GPN(emm, vmr, va)),
-				.address = va,
-#ifdef CONFIG_EMP_DEBUG
-				.flags = FAULT_FLAG_EMP_MMU_NOTI,
-#else
-				.flags = FAULT_FLAG_WRITE,
-#endif
-#ifdef CONFIG_EMP_DEBUG_PAGE_REF
-				.page = gpa->local_page->page,
-#endif
-				.prealloc_pte = NULL,
-	};
-	return __handle_emp_cow_fault(emm, vmr, head, idx, &vmf);
-}
-
 /* @retval 1 handle cow fault
  * @retval 0 not a cow fault
  * @retval negative exit with error.
@@ -1476,7 +1452,18 @@ handle_emp_cow_fault_hva(struct emp_mm *emm, struct emp_vmr *vmr,
 			|| !check_cow_fault_gpa(head))
 		return 0;
 	else {
-		int ret = __handle_emp_cow_fault(emm, vmr, head, idx, vmf);
+		int ret;
+#ifdef CONFIG_EMP_DEBUG
+		unsigned long va = vmf->address;
+		unsigned long gpa_idx = (va - vmr->descs->vm_base)
+				>> (PAGE_SHIFT + bvma_subblock_order(emm));
+		struct emp_gpa *gpa = get_gpadesc(vmr, gpa_idx);
+		ret = __handle_emp_cow_fault(emm, vmr, head, idx, va,
+					EMP_COW_FROM_HVA_FAULT,
+					gpa->local_page->page);
+#else
+		ret = __handle_emp_cow_fault(emm, vmr, head, idx);
+#endif
 		return ret >= 0 ? 1 : ret;
 	}
 }
@@ -1542,7 +1529,13 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	}
 #endif
 
-	ret = _handle_emp_cow_fault(emm, vmr, head, head_idx, va);
+#ifdef CONFIG_EMP_DEBUG
+	ret = __handle_emp_cow_fault(emm, vmr, head, head_idx, va,
+					EMP_COW_FROM_MMU_NOTIFIER,
+					gpa->local_page->page);
+#else
+	ret = __handle_emp_cow_fault(emm, vmr, head, head_idx);
+#endif
 	if (ret > 0) {
 		/* re-new gpa and head as they may be updated. */
 		gpa = get_gpadesc(vmr, gpa_idx);
