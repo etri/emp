@@ -88,19 +88,20 @@ static inline void emp_list_add_tail(struct list_head *head, struct emp_list *li
 	debug_assert(atomic_read(&list->len) > 0);
 }
 
-static inline void emp_list_del(struct list_head *pos, struct emp_list *list)
-{
-	list_del(pos);
-	atomic_dec(&list->len);
-	debug_assert(atomic_read(&list->len) >= 0);
-}
-
 static inline void emp_list_del_init(struct list_head *pos, struct emp_list *list)
 {
 	list_del_init(pos);
 	atomic_dec(&list->len);
 	debug_assert(atomic_read(&list->len) >= 0);
 }
+
+/* We define emp_list_del() as same as emp_list_del_init().
+ * list_del() and list_init() in kernel has almost same number of operations,
+ * but list_del() destroys the entry and list_del_init() makes the entry as
+ * an empty list. We want the deleted entry to be the empty list.
+ * For example, debug_els_stretch_rep4().
+ */
+#define emp_list_del(pos, list) emp_list_del_init(pos, list)
 
 static inline void emp_list_splice_tail(struct temp_list *add,
 					struct emp_list *list)
