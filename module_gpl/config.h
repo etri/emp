@@ -19,6 +19,7 @@
 //#define CONFIG_EMP_DEBUG_RSS_PROGRESS
 #define CONFIG_EMP_DEBUG_RSS_MAX_VMRS (128) // maximum number of vmr supported by RSS debugger
 //#define CONFIG_EMP_DEBUG_PF_HISTORY
+//#define CONFIG_EMP_DEBUG_TRIGGER_REDUCE // Skip setting referenced flag on gpa at exit. More reduce operations will occur.
 #endif
 
 #define COMPILER_OPT __attribute__((optimize("-O2")))

@@ -452,6 +452,16 @@ static inline pmd_t *emp_lp_get_pmd(struct local_page *lp, int vmr_id) {
 		return NULL;
 }
 
+#define EMP_LP_PMDS_EMPTY(p) ((p)->next == NULL)
+#define EMP_LP_PMDS_SINGLE(p) ((p)->next == (p))
+
+static inline struct mapped_pmd *
+emp_lp_get_any_mapped_pmd(struct local_page *lp) {
+	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
+		return NULL;
+	else
+		return &lp->pmds;
+}
 
 bool emp_lp_insert_pmd(struct emp_mm *, struct local_page *, int, pmd_t *);
 
@@ -462,9 +472,6 @@ emp_lp_remove_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id)
 {
 	return emp_lp_pop_pmd(emm, lp, vmr_id) ? true : false;
 }
-
-#define EMP_LP_PMDS_EMPTY(p) ((p)->next == NULL)
-#define EMP_LP_PMDS_SINGLE(p) ((p)->next == (p))
 
 static inline int emp_lp_count_pmd(struct local_page *lp) {
 	debug_emp_lp_count_pmd(lp);

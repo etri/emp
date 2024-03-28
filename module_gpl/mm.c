@@ -33,7 +33,7 @@
 int COMPILER_DEBUG
 __pte_install(struct emp_mm *bvma,struct vm_area_struct *vma,
 		struct vm_fault *vmf, int order, pmd_t *pmd,
-		pmd_t orig_pmd, const bool partial_map)
+		const bool partial_map)
 {
 	pte_t pte_entry;
 	spinlock_t *ptl;

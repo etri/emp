@@ -839,36 +839,39 @@ __get_sb_pages(struct vm_area_struct *vma, struct emp_gpa *head,
  *
  * @return is it dirty block?
  */
-static bool COMPILER_DEBUG
+static void COMPILER_DEBUG
 __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 					pmd_t *pmd, struct mmu_gather *tlb)
 {
-	struct emp_gpa *sb_head;
+	struct emp_gpa *gpa;
 	struct emp_mm *emm = vmr->emm;
 	struct mm_struct *mm = vmr->host_mm;
 	struct vm_area_struct *vma = vmr->host_vma;
-	unsigned int sb_order, sb_pages_len;
-	bool mapped, accessed, dirty, tlb_flush_needed = false;
+	unsigned long hva, addr, pfn;
+	unsigned int pages_len;
+	bool mapped, accessed, dirty;
 	int i;
+#ifdef CONFIG_EMP_DEBUG
+	struct mapped_pmd *p, *pp;
+#endif
 
-	sb_order = bvma_subblock_order(emm);
+	____local_gpa_to_hva_and_len(vmr, head, hva, pages_len);
 
 	// block-grained dirty management. need to more finer?
 	dirty = false;
 
-	for_each_gpas(sb_head, head) {
+	for_each_gpas(gpa, head) {
 		pte_t *ptep, pte;
 		int pte_clear_count;
 		struct page *sb_page, *page;
-		unsigned long sb_hva, addr, pfn;
 
-		sb_page = sb_head->local_page->page;
+		sb_page = gpa->local_page->page;
 		if (page_mapcount(sb_page) == 0) {
-			sb_head->local_page->vmr_id = vmr->id;
-			debug_lru_set_vmr_id_mark(sb_head->local_page, vmr->id);
-			emp_lp_remove_pmd(emm, sb_head->local_page, vmr->id);
-			debug_lru_del_vmr_id_mark(sb_head->local_page, vmr->id);
-			debug_assert(EMP_LP_PMDS_EMPTY(&sb_head->local_page->pmds));
+			gpa->local_page->vmr_id = vmr->id;
+			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->id);
+			emp_lp_remove_pmd(emm, gpa->local_page, vmr->id);
+			debug_lru_del_vmr_id_mark(gpa->local_page, vmr->id);
+			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
 
 			/* NOTE: RSS is not changed. @vmr is the only vmr and it is the owner. */
 			continue;
@@ -877,28 +880,27 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		mapped = false;
 		accessed = false;
 
-		____local_gpa_to_hva_and_len(vmr, sb_head, sb_hva, sb_pages_len);
 
 		/* block is aligned */
-		debug_assert(pmd == sb_head->local_page->pmds.pmd);
-		if (unlikely(sb_head->local_page->vmr_id < 0)) {
-			sb_head->local_page->vmr_id = vmr->id;
-			debug_lru_set_vmr_id_mark(sb_head->local_page, vmr->id);
+		debug_assert(emp_lp_lookup_pmd(gpa->local_page, vmr->id, &p, &pp));
+		debug_assert(pmd == p->pmd);
+		if (unlikely(gpa->local_page->vmr_id < 0)) {
+			gpa->local_page->vmr_id = vmr->id;
+			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->id);
 		}
-		emp_lp_remove_pmd(emm, sb_head->local_page, vmr->id);
-		debug_lru_del_vmr_id_mark(sb_head->local_page, vmr->id);
-		if (sb_head->local_page->vmr_id != vmr->id)
-			emp_update_rss_sub(vmr, sb_pages_len,
+		emp_lp_remove_pmd(emm, gpa->local_page, vmr->id);
+		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->id);
+		if (gpa->local_page->vmr_id != vmr->id)
+			emp_update_rss_sub(vmr, pages_len,
 						DEBUG_RSS_SUB_UNMAP_PTES,
-						sb_head, DEBUG_UPDATE_RSS_SUBBLOCK);
+						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 
-		ptep = pte_offset_map(pmd, sb_hva);
+		ptep = pte_offset_map(pmd, hva);
 		pfn = pte_pfn(*ptep);
 
 		pte_clear_count = 0;
-		for (i = 0, addr = sb_hva, page = sb_page; i < sb_pages_len;
-				i++, addr += PAGE_SIZE, ptep++, pfn++,
-				page++) {
+		for (i = 0, addr = hva, page = sb_page; i < pages_len;
+				i++, addr += PAGE_SIZE, ptep++, pfn++, page++) {
 			pte = *ptep;
 			/* kernel may be closing vma and concurrently unmap pte.
 			 * Then, just skip the unmap. */
@@ -918,8 +920,8 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 					i, pte_val(pte), pte_pfn(pte),
 					(unsigned long) sb_page, page_to_pfn(sb_page),
 					sb_page->flags,
-					i, (unsigned long) (page + i),
-					page_to_pfn(page + i), (page + i)->flags,
+					i, (unsigned long) (sb_page + i),
+					page_to_pfn(sb_page + i), (sb_page + i)->flags,
 					vmr->vm_start, vmr->vm_end,
 					vma->vm_flags,
 					vmr->descs->vm_base);
@@ -941,15 +943,14 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		}
 
 		page_ref_sub(sb_page, pte_clear_count);
-		debug_page_ref_mark(vmr->id, sb_head->local_page, -pte_clear_count);
+		debug_page_ref_mark(vmr->id, gpa->local_page, -pte_clear_count);
 		debug_check_lessthan(page_count(sb_page), 1);
-		if (mapped) {
-			if (accessed && 
-				!PageReferenced(sb_head->local_page->page)) {
-				SetPageReferenced(sb_head->local_page->page);
-			}
-			tlb_flush_needed = true;
+		if (mapped && accessed &&
+				!PageReferenced(sb_page)) {
+			SetPageReferenced(gpa->local_page->page);
 		}
+
+		hva += pages_len * PAGE_SIZE;
 	}
 	if (dirty) {
 		set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
@@ -957,8 +958,6 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	}
 
 	emp_update_rss_cached(vmr);
-
-	return tlb_flush_needed;
 }
 
 /** unmap_ptes - Unmap page table entries from the host page table
@@ -968,54 +967,32 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
  * @param size total size
  * @param tlb TLB info
  */
-static void unmap_ptes(struct emp_mm *bvma, struct emp_gpa *head,
+static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
 		       unsigned long head_hva, unsigned long size)
 {
+	unsigned long end_hva = head_hva + size;
+	struct mapped_pmd *p;
+	struct emp_vmr *vmr;
+	pmd_t *pmd;
 	spinlock_t *ptl;
-	bool tlb_flush_needed;
-	unsigned int sb_order;
-
-	struct emp_vmr *next_vmr;
 	struct mmu_gather tlb;
-	int next_vmr_id;
-	struct mapped_pmd *p, *pp;
 
-	sb_order = bvma_subblock_order(bvma);
-
-	next_vmr = EMP_LP_PMDS_EMPTY(&head->local_page->pmds)? NULL:
-			bvma->vmrs[head->local_page->pmds.vmr_id];
-	next_vmr_id = -1;
-	
-	while (next_vmr) {
-		kernel_tlb_gather_mmu(&tlb, next_vmr->host_mm,
-				      head_hva, head_hva + size);
-
-		if (emp_lp_lookup_pmd(head->local_page, next_vmr->id, &p, &pp)) {
-			/* NOTE: we acquire and release page table lock at block
-			 *       granularity to prevent deadlock with
-			 *       __unmap_max_block().
-			 */
-			ptl = pte_lockptr(next_vmr->host_mm, p->pmd);
-			spin_lock(ptl);
-			tlb_flush_needed |= __unmap_ptes(next_vmr, head,
-						head_hva, p->pmd, &tlb);
-			spin_unlock(ptl);
-
-			if (!EMP_LP_PMDS_EMPTY(&head->local_page->pmds))
-				next_vmr_id = head->local_page->pmds.vmr_id;
-		}
-
-		kernel_tlb_finish_mmu(&tlb, head_hva, head_hva + size);
-
-		if (next_vmr_id != -1) {
-			next_vmr = bvma->vmrs[next_vmr_id];
-			next_vmr_id = -1;
-		} else {
-			next_vmr = NULL;
-		}
+	while ((p = emp_lp_get_any_mapped_pmd(head->local_page)) != NULL) {
+		vmr = emm->vmrs[p->vmr_id];
+		pmd = p ->pmd;
+		kernel_tlb_gather_mmu(&tlb, vmr->host_mm, head_hva, end_hva);
+		/* NOTE: we acquire and release page table lock at block
+		 *       granularity to prevent deadlock with
+		 *       __unmap_max_block().
+		 */
+		ptl = pte_lockptr(vmr->host_mm, pmd);
+		spin_lock(ptl);
+		__unmap_ptes(vmr, head, head_hva, pmd, &tlb);
+		spin_unlock(ptl);
+		kernel_tlb_finish_mmu(&tlb, head_hva, end_hva);
 	}
 
-	debug_unmap_ptes(bvma, head, size);
+	debug_unmap_ptes(emm, head, size);
 }
 
 /**
@@ -1306,6 +1283,15 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 					__local_gpa_to_page_len(vmr, gpa),
 					DEBUG_RSS_SUB_PUT_LOCAL_PAGE,
 					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+	}
+	if (emp_lp_count_pmd(gpa->local_page) == 0) {
+		clear_gpa_flags_if_set(gpa, GPA_nPT_MASK);
+		if (PageReferenced(gpa->local_page->page)) {
+			ClearPageReferenced(gpa->local_page->page);
+#ifndef CONFIG_EMP_DEBUG_TRIGGER_REDUCE
+			set_gpa_flags_if_unset(gpa, GPA_REFERENCED_MASK);
+#endif
+		}
 	}
 }
 

@@ -141,11 +141,11 @@ static int COMPILER_DEBUG
 emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr, 
 			struct emp_gpa *head, struct emp_gpa *demand,
 			struct emp_gpa *fs, struct emp_gpa *fe,
-			struct emp_gpa *prefetched_sb, bool fetch, 
-			struct vm_fault *vmf, pmd_t *pmd, pmd_t orig_pmd)
+			struct emp_gpa *prefetched_sb,
+			struct vm_fault *vmf, pmd_t *pmd)
 {
 	struct page *p;
-	struct emp_gpa *sb_head;
+	struct emp_gpa *gpa;
 	int ret = 0, r;
 	unsigned int sb_order, sb_mask;
 	bool csf_prefetching;
@@ -165,48 +165,48 @@ emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 	debug_BUG_ON((fe - fs) > num_subblock_in_block(demand));
 
 	/* TODO: csf_prefetching does not need a loop */
-	for_each_gpas(sb_head, head) {
-		sb_order = gpa_subblock_order(sb_head);
-		sb_mask = gpa_subblock_mask(sb_head);
-		p = sb_head->local_page->page;
+	for_each_gpas(gpa, head) {
+		sb_order = gpa_subblock_order(gpa);
+		sb_mask = gpa_subblock_mask(gpa);
+		p = gpa->local_page->page;
 
 		if (prefetched_sb) {
 			/* prefetched demand sub-block/page is already serviced */
-			if (sb_head == prefetched_sb)
+			if (gpa == prefetched_sb)
 				goto next;
 		} else if (csf_prefetching) {
 			/* only demand sub-block wait_read && mapping */
-			if (demand != sb_head)
+			if (demand != gpa)
 				goto next;
 		}
 
 		// ignore already mapped subblocks
-		if (sb_head < fs || sb_head >= fe)
+		if (gpa < fs || gpa >= fe)
 			goto next;
 
 		fault.page = p;
 
-		debug_page_ref_will_pte_beg(sb_head->local_page, gpa_subblock_size(sb_head));
-		emp_get_subblock(sb_head, true);
-		debug_page_ref_will_pte_end(sb_head->local_page, gpa_subblock_size(sb_head));
+		debug_page_ref_will_pte_beg(gpa->local_page, gpa_subblock_size(gpa));
+		emp_get_subblock(gpa, true);
+		debug_page_ref_will_pte_end(gpa->local_page, gpa_subblock_size(gpa));
 
-		r = pte_install(bvma, vma, &fault, sb_order, pmd, orig_pmd, head);
+		r = pte_install(bvma, vma, &fault, sb_order, pmd, head);
 
-		debug_check_notnull_pointer(sb_head->local_page->w);
+		debug_check_notnull_pointer(gpa->local_page->w);
 
 		// pmd is exclusive to w, so it must be used after pte_insetall
-		emp_lp_insert_pmd(bvma, sb_head->local_page, vmr->id, pmd);
-		debug_lru_add_vmr_id_mark(sb_head->local_page, vmr->id);
+		emp_lp_insert_pmd(bvma, gpa->local_page, vmr->id, pmd);
+		debug_lru_add_vmr_id_mark(gpa->local_page, vmr->id);
 
-		if (demand == sb_head) {
+		if (demand == gpa) {
 			vmf->page = p + (vmf->pgoff & sb_mask);
 			ret = r;
 		}
 
 next:
 		/* for the next iteration */
-		add_vmf_pgoff(&fault, gpa_subblock_size(sb_head));
-		add_vmf_address(&fault, gpa_subblock_size(sb_head) << PAGE_SHIFT);
+		add_vmf_pgoff(&fault, gpa_subblock_size(gpa));
+		add_vmf_address(&fault, gpa_subblock_size(gpa) << PAGE_SHIFT);
 	}
 
 	if (head->local_page->vmr_id != vmr->id)
@@ -264,8 +264,8 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 		emp_ext.prepare_install_hptes(emm, head, demand, demand_idx, fs, fe,
 						prefetched_sb, fetch);
 #endif	
-	ret = emp_install_hptes(emm, vmr, head, demand, fs, fe, prefetched_sb,
-						fetch, vmf, pmd, orig_pmd);
+	ret = emp_install_hptes(emm, vmr, head, demand, fs, fe,
+					prefetched_sb, vmf, pmd);
 
 	if (!demand_check && (ret != VM_FAULT_NOPAGE)) {
 		printk(KERN_ERR "pmd_install does not succeed. "
