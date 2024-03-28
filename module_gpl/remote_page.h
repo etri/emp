@@ -188,6 +188,26 @@ static inline int get_gpa_remote_page_refcnt(struct emp_gpa *gpa)
 }
 #endif /* CONFIG_EMP_DEBUG_SHOW_GPA_STATE */
 
+static inline bool is_block_remote_page_valid(struct emp_gpa *head)
+{
+	/* if GPA_TOUCHED_MASK is unset, it has zero pages.
+	 * if head is on GPA_WB state, the remote page is being modified.
+	 */
+	if (!is_gpa_flags_set(head, GPA_TOUCHED_MASK))
+		return true;
+	if (head->r_state == GPA_WB)
+		return false;
+	else {
+		/* Check remote pages of all subblocks */
+		struct emp_gpa *gpa;
+		for_each_gpas(gpa, head) {
+			if (is_gpa_remote_page_free(gpa))
+				return false;
+		}
+		return true;
+	}
+}
+
 #define mr_alloc_rp(b, m) \
 	(atomic64_add_return(b->mrs.memregs_block_size, \
 			   &(m)->alloc_len) - \
