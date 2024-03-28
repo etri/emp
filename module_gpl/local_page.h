@@ -357,17 +357,19 @@ enum local_page_flags {
 
 #define ____is_local_page_flags(lp, flag_idx) ((lp)->flags & (1 << (flag_idx)))
 #define ____set_local_page_flags(lp, flag_idx) do { \
+	debug_assert(((lp)->flags & (1 << (flag_idx))) == 0); \
 	(lp)->flags = (lp)->flags | (1 << (flag_idx)); \
 } while (0)
 #define ____clear_local_page_flags(lp, flag_idx) do { \
+	debug_assert((lp)->flags & (1 << (flag_idx))); \
 	(lp)->flags = (lp)->flags & (~(1 << (flag_idx))); \
 } while (0)
 #define ____set_local_page_list_flags(lp, flag_idx) do { \
 	debug_assert((flag_idx) == LOCAL_PAGE_ON_MRU \
 			|| (flag_idx) == LOCAL_PAGE_ON_LRU \
 			|| (flag_idx) == LOCAL_PAGE_ON_GLOBAL); \
-	(lp)->flags = ((lp)->flags & (~(LOCAL_PAGE_ON_LIST_MASK))) \
-					| (1 << (flag_idx)); \
+	debug_assert(((lp)->flags & LOCAL_PAGE_ON_LIST_MASK) == 0); \
+	(lp)->flags = (lp)->flags | (1 << (flag_idx)); \
 	debug_lru_set_list_mark(lp); \
 } while (0)
 

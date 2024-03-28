@@ -85,14 +85,15 @@ refill_lru_buf(struct emp_mm *emm, struct slru *target_list,
 	emp_list_lock(global_list);
 	emp_list_for_each_safe(cur, n, global_list) {
 		lp = __get_local_page_from_list(cur);
-		debug_assert(is_local_page_on_global(lp));
 		if (emp_trylock_local_page(emm, lp) == NULL) {
 			if ((++num_fail) >= lb_size)
 				break;
 			else
 				continue;
 		}
+		debug_assert(is_local_page_on_global(lp));
 		emp_list_del(cur, global_list);
+		clear_local_page_on_global(lp);
 		temp_list_add_tail(cur, &to_lru);
 		if ((++num_pop) >= lb_size)
 			break;
@@ -106,14 +107,15 @@ refill_lru_buf(struct emp_mm *emm, struct slru *target_list,
 		emp_list_lock(mru_list);
 		emp_list_for_each_safe(cur, n, mru_list) {
 			lp = __get_local_page_from_list(cur);
-			debug_assert(is_local_page_on_mru(lp));
 			if (emp_trylock_local_page(emm, lp) == NULL) {
 				if ((++num_fail) >= lb_size)
 					break;
 				else
 					continue;
 			}
+			debug_assert(is_local_page_on_mru(lp));
 			emp_list_del(cur, mru_list);
+			clear_local_page_on_mru(lp);
 			temp_list_add_tail(cur, &to_lru);
 			if ((++num_pop) >= lb_size)
 				break;
@@ -124,8 +126,8 @@ refill_lru_buf(struct emp_mm *emm, struct slru *target_list,
 	emp_list_lock(lru_list);
 	temp_list_for_each_safe(cur, n, &to_lru) {
 		lp = __get_local_page_from_list(cur);
-		set_local_page_cpu_lru(lp, cpu_id);
 		temp_list_del(cur, &to_lru);
+		set_local_page_cpu_lru(lp, cpu_id);
 		emp_list_add_tail(cur, lru_list);
 		emp_unlock_local_page(emm, lp);
 	}
@@ -160,9 +162,10 @@ static void flush_active_mru(struct emp_mm *emm, struct slru *target_list,
 	emp_list_lock(mru_list);
 	emp_list_for_each_safe(cur, n, mru_list) {
 		lp = __get_local_page_from_list(cur);
-		debug_assert(is_local_page_on_mru(lp));
 		if (emp_trylock_local_page(emm, lp)) {
+			debug_assert(is_local_page_on_mru(lp));
 			emp_list_del(cur, mru_list);
+			clear_local_page_on_mru(lp);
 			temp_list_add_tail(cur, &to_global);
 		}
 	}
@@ -178,6 +181,7 @@ static void flush_active_mru(struct emp_mm *emm, struct slru *target_list,
 		temp_list_for_each_safe(cur, n, &to_global) {
 			lp = __get_local_page_from_list(cur);
 			temp_list_del(cur, &to_global);
+			set_local_page_cpu_mru(lp, cpu_id);
 			emp_list_add_tail(cur, mru_list);
 			emp_unlock_local_page(emm, lp);
 		}
@@ -187,8 +191,8 @@ static void flush_active_mru(struct emp_mm *emm, struct slru *target_list,
 
 	temp_list_for_each_safe(cur, n, &to_global) {
 		lp = __get_local_page_from_list(cur);
-		set_local_page_global(lp);
 		temp_list_del(cur, &to_global);
+		set_local_page_global(lp);
 		emp_list_add_tail(cur, global_list);
 		emp_unlock_local_page(emm, lp);
 	}
@@ -420,15 +424,17 @@ retry_start:
 		struct local_page *lp;
 
 		lp = __get_local_page_from_list(cur);
-		debug_assert(get_local_page_cpu(lp) == cpu_id
-					&& is_local_page_on_lru(lp));
 
 		if ((v = emp_trylock_local_page(bvma, lp)) == NULL)
 			continue;
 
+		debug_assert(get_local_page_cpu(lp) == cpu_id
+					&& is_local_page_on_lru(lp));
+
 		if (!is_unmapped_active(v) &&
 				gpa_acquire(bvma->vmrs[lp->vmr_id], v)) {
 			emp_list_del(&lp->lru_list, list);
+			clear_local_page_on_lru(lp);
 			v->r_state = GPA_TRANS_AL;
 			vs[n_vs++] = v;
 			vs_pages_len += gpa_block_size(v);
@@ -574,10 +580,12 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 		struct emp_gpa *v;
 
 		lp = __get_local_page_from_list(cur);
-		debug_assert(get_local_page_cpu(lp) == cpu_id && is_local_page_on_lru(lp));
 
 		if ((v = emp_trylock_local_page(bvma, lp)) == NULL)
 			continue;
+
+		debug_assert(get_local_page_cpu(lp) == cpu_id
+					&& is_local_page_on_lru(lp));
 
 		reinsert_gpa = !check_block_free(bvma, v);
 
@@ -585,6 +593,7 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 		// by calling sub_inactive_list_page_len
 		if (reinsert_gpa == false) {
 			emp_list_del(&lp->lru_list, list);
+			clear_local_page_on_lru(lp);
 			debug_check_notlocked(v);
 
 			v->r_state = GPA_TRANS_IL;
