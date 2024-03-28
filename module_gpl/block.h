@@ -38,87 +38,6 @@ static inline void ____emp_gpa_unlock(struct emp_gpa *gpa)
 }
 
 #ifdef CONFIG_EMP_BLOCK
-#define num_subblock_in_block(g) \
-	(1 << (gpa_block_order(g) - gpa_subblock_order(g)))
-
-#define for_each_gpas(pos, head) \
-	for (pos = (head); \
-		pos < ((head) + (num_subblock_in_block(head))); \
-		pos++)
-
-#define for_each_gpas_reverse(pos, head) \
-	for (pos = ((head) + (num_subblock_in_block(head)) - 1); \
-		pos >= (head); pos--)
-
-#define for_each_gpas_index(pos, index, head) \
-	for (pos = (head), index = 0;\
-			pos < ((head) + (num_subblock_in_block(head)));\
-			pos++, index++)
-
-#define for_all_gpa_heads_range(vmr, index, pos, start, end) \
-	for ((index) = emp_get_block_head_index(vmr, start), \
-		(pos) = get_gpadesc(vmr, index); \
-			(pos) && ((index) < (end)); \
-			(index) += num_subblock_in_block(pos), \
-			(pos) = get_gpadesc(vmr, index))
-
-#define raw_for_all_gpa_heads_range(vmr, index, pos, start, end) \
-	for ((index) = (start), \
-	     (pos) = get_next_exist_head_gpadesc(vmr, &(index)); \
-			(pos) && ((index) < (end)); \
-			(index) += num_subblock_in_block(pos), \
-			(pos) = get_next_exist_head_gpadesc(vmr, &(index)))
-
-#define for_all_gpa_heads(vmr, index, pos) \
-	for_all_gpa_heads_range(vmr, index, pos, 0, (vmr)->descs->gpa_len)
-
-#define raw_for_all_gpa_heads(vmr, index, pos) \
-	raw_for_all_gpa_heads_range(vmr, index, pos, 0, (vmr)->descs->gpa_len)
-
-#define for_all_gpas(vmr, index, pos) \
-	for ((index) = 0, (pos) = get_gpadesc(vmr, index); \
-			(pos); \
-			(index)++, \
-			(pos) = get_gpadesc(vmr, index))
-
-#define raw_for_all_gpas(vmr, index, pos) \
-	for ((index) = 0, (pos) = get_next_exist_gpadesc(vmr, &index); \
-			(pos); \
-			(index)++, \
-			(pos) = get_next_exist_gpadesc(vmr, &index))
-
-#define gpa_block_order(gpa) ((gpa)->_block_order)
-#define gpa_block_size(gpa)	(1UL << gpa_block_order(gpa))
-#define __gpa_block_size(gpa, order) (1UL << (gpa_block_order(gpa) + order))
-#define gpa_next_block(gpa) (gpa + num_subblock_in_block(gpa))
-#define gpa_block_mask(gpa)	(~(gpa_block_size(gpa) - 1))
-#define gpa_block_offset(gpa, offset)	((offset) & (gpa_block_size(gpa) - 1))
-#define gpa_page_mask(gpa)	~(__gpa_block_size(gpa, PAGE_SHIFT) - 1)
-
-#define gpa_desc_order(gpa) ((gpa)->_desc_order)
-#define gpa_max_block_order(gpa) ((gpa)->_max_block_order)
-
-#define __update_gpa_desc_order(gpa) do { \
-		(gpa)->_desc_order = (gpa)->_block_order - (gpa)->_sb_order; \
-} while (0)
-#define set_gpa_block_order(gpa, order) do { \
-		(gpa)->_block_order = (order); \
-		__update_gpa_desc_order(gpa); \
-} while (0)
-#define inc_gpa_block_order(gpa) do { \
-		(gpa)->_block_order++; \
-		__update_gpa_desc_order(gpa); \
-} while (0)
-#define set_gpa_max_block_order(gpa, order) do { \
-		(gpa)->_max_block_order = (order); \
-} while (0)
-#define copy_gpa_orders(dst, src) do { \
-		(dst)->_sb_order = (src)->_sb_order; \
-		(dst)->_block_order = (src)->_block_order; \
-		(dst)->_max_block_order = (src)->_max_block_order; \
-		(dst)->_desc_order = (src)->_desc_order; \
-} while (0)
-
 static inline unsigned long
 _emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index, int order)
 {
@@ -243,49 +162,11 @@ static inline void _emp_unlock_block(struct emp_gpa *head)
 }
 #else /* !CONFIG_EMP_BLOCK */
 
-#define num_subblock_in_block(g) (1)
-
-#define for_each_gpas(pos, head) \
-	for (pos = (head); pos != NULL; pos = NULL)
-
-#define for_each_gpas_reverse(pos, head) \
-	for (pos = (head); pos != NULL; pos = NULL)
-
-#define for_each_gpas_index(pos, index, head) \
-	for (pos = (head), index = 0; pos != NULL; pos = NULL, index++)
-
-#define for_all_gpas_range(vmr, index, pos, start, end) \
-	for ((index) = (start), (pos) = get_gpadesc(vmr, index); \
-			(pos); \
-			(index)++, \
-			(pos) = get_gpadesc(vmr, index))
-
-#define raw_for_all_gpas(vmr, index, pos) \
-	for ((index) = 0, (pos) = get_next_exist_gpadesc(vmr, &index); \
-			(index) < (vmr)->descs->gpa_len; \
-			(index)++, \
-			(pos) = get_next_exist_gpadesc(vmr, &index))
-
-#define for_all_gpas(vmr, index, pos) \
-	for_all_gpas_range(vmr, index, pos, 0, (vmr)->descs->gpa_len)
-
-#define for_all_gpa_heads(vmr, index, pos) for_all_gpas(vmr, index, pos)
-
-#define raw_for_all_gpa_heads(vmr, index, pos) raw_for_all_gpas(vmr, index, pos)
-
-#define gpa_block_order(gpa) (0)
-#define gpa_block_size(gpa)	(1UL)
-#define __gpa_block_size(gpa, order) (1UL << (order))
-#define gpa_next_block(gpa) (gpa + 1)
-#define gpa_block_mask(gpa)	(~0UL)
-#define gpa_block_offset(gpa, offset) (0)
-#define gpa_page_mask(gpa) (~((1UL << PAGE_SHIFT) - 1))
-
-#define emp_get_block_head(g) (g)
-
 #define _emp_get_block_head_index(vmr, index, order) \
 				({ debug_assert((order) == 0); (index); })
 #define emp_get_block_head_index(vmr, index) (index)
+#define _emp_get_block_head(g, order) (g)
+#define emp_get_block_head(g) (g)
 
 /**
  * emp_lock_block - Lock the head of the block
