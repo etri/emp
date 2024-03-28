@@ -392,7 +392,7 @@ __put_cow_remote_page(struct emp_mm *emm, struct emp_gpa *gpa)
 	if (atomic_dec_and_test(&crp->refcnt)) {
 		u64 val = __get_remote_page_val(&crp->remote_page);
 		debug_assert((val & REMOTE_PAGE_FLAG_MASK) == 0);
-		__set_remote_page(&gpa->remote_page, val);
+		__set_gpa_remote_page(gpa, val);
 		emp_kmem_cache_free(emm->mrs.cow_remote_pages_cache, crp);
 		return true;
 	} else {

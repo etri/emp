@@ -4,6 +4,7 @@
 #include <linux/wait.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
+#include "debug_gpa.h"
 #include "emp_type.h"
 #include "vm.h"
 
@@ -170,9 +171,23 @@ init_remote_page(struct remote_page *rp, int mrid, unsigned long offset)
 #define get_gpa_remote_page_mrid(gpa) get_remote_page_mrid(&(gpa)->remote_page)
 #define get_gpa_remote_page_offset(gpa) get_remote_page_offset(&(gpa)->remote_page)
 #define get_gpa_remote_page_cow(gpa) get_remote_page_cow(&(gpa)->remote_page)
-#define set_gpa_remote_page(gpa, val) set_remote_page(&(gpa)->remote_page, val)
-#define set_gpa_remote_page_free(gpa) set_remote_page_free(&(gpa)->remote_page)
-#define set_gpa_remote_page_cow(gpa, crp) set_remote_page_cow(&(gpa)->remote_page, crp)
+#define set_gpa_remote_page(gpa, val) do { \
+		debug_progress(gpa, val); \
+		set_remote_page(&(gpa)->remote_page, val); \
+} while (0)
+#define __set_gpa_remote_page(gpa, val) do { \
+		debug_progress(gpa, val); \
+		__set_remote_page(&(gpa)->remote_page, val); \
+} while (0)
+#define set_gpa_remote_page_free(gpa) do { \
+		debug_progress(gpa, FREE_REMOTE_PAGE_VAL); \
+		set_remote_page_free(&(gpa)->remote_page); \
+} while (0)
+#define set_gpa_remote_page_cow(gpa, crp) do { \
+		debug_progress(gpa, crp); \
+		debug_progress(gpa, __get_remote_page_val(&((crp)->remote_page))); \
+		set_remote_page_cow(&(gpa)->remote_page, crp); \
+} while (0)
 
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
 static inline int get_gpa_remote_page_refcnt(struct emp_gpa *gpa)
