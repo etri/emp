@@ -13,6 +13,7 @@
 #define CONFIG_EMP_DEBUG_SHOW_GPA_STATE 128 // show gpa state only when the number of gpa descriptors of a VMR is smaller or equal to this number
 //#define CONFIG_EMP_DEBUG_SHOW_PROGRESS // show the progress of long running functions
 //#define CONFIG_EMP_DEBUG_LRU_LIST
+//#define CONFIG_EMP_DEBUG_LRU_LIST_DEL
 //#define CONFIG_EMP_DEBUG_PAGE_REF
 //#define CONFIG_EMP_DEBUG_GPA_REFCNT
 //#define CONFIG_EMP_DEBUG_RSS

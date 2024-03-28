@@ -88,8 +88,16 @@ static inline void emp_list_add_tail(struct list_head *head, struct emp_list *li
 	debug_assert(atomic_read(&list->len) > 0);
 }
 
+#ifdef CONFIG_EMP_DEBUG_LRU_LIST_DEL
+/* Implemented in module_gpl/debug.c */
+void debug_emp_list_del_init(struct list_head *, struct emp_list *);
+#else
+#define debug_emp_list_del_init(pos, list) do {} while (0)
+#endif
+
 static inline void emp_list_del_init(struct list_head *pos, struct emp_list *list)
 {
+	debug_emp_list_del_init(pos, list);
 	list_del_init(pos);
 	atomic_dec(&list->len);
 	debug_assert(atomic_read(&list->len) >= 0);

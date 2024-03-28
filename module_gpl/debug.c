@@ -2135,4 +2135,18 @@ void debug_handle_active_fault_handled(struct emp_vmr *vmr,
 	}
 }
 EXPORT_SYMBOL(debug_handle_active_fault_handled);
+
+#ifdef CONFIG_EMP_DEBUG_LRU_LIST_DEL
+void debug_emp_list_del_init(struct list_head *pos, struct emp_list *list)
+{
+	struct list_head *cur;
+	emp_list_for_each(cur, list) {
+		if (cur == pos)
+			return;
+	}
+	BUG();
+}
+EXPORT_SYMBOL(debug_emp_list_del_init);
+#endif /* CONFIG_EMP_DEBUG_LRU_LIST_DEL */
+
 #endif
