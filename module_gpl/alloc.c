@@ -1,7 +1,6 @@
 #include <linux/version.h>
 
 #include "vm.h"
-#include "mm.h"
 #include "alloc.h"
 #include "debug.h"
 #include "reclaim.h"

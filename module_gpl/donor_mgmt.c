@@ -1,7 +1,6 @@
 #include "vm.h"
 #include "glue.h"
 #include "gpa.h"
-#include "mm.h"
 #include "reclaim.h"
 #include "iov.h"
 #include "donor_mem_rw.h"

@@ -443,6 +443,7 @@ static inline void emp_lp_free_pmd(struct emp_mm *emm, struct mapped_pmd *p) {
 	emp_kmem_cache_free(emm->ftm.mapped_pmd_cache, p);
 }
 
+bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id);
 bool emp_lp_lookup_pmd(struct local_page *, int, struct mapped_pmd **,
 		       struct mapped_pmd **);
 

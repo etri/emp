@@ -5,6 +5,25 @@
 #include "local_page.h"
 #include "block-flag.h"
 
+inline bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id)
+{
+	struct local_page *lp = gpa->local_page;
+	struct mapped_pmd *p;
+	if (unlikely(!lp))
+		return false;
+
+	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
+		return false;
+
+	p = &lp->pmds;
+	do {
+		if (p->vmr_id == vmr_id)
+			return true;
+		p = p->next;
+	} while (p != &lp->pmds);
+	return false;
+}
+
 bool emp_lp_lookup_pmd(struct local_page *lp, int vmr_id,
 		       struct mapped_pmd **p, struct mapped_pmd **pp)
 {

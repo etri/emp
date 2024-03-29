@@ -11,7 +11,6 @@
 #include "emp_ioctl.h"
 #include "vm.h"
 #include "glue.h"
-#include "mm.h"
 #include "block.h"
 #include "reclaim.h"
 #include "iov.h"

@@ -1694,7 +1694,7 @@ void debug___emp_page_fault_hva2(struct emp_gpa *head)
 		}
 }
 
-void debug_pte_install(struct emp_mm *bvma, struct page *page, int page_compound_len)
+void debug_pte_install(struct page *page, int page_compound_len)
 {
 	if (emp_page_count_min(page, page_compound_len) >= 1)
 		return;

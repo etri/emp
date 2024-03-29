@@ -240,7 +240,7 @@ void debug_set_gpa_remote(struct emp_mm *, struct emp_gpa *);
 void debug_clear_and_map_pages(struct emp_gpa *);
 void debug___emp_page_fault_hva(struct emp_gpa *head);
 void debug___emp_page_fault_hva2(struct emp_gpa *);
-void debug_pte_install(struct emp_mm *, struct page *, int);
+void debug_pte_install(struct page *, int);
 void debug_select_victims_al(struct list_head *, int);
 void debug_wait_for_prefetch_subblocks(struct emp_gpa *g);
 void debug_evict_block(struct emp_gpa *);
@@ -295,7 +295,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_clear_and_map_pages(head) do{}while(0)
 #define debug___emp_page_fault_hva(head) do{}while(0)
 #define debug___emp_page_fault_hva2(head) do{}while(0)
-#define debug_pte_install(b, p, pl) do{}while(0)
+#define debug_pte_install(p, pl) do{}while(0)
 #define debug_select_victims_al(h, l) do{}while(0)
 #define debug_wait_for_prefetch_subblocks(g) do{}while(0)
 #define debug_evict_block(head) do{}while(0)

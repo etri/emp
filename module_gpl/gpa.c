@@ -6,7 +6,6 @@
 #include "emp_type.h"
 #include "gpa.h"
 #include "vm.h"
-#include "mm.h"
 #include "alloc.h"
 #include "hva.h"
 #include "glue.h"
