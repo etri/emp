@@ -1311,7 +1311,29 @@ static inline u64 get_gfn_offset(struct emp_gpa *g) {
 		1 << (g->gfn_offset_order - 1): 0;
 }
 
+static inline void __check_pmd_list(struct emp_gpa *head, struct emp_gpa *gpa)
+{
+	struct local_page *lp1;
+	struct local_page *lp2;
+	struct mapped_pmd *p;
+	if (head == gpa)
+		return;
+	if (__is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
+		return;
+	lp1 = head->local_page;
+	lp2 = gpa->local_page;
+	debug_assert(emp_lp_count_pmd(lp1) == emp_lp_count_pmd(lp2));
+	if (emp_lp_count_pmd(lp1) == 0)
+		return;
+	p = &lp1->pmds;
+	do {
+		debug_assert(emp_lp_lookup_vmr_id(gpa, p->vmr_id));
+		p = p->next;
+	} while (p != &lp1->pmds);
+}
+
 void debug_emp_unlock_block(struct emp_gpa *head) {
+	struct emp_gpa *gpa;
 	BUG_ON(!____emp_gpa_is_locked(head));
 	if (head != emp_get_block_head(head)) {
 		// _emp_lock_block() may unlock non-head gpa
@@ -1319,17 +1341,36 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 	}
 	if (head->r_state == GPA_ACTIVE
 			|| head->r_state == GPA_INACTIVE) {
-		struct local_page *lp = head->local_page;
-		debug_assert(lp);
-		debug_assert(lp->vmr_id >= 0);
+		struct local_page *lp;
+		struct emp_vmr *vmr;
+		for_each_gpas(gpa, head) {
+			lp = gpa->local_page;
+			debug_assert(lp);
+			debug_assert(lp->vmr_id >= 0);
+			vmr = lp->emm->vmrs[lp->vmr_id];
+			debug_assert(vmr);
+			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
+			__check_pmd_list(head, gpa);
+		}
+		lp = head->local_page;
 		debug_assert(is_local_page_on_list(lp));
 		debug_assert(!list_empty(&lp->lru_list));
 		debug_assert(lp->lru_list.next != LIST_POISON1
 				&& lp->lru_list.prev != LIST_POISON2);
 	} else if (head->r_state == GPA_WB) {
-		struct local_page *lp = head->local_page;
 		struct work_request *w;
-		debug_assert(lp);
+		struct local_page *lp;
+		struct emp_vmr *vmr;
+		for_each_gpas(gpa, head) {
+			lp = gpa->local_page;
+			debug_assert(lp);
+			if (lp->vmr_id < 0)
+				continue;
+			vmr = lp->emm->vmrs[lp->vmr_id];
+			debug_assert(vmr);
+			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
+		}
+		lp = head->local_page;
 		debug_assert(is_local_page_on_list(lp));
 		w = lp->w;
 		debug_assert(w);

@@ -214,6 +214,9 @@ alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
 	list_add(&local_page->elem, &bvma->ftm.local_page_list);
 	spin_unlock(&bvma->ftm.local_page_list_lock);
 #endif
+#ifdef CONFIG_EMP_DEBUG
+	local_page->emm = bvma;
+#endif
 
 	return local_page;
 }
