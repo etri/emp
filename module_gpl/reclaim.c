@@ -289,7 +289,7 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 			if (!is_debug_page_ref_correct(g->local_page, &refcnt, &mapcnt, 0)) {
 				struct local_page *lp = g->local_page;
 				emp_debug_bulk_msg_lock();
-				printk(KERN_ERR "DEBUG: [CANNOT_ACQUIRE] (%s) lp: %016lx vmr: %d gpa: %lx curr: %2d sum: %2d map: %2d mmu: %d io: %d pte: %d unmap: %d counnt_max: %d count_private: %d\n",
+				printk(KERN_ERR "DEBUG: [CANNOT_ACQUIRE] (%s) lp: %016lx vmr: %d gpa: %lx curr: %2d sum: %2d map: %2d mmu: %d io: %d pte: %d unmap: %d count_max: %d count_private: %d\n",
 						__func__,
 						(unsigned long) lp,
 						lp->vmr_id,
