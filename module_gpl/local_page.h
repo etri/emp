@@ -311,11 +311,10 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 #define debug_page_ref_dup_end(lp) do { (lp)->debug_page_ref_in_dup--; } while (0)
 #define debug_page_ref_calibrate_beg(lp, len) do { (lp)->debug_page_ref_in_calibrate += (len); } while (0)
 #define debug_page_ref_calibrate_end(lp, len) do { (lp)->debug_page_ref_in_calibrate -= (len); } while (0)
-/* for handle_emp_cow_fault_mmu() */
-#define debug_page_ref_mmu_noti_beg_safe(lp) do { if (lp) debug_page_ref_mmu_noti_beg_careful(lp); } while (0)
-#define debug_page_ref_mmu_noti_end_safe(lp) do { if (lp) debug_page_ref_mmu_noti_end_careful(lp); } while (0)
 #define debug_page_ref_mark_safe(vmrid, lp, add_data) do { if (lp) debug_page_ref_mark(vmrid, lp, add_data); } while (0)
 #define debug_page_ref_mark_known_diff_safe(vmrid, lp, add_data, diff) do { if (lp) debug_page_ref_mark_known_diff(vmrid, lp, add_data, diff); } while (0)
+#define debug_page_ref_mark_map(vmrid, lp) debug_page_ref_mark(vmrid, lp, (lp)->debug_page_ref_page_len)
+#define debug_page_ref_mark_unmap(vmrid, lp) debug_page_ref_mark(vmrid, lp, -(lp)->debug_page_ref_page_len)
 #else
 #define debug_page_ref_mark(vmrid, lp, add_data) do {} while (0)
 #define debug_page_ref_mark_known_diff(vmrid, lp, add_data, diff) do {} while (0)
@@ -335,11 +334,10 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 #define debug_page_ref_dup_end(lp) do {} while (0)
 #define debug_page_ref_calibrate_beg(lp, len) do {} while (0)
 #define debug_page_ref_calibrate_end(lp, len) do {} while (0)
-/* for handle_emp_cow_fault_mmu() */
-#define debug_page_ref_mmu_noti_beg_safe(lp) do {} while (0)
-#define debug_page_ref_mmu_noti_end_safe(lp) do {} while (0)
 #define debug_page_ref_mark_safe(vmrid, lp, add_data) do {} while (0)
 #define debug_page_ref_mark_known_diff_safe(vmrid, lp, add_data, diff) do {} while (0)
+#define debug_page_ref_mark_map(vmrid, lp) do {} while (0)
+#define debug_page_ref_mark_unmap(vmrid, lp) do {} while (0)
 #endif
 
 enum local_page_flags {

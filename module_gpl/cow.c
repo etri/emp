@@ -1438,6 +1438,7 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 					>> (PAGE_SHIFT + bvma_subblock_order(emm));
 		old = old_head + (gpa_idx - head_idx);
 		new = new_head + (gpa_idx - head_idx);
+		/* Note that the caller is mmu_notifier. old and new has local_page. */
 		if (old->local_page && old->local_page->page == vmf_page) {
 			debug_page_ref_mark(vmr->id, old->local_page, -1);
 			debug_page_ref_mmu_noti_end(old->local_page);
@@ -1488,9 +1489,10 @@ handle_emp_cow_fault_hva(struct emp_mm *emm, struct emp_vmr *vmr,
 		unsigned long gpa_idx = (va - vmr->descs->vm_base)
 				>> (PAGE_SHIFT + bvma_subblock_order(emm));
 		struct emp_gpa *gpa = get_gpadesc(vmr, gpa_idx);
+		struct page *vmf_page = gpa->local_page ? gpa->local_page->page
+							: NULL;
 		ret = __handle_emp_cow_fault(emm, vmr, head, idx, va,
-					EMP_COW_FROM_HVA_FAULT,
-					gpa->local_page->page);
+					EMP_COW_FROM_HVA_FAULT, vmf_page);
 #else
 		ret = __handle_emp_cow_fault(emm, vmr, head, idx);
 #endif
@@ -1507,12 +1509,20 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	unsigned long gpa_idx, head_idx;
 	struct emp_gpa *gpa, *head;
 	int ret = 0;
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
+	struct local_page *orig_lp = NULL;
+	struct emp_gpa *orig_gpa = NULL;
+#endif
 
 	gpa_idx = (va - vmr->descs->vm_base)
 			>> (PAGE_SHIFT + bvma_subblock_order(emm));
 	gpa = get_gpadesc(vmr, gpa_idx);
 	if (unlikely(!gpa))
 		return -ENOMEM;
+
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
+	orig_gpa = gpa;
+#endif
 
 	head = emp_lock_block(vmr, &gpa, gpa_idx);
 	debug_BUG_ON(!head); // we already have @gpa
@@ -1522,20 +1532,31 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	 *       local page. Thus, we use debug_page_ref_*_safe() functions.
 	 */
 
-	/* kernel incremented page count on do_wp_page(). Mark it.  */
-	debug_page_ref_mmu_noti_beg_safe(gpa->local_page);
-	debug_page_ref_mark_safe(vmr->id, gpa->local_page, 1);
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
+	/* kernel incremented page count on do_wp_page().
+	 * If gpa->local_page->page is the page, mark it.  */
+	if (orig_gpa == gpa)
+		orig_lp = gpa->local_page;
+	else if (orig_gpa->local_page && gpa->local_page &&
+			orig_gpa->local_page->page == gpa->local_page->page)
+		orig_lp = gpa->local_page;
+	if (orig_lp) {
+		debug_page_ref_mmu_noti_beg(orig_lp);
+		debug_page_ref_mark(vmr->id, orig_lp, 1);
+	}
+#endif
 
 	if (atomic_read(&head->refcnt) <= 1) {
 		/* This page may be previously duplicated, but it has
 		 * no write-permission yet. Just give the permission. */
 		if (likely(head->r_state == GPA_ACTIVE && head->local_page)) {
 			cow_mkwrite_pte(vmr, head_idx, head);
-			debug_page_ref_mark_safe(vmr->id, head->local_page, 0);
+			debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
 		}
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 		else {
 			debug_page_ref_mark_safe(vmr->id, head->local_page, 0);
+			debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
 		}
 #endif
 		goto out;
@@ -1543,7 +1564,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 
 	debug_assert(check_cow_fault_vmr(vmr));
 	if (!check_cow_fault_gpa(head) || !check_cow_fault_mmu_only(head)) {
-		debug_page_ref_mark_safe(vmr->id, head->local_page, 0);
+		debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
 		goto out;
 	}
 
@@ -1573,19 +1594,21 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 			return -ENOMEM;
 		head = emp_get_block_head(gpa);
 	}
-#ifdef CONFIG_EMP_DEBUG_PAGE_REF
-	else {
-		debug_page_ref_mark_known_diff_safe(vmr->id, gpa->local_page, -1, 1);
-	}
-#endif
 
 	/* This is write fault, mark it. */
 	set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
  
 out:
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	/* kernel WILL decrement count on __wp_page_copy().
-	 * Mark it before unlock the old gpa */
-	debug_page_ref_mmu_noti_end_safe(gpa->local_page);
+	 * Mark it before unlock the old gpa.
+	 * When ret > 0, __handle_emp_cow_fault() already has called
+	 * debug_page_ref_mmu_noti_end(). */
+	if (orig_lp && ret <= 0) {
+		debug_page_ref_mark(vmr->id, orig_lp, -1);
+		debug_page_ref_mmu_noti_end(orig_lp);
+	}
+#endif
 
 	emp_unlock_block(head);
 
@@ -2066,7 +2089,7 @@ void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool 
 			emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
 			debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->id);
 			debug_page_ref_dup_end(gpa->local_page);
-			debug_page_ref_mark(new_vmr->id, gpa->local_page, 1); /* mark the kernel's increment on page count */
+			debug_page_ref_mark_map(new_vmr->id, gpa->local_page); /* mark the kernel's increment on page count */
 
 			/* NOTE: RSS is updated by kernel */
 			emp_update_rss_add_kernel(new_vmr,
