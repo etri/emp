@@ -15,6 +15,7 @@
 //#define CONFIG_EMP_DEBUG_LRU_LIST
 //#define CONFIG_EMP_DEBUG_LRU_LIST_DEL
 //#define CONFIG_EMP_DEBUG_PAGE_REF
+//#define CONFIG_EMP_DEBUG_PAGE_REF_LESS_ONLY // do not treat correct > page_count(p) as an error.
 //#define CONFIG_EMP_DEBUG_GPA_REFCNT
 //#define CONFIG_EMP_DEBUG_RSS
 //#define CONFIG_EMP_DEBUG_RSS_PROGRESS

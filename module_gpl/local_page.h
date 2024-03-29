@@ -212,6 +212,12 @@ retry:
 		ret = true;
 		goto out;
 	}
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF_LESS_ONLY
+	if (ref > correct) {
+		ret = true;
+		goto out;
+	}
+#endif
 	if (t == 0) {
 		t = get_ts_in_ns();
 		cond_resched();
