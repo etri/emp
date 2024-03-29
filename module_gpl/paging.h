@@ -113,7 +113,7 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 // get hva and number of pages with consideration of partial map
 #define ____gpa_to_hva_and_len(vmr, g, idx, hva, len) do { \
 	(hva) = GPN_OFFSET_TO_HVA(vmr, idx, gpa_subblock_order(g)); \
-	if (likely(!is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) \
+	if (likely(!__is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) \
 		(len) = 1 << gpa_subblock_order(g); \
 	else \
 		/* (hva) may be updated in ____partial_gpa_to_page_len() */ \
@@ -123,7 +123,7 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 #define ____local_gpa_to_hva_and_len(vmr, g, hva, len) do { \
 	(hva) = GPN_OFFSET_TO_HVA(vmr, (g)->local_page->gpa_index, \
 					gpa_subblock_order(g)); \
-	if (likely(!is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) \
+	if (likely(!__is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) \
 		(len) = 1 << gpa_subblock_order(g); \
 	else \
 		/* (hva) may be updated in ____partial_gpa_to_page_len() */ \
@@ -148,7 +148,7 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 static inline int
 __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 {
-	if (likely(!is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)))
+	if (likely(!__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)))
 		return 1 << gpa_subblock_order(gpa);
 	else {
 		unsigned long hva = GPN_OFFSET_TO_HVA(vmr, idx,
@@ -160,7 +160,7 @@ __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 #define local_gpa_to_hva(vmr, g) ({ \
 	unsigned long ____hva = GPN_OFFSET_TO_HVA(vmr, \
 			(g)->local_page->gpa_index, gpa_subblock_order(g)); \
-	if (likely(is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) { \
+	if (likely(__is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) { \
 		unsigned long ____len; \
 		/* (hva) may be updated in ____partial_gpa_to_page_len() */ \
 		____len = ____partial_gpa_to_page_len(vmr, g, \
@@ -191,7 +191,7 @@ static inline int
 __local_block_to_page_len(struct emp_vmr *vmr, struct emp_gpa *head)
 {
 	debug_assert(head->local_page);
-	if (likely(!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)))
+	if (likely(!__is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)))
 		return gpa_block_size(head);
 	else {
 		unsigned long idx = head->local_page->gpa_index;
