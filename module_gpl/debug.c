@@ -1338,6 +1338,8 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 				&& w->sibling.prev != LIST_POISON2);
 	} else if (head->r_state == GPA_INIT) {
 		debug_assert(!head->local_page);
+		if (is_gpa_flags_set(head, GPA_REMOTE_MASK))
+			debug_assert(is_block_remote_page_valid(head));
 	} else if (head->r_state == GPA_FETCHING) {
 		printk(KERN_ERR "WARN: gpa will be unlocked with "
 				"r_state = GPA_FETCHING. flags: 0x%x\n",

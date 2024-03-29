@@ -165,14 +165,18 @@
 		(gpa)->local_page->page; \
 })
 
+#ifdef CONFIG_EMP_DEBUG
+/* This is not efficient. Don't use this if you are not debugging. */
 static inline bool is_gpa_remote_page_valid(struct emp_gpa *gpa)
 {
 	/* if GPA_TOUCHED_MASK is unset, it has zero pages.
 	 * if gpa is on GPA_WB state, the remote page is being modified.
 	 */
-	return !is_gpa_flags_set(gpa, GPA_TOUCHED_MASK)
-		|| (gpa->r_state != GPA_WB && !is_gpa_remote_page_free(gpa));
+	struct emp_gpa *head = emp_get_block_head(gpa);
+	return !is_gpa_flags_set(head, GPA_TOUCHED_MASK)
+		|| (head->r_state != GPA_WB && !is_gpa_remote_page_free(gpa));
 }
+#endif /* CONFIG_EMP_DEBUG */
 
 static inline spinlock_t *
 __get_pte_lockptr_single(struct emp_mm *emm, struct emp_gpa *head)
@@ -285,6 +289,14 @@ static inline void __set_block_remote(struct emp_gpa *head) {
 	struct emp_gpa *gpa;
 	for_each_gpas(gpa, head)
 		__set_gpa_remote(gpa);
+}
+
+static inline void __set_block_remote_flag(struct emp_gpa *head) {
+	struct emp_gpa *gpa;
+	for_each_gpas(gpa, head) {
+		debug_assert(is_gpa_remote_page_valid(gpa));
+		set_gpa_flags_if_unset(gpa, GPA_REMOTE_MASK);
+	}
 }
 
 static inline void __set_block_state(struct emp_gpa *head, int state) {
@@ -865,6 +877,8 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 	unsigned long addr, page_len;
 	int ret;
 
+	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
+
 	____gpa_to_hva_and_len(vmr, old_head, head_idx, addr, page_len);
 
 	// Duplicate old_head's local page to new_head
@@ -931,13 +945,14 @@ dup_cow_gpadesc_single_active(struct emp_vmr *vmr, unsigned long head_idx,
 	struct emp_gpa *old, *new;
 
 	debug_assert(single_mapped_gpa(old_head));
+	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
 
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head)
 		__migrate_local_page(vmr, old, new);
 
 	cow_mkwrite_pte(vmr, head_idx, new_head);
 
-	if (is_gpa_remote_page_valid(old_head)) {
+	if (is_block_remote_page_valid(old_head)) {
 		__set_block_remote(old_head);
 	} else {
 		struct emp_mm *emm = vmr->emm;
@@ -974,6 +989,8 @@ dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 	unsigned long addr, page_len;
 	pmd_t *pmd;
 	int ret = 0;
+
+	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
 
 	// Duplicate old_head's local page to new_head
 	ret = dup_block_local_page(emm, NULL, vmr,
@@ -1026,6 +1043,8 @@ dup_cow_gpadesc_inactive(struct emp_vmr *vmr, unsigned long head_idx,
 	unsigned long idx;
 	struct emp_gpa *old, *new;
 
+	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
+
 	if (old_head->local_page->vmr_id != vmr->id) {
 		struct emp_vmr *old_vmr;
 		int page_len;
@@ -1044,7 +1063,7 @@ dup_cow_gpadesc_inactive(struct emp_vmr *vmr, unsigned long head_idx,
 		__migrate_local_page(vmr, old, new);
 	/* new->remote_page was removed at __dup_cow_gpadesc() */
 
-	if (is_gpa_remote_page_valid(old_head)) {
+	if (is_block_remote_page_valid(old_head)) {
 		__set_block_remote(old_head);
 	} else {
 		struct emp_mm *emm = vmr->emm;
@@ -1136,9 +1155,19 @@ dup_cow_gpadesc_remote(struct emp_vmr *vmr, unsigned long head_idx,
 	debug_assert(old_head->r_state == GPA_INIT);
 	debug_assert(new_head->r_state == GPA_INIT);
 	ret = get_cow_remote_page_block(vmr->emm, old_head, new_head);
-	if (unlikely(ret < 0))
+	if (unlikely(ret < 0)) {
 		printk(KERN_ERR "ERROR: %s failed to get cow remote page. "
 				"err: %d\n", __func__, ret);
+		return ret;
+	}
+
+	/* Since we have cleared GPA_remote at __dup_cow_gpadesc, restore it.
+	 * Note that GPA_remote can be set on both of GPA_WB and GPA_INIT.
+	 * And, this is the only case that @new is at remote after CoW,
+	 * even though it will be fetched soon. Clear and restore may be the
+	 * good way of handling this.
+	 */
+	__set_block_remote_flag(new_head);
 	return ret;
 }
 
@@ -1161,7 +1190,7 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		 * GPA_access: copy
 		 * GPA_ept: copy.
 		 * GPA_hpt: copy.
-		 * GPA_remote: copy. If @old is at remote, @new will be at remote.
+		 * GPA_remote: clear. This func frees the remote page of @new.
 		 * GPA_prefetched_csf: must be unset.
 		 * GPA_prefetched_cpf: must be unset.
 		 * GPA_prefetch_once: copy. This is used to prevent prefetch
@@ -1175,12 +1204,13 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		 * GPA_io_in_progress: must be unset.
 		 */
 		init_gpa_flags(new, get_gpa_flags(old));
-		debug_BUG_ON(is_gpa_flags_set(new, GPA_PREFETCHED_CSF_MASK));
-		debug_BUG_ON(is_gpa_flags_set(new, GPA_PREFETCHED_CPF_MASK));
+		clear_gpa_flags_if_set(new, GPA_REMOTE_MASK);
+		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CSF_MASK));
+		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CPF_MASK));
 #ifdef CONFIG_EMP_IO
-		debug_BUG_ON(is_gpa_flags_set(new, GPA_IO_READ_MASK));
-		debug_BUG_ON(is_gpa_flags_set(new, GPA_IO_WRITE_MASK));
-		debug_BUG_ON(is_gpa_flags_set(new, GPA_IO_IP_MASK));
+		debug_BUG_ON(__is_gpa_flags_set(new, GPA_IO_READ_MASK));
+		debug_BUG_ON(__is_gpa_flags_set(new, GPA_IO_WRITE_MASK));
+		debug_BUG_ON(__is_gpa_flags_set(new, GPA_IO_IP_MASK));
 #endif
 #ifdef CONFIG_EMP_BLOCK
 		copy_gpa_orders(new, old);
