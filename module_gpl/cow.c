@@ -1363,6 +1363,194 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 	return ret;
 }
 
+/* @param demand demand head gpa
+ * @parem demand_idx demand head index
+ *
+ * @retval 1 handle a CoW fault
+ * @retval 0 not a CoW fault, but exit normally
+ * @retval negative error occurs
+ */
+#ifdef CONFIG_EMP_DEBUG
+static int
+__handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
+			struct emp_gpa *demand, unsigned long demand_idx,
+			unsigned long va,
+			enum EMP_COW_CALLER caller, struct page *vmf_page)
+#else
+static int
+__handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
+			struct emp_gpa *demand, unsigned long demand_idx)
+#endif
+{
+	int ret = 0;
+	int max_desc_order = gpa_max_block_order(demand)
+					- gpa_subblock_order(demand);
+	struct emp_gpa **gpa_dir = vmr->descs->gpa_dir;
+	unsigned long idx, max_head_idx, end_idx;
+	struct emp_gpa *max_old_head, *max_new_head;
+	struct emp_gpa *old_head, *new_head, *old, *new;
+	struct emp_gpa *add_to_active[1 << max_desc_order];
+	int num_add_to_active = 0, size_add_to_active = 0;
+
+	debug_assert(gpa_max_block_order(demand) ==
+			get_gpadesc_region(vmr->descs, demand_idx)->block_order);
+
+	/* Set variables related to max_block */
+	max_old_head = _emp_get_block_head(demand, max_desc_order);
+	max_head_idx = _emp_get_block_head_index(vmr, demand_idx, max_desc_order);
+	end_idx = max_head_idx + (1 << max_desc_order);
+
+	/* Unlock demand dead to avoid deadlock */
+	emp_unlock_block(demand);
+
+	/* Clear and (re-)lock max_block */
+	old_head = max_old_head; // To prevent confuse of compiler
+	for (idx = max_head_idx; idx < end_idx;
+			idx += num_subblock_in_block(old_head)) {
+		old_head = emp_lock_block(vmr, NULL, idx);
+		// Since we lock max_block in increasing order,
+		// re-locking in __clear_gpa_for_cow() does not
+		// modify the old_head.
+		__clear_gpa_for_cow(emm, vmr, old_head, idx);
+		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_PREFETCHED_CSF_MASK));
+		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_PREFETCHED_CPF_MASK));
+		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_IO_IP_MASK));
+	}
+
+	/* Update demand head */
+	demand_idx = emp_get_block_head_index(vmr, demand_idx);
+	demand = get_gpadesc(vmr, demand_idx);
+	if (check_cow_fault_gpa(demand) == false) {
+		/* If this is not a CoW fault anymore,
+		 * unlock blocks except for the demand head and return. */
+		for (idx = max_head_idx, old_head = max_old_head;
+				idx < end_idx;
+				idx += num_subblock_in_block(old_head),
+				old_head = get_gpadesc(vmr, idx)) {
+			if (old_head == demand)
+				continue;
+			emp_unlock_block(old_head);
+		}
+		return 0;
+	}
+
+	debug_show_gpa_state_cow(emm, vmr, caller,
+				"__handle_emp_cow_fault_reduced(before)",
+				max_old_head, NULL, max_head_idx, end_idx);
+
+	debug_assert(max_head_idx < vmr->descs->gpa_len);
+	debug_assert(end_idx <= vmr->descs->gpa_len);
+
+	/* Allocate and lock new gpa descriptors */
+	max_new_head = alloc_and_lock_gpadesc(emm, max_desc_order);
+	if (unlikely(max_new_head == NULL)) {
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	/* Duplicate gpa descriptors */
+	for (idx = max_head_idx, old_head = max_old_head;
+			idx < end_idx;
+			idx += num_subblock_in_block(old_head)) {
+		old_head = max_old_head + (idx - max_head_idx);
+		new_head = max_new_head + (idx - max_head_idx);
+		ret = dup_cow_gpadesc(vmr, idx, old_head, new_head);
+		if (ret == DUP_COW_ADD_ACTIVE) {
+			add_to_active[num_add_to_active] = new_head;
+			num_add_to_active++;
+			size_add_to_active += gpa_block_size(new_head);
+		} else if (unlikely(ret < 0)) {
+			/* no need to unlock since we have not modified gpa_dir */
+			free_gpadesc(emm, max_desc_order, new_head);
+			goto error;
+		}
+	}
+
+	/* Add new gpa descriptors to gpa directory of vmr */
+	for (idx = max_head_idx, old = max_old_head, new = max_new_head;
+			idx < end_idx; idx++, old++, new++)
+		change_gpa_dir(vmr, gpa_dir, idx, old, new);
+
+#ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
+	for (idx = max_head_idx, new_head = max_new_head;
+			idx < end_idx;
+			idx += num_subblock_in_block(new_head),
+			new_head += num_subblock_in_block(new_head))
+		vmr->set_gpadesc_alloc_at(vmr, idx, __FILE__, __LINE__);
+#endif
+
+	debug_show_gpa_state_cow(emm, vmr, caller,
+				"__handle_emp_cow_fault_reduced(after)",
+				max_old_head, max_new_head, max_head_idx, end_idx);
+
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
+	if (caller == EMP_COW_FROM_MMU_NOTIFIER) {
+		/* kernel WILL decrement count on __wp_page_copy().
+		 * Mark it before unlock the old gpa */
+		unsigned long gpa_idx = (va - vmr->descs->vm_base)
+					>> (PAGE_SHIFT + bvma_subblock_order(emm));
+		old = max_old_head + (gpa_idx - max_head_idx);
+		new = max_new_head + (gpa_idx - max_head_idx);
+		if (old->local_page && old->local_page->page == vmf_page) {
+			debug_page_ref_mark(vmr->id, old->local_page, -1);
+			debug_page_ref_mmu_noti_end(old->local_page);
+		} else if (new->local_page && new->local_page->page == vmf_page) {
+			debug_page_ref_mark(vmr->id, new->local_page, -1);
+			debug_page_ref_mmu_noti_end(new->local_page);
+		}
+	}
+#endif
+
+	/* Unlock old block head */
+	for (idx = max_head_idx, old_head = max_old_head;
+			idx < end_idx;
+			idx += num_subblock_in_block(old_head),
+			old_head += num_subblock_in_block(old_head)) {
+		emp_unlock_block(old_head);
+	}
+
+	/* Update LRU lists if needed */
+	if (num_add_to_active) {
+		struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
+#ifdef CONFIG_EMP_EXT
+		emp_ops.update_lru_lists(emm, cpu, add_to_active, num_add_to_active, size_add_to_active);
+#else
+		update_lru_lists(emm, cpu, add_to_active, num_add_to_active, size_add_to_active);
+#endif
+	}
+
+	/* Unlock new gpa descriptors except for demand head */
+	for (idx = max_head_idx, new = max_new_head;
+			idx < end_idx; idx++, new++) {
+		if (idx == demand_idx)
+			continue;
+#ifdef CONFIG_EMP_DEBUG
+		if (idx == emp_get_block_head_index(vmr, idx))
+			emp_unlock_block(new);
+		else
+			__emp_unlock_block(new);
+#else
+		__emp_unlock_block(new);
+#endif
+	}
+
+	return 1;
+
+error:
+	/* Unlock except for the demand head */
+	for (idx = max_head_idx, old_head = max_old_head;
+			idx < end_idx;
+			idx += num_subblock_in_block(old_head),
+			old_head = get_gpadesc(vmr, idx)) {
+		if (old_head == demand)
+			continue;
+		emp_unlock_block(old_head);
+	}
+
+	return ret;
+
+}
+
 /* @retval 1 handle a CoW fault
  * @retval 0 not a CoW fault, but exit normally
  * @retval negative error occurs
@@ -1386,9 +1574,14 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	/* Assert that demand is the block head */
 	debug_assert(head_idx == emp_get_block_head_index(vmr, head_idx));
 
-	/* TODO: support elastic block */
-	debug_assert(gpa_block_order(head) ==
-			get_gpadesc_region(vmr->descs, head_idx)->block_order);
+	/* To support elastic block */
+	if (gpa_block_order(head) != gpa_max_block_order(head))
+#ifdef CONFIG_EMP_DEBUG
+		return __handle_emp_cow_fault_reduced(emm, vmr, head, head_idx,
+							va, caller, vmf_page);
+#else
+		return __handle_emp_cow_fault_reduced(emm, vmr, head, head_idx);
+#endif
 
 	if (__clear_gpa_for_cow(emm, vmr, head, head_idx)) {
 		head_idx = emp_get_block_head_index(vmr, head_idx);
@@ -1401,7 +1594,6 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK));
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_IO_IP_MASK));
-
 
 	desc_order = gpa_desc_order(head);
 	end_idx = head_idx + (1UL << desc_order);
