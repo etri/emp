@@ -138,21 +138,17 @@
  *    remove the remote page. Writeback will allocate new remote
  *    page for the dirty local page.
  */
-
-#define emm_desc_order(emm) (bvma_block_order(emm) - bvma_subblock_order(emm))
+#ifdef CONFIG_EMP_DEBUG
 #define single_mapped_gpa(gpa) ((gpa)->local_page \
 				&& EMP_LP_PMDS_SINGLE(&(gpa)->local_page->pmds))
-#define gpa_first_mapped_pmd(gpa) ({ \
-		debug_assert((gpa)->local_page); \
-		(&(gpa)->local_page->pmds); \
-})
-#define gpa_first_vmr(emm, gpa) ({ \
-	debug_assert((gpa)->local_page->pmds.vmr_id >= 0); \
-	debug_assert((gpa)->local_page->pmds.vmr_id < (emm)->vmrs_len); \
-	debug_assert((emm)->vmrs[(gpa)->local_page->pmds.vmr_id]); \
-	(emm)->vmrs[(gpa)->local_page->pmds.vmr_id]; \
-})
 #define vmr_offset_to_hva(vmr, idx) GPN_OFFSET_TO_HVA(vmr, idx, bvma_subblock_order((vmr)->emm))
+#define debug_progress_cow(old, new, data) do { \
+		debug_progress(old, data); \
+		debug_progress(new, data); \
+} while (0)
+#else
+#define debug_progress_cow(old, new, data) do {} while (0)
+#endif
 
 #define for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) \
 		for ((idx) = (head_idx), (old) = (old_head), (new) = (new_head); \
@@ -181,10 +177,15 @@ static inline bool is_gpa_remote_page_valid(struct emp_gpa *gpa)
 static inline spinlock_t *
 __get_pte_lockptr_single(struct emp_mm *emm, struct emp_gpa *head)
 {
-	struct emp_vmr *prev_vmr = gpa_first_vmr(emm, head);
-	struct mapped_pmd *p = gpa_first_mapped_pmd(head);
+	struct mapped_pmd *p;
+	struct emp_vmr *vmr;
 	debug_assert(single_mapped_gpa(head));
-	return pte_lockptr(prev_vmr->host_mm, p->pmd);
+	p = emp_lp_first_mapped_pmd(head->local_page);
+	debug_assert(p);
+	debug_assert(p->vmr_id >= 0 && p->vmr_id < emm->vmrs_len);
+	vmr = emm->vmrs[p->vmr_id];
+	debug_assert(vmr);
+	return pte_lockptr(vmr->host_mm, p->pmd);
 }
 
 #ifdef CONFIG_EMP_EXT
@@ -1254,10 +1255,12 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 			debug_assert(old_head->r_state == GPA_ACTIVE);
 			if (!EMP_LP_PMDS_SINGLE(&old_lp->pmds)) {
 				/* CASE1 */
+				debug_progress_cow(old_head, new_head, vmr->id);
 				ret = dup_cow_gpadesc_multi_active(vmr,
 						head_idx, old_head, new_head);
 			} else {
 				/* CASE2 */
+				debug_progress_cow(old_head, new_head, vmr->id);
 				ret = dup_cow_gpadesc_single_active(vmr,
 						head_idx, old_head, new_head);
 			}
@@ -1265,14 +1268,17 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 			if (!EMP_LP_PMDS_EMPTY(&old_lp->pmds)) {
 				/* CASE3 */
 				debug_assert(old_head->r_state == GPA_ACTIVE);
+				debug_progress_cow(old_head, new_head, vmr->id);
 				ret = dup_cow_gpadesc_other_active(vmr,
 						head_idx, old_head, new_head);
 			} else if (old_head->r_state == GPA_INACTIVE) {
 				/* CASE4 */
+				debug_progress_cow(old_head, new_head, vmr->id);
 				ret = dup_cow_gpadesc_inactive(vmr,
 						head_idx, old_head, new_head);
 			} else if (old_head->r_state == GPA_WB) {
 				/* CASE5 */
+				debug_progress_cow(old_head, new_head, vmr->id);
 				ret = dup_cow_gpadesc_writeback(vmr,
 						head_idx, old_head, new_head);
 			} else
@@ -1280,6 +1286,7 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		}
 	} else { /* old_head->r_state == GPA_INIT */
 		/* CASE 6*/
+		debug_progress_cow(old_head, new_head, vmr->id);
 		ret = dup_cow_gpadesc_remote(vmr,
 					head_idx, old_head, new_head);
 	}
@@ -1341,11 +1348,10 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 	// TODO: GPA_IO_IP_MASK may not be set in user-level. Check it later.
 	if (is_gpa_flags_set(head, GPA_IO_IP_MASK)) {
 		struct page *page;
-		struct emp_gpa *gpa = head;
-		debug_BUG_ON(!gpa->local_page);
-		debug_BUG_ON(!gpa->local_page->page);
-		page = gpa->local_page->page;
-		emp_unlock_block(gpa);
+		debug_BUG_ON(!head->local_page);
+		debug_BUG_ON(!head->local_page->page);
+		page = head->local_page->page;
+		emp_unlock_block(head);
 
 		wait_on_page_locked(page);
 
