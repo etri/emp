@@ -326,6 +326,9 @@ struct emp_vm_ops {
 						struct vcpu_var *);
 	void (*set_gpa_remote)(struct emp_mm *, struct vcpu_var *,
 			       struct emp_gpa *);
+	int (*install_hptes)(struct emp_mm *, struct emp_vmr *,
+				struct emp_gpa *, struct emp_gpa *,
+				pmd_t *pmd, bool, bool);
 };
 
 // ops to create/distruct a memory region
@@ -847,7 +850,8 @@ struct emp_ext {
 	bool (*early_handle_fault_hva)(struct emp_mm *, struct emp_vmr *,
 			struct vm_fault *, struct emp_gpa *, unsigned long);
 	bool (*prepare_install_hptes)(struct emp_mm *, struct emp_vmr *,
-				struct emp_gpa *, struct emp_gpa *, bool);
+					struct emp_gpa *, struct emp_gpa *,
+					const bool, const bool);
 
 #ifdef CONFIG_EMP_VM
 	bool (*register_kvm)(struct emp_mm *, int);

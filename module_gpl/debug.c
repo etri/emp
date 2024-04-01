@@ -1343,15 +1343,23 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 			|| head->r_state == GPA_INACTIVE) {
 		struct local_page *lp;
 		struct emp_vmr *vmr;
+		lp = head->local_page;
+		debug_assert(lp);
+		debug_assert(lp->vmr_id >= 0);
+		vmr = lp->emm->vmrs[lp->vmr_id];
+		debug_assert(vmr);
+		debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == head);
+
 		for_each_gpas(gpa, head) {
+			if (gpa == head)
+				continue;
 			lp = gpa->local_page;
 			debug_assert(lp);
-			debug_assert(lp->vmr_id >= 0);
-			vmr = lp->emm->vmrs[lp->vmr_id];
-			debug_assert(vmr);
+			debug_assert(lp->vmr_id == head->local_page->vmr_id);
 			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
 			__check_pmd_list(head, gpa);
 		}
+
 		lp = head->local_page;
 		debug_assert(is_local_page_on_list(lp));
 		debug_assert(!list_empty(&lp->lru_list));
@@ -1361,15 +1369,25 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		struct work_request *w;
 		struct local_page *lp;
 		struct emp_vmr *vmr;
-		for_each_gpas(gpa, head) {
-			lp = gpa->local_page;
-			debug_assert(lp);
-			if (lp->vmr_id < 0)
-				continue;
+		lp = head->local_page;
+		debug_assert(lp);
+		if (lp->vmr_id >= 0) {
 			vmr = lp->emm->vmrs[lp->vmr_id];
 			debug_assert(vmr);
+			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == head);
+		}
+
+		for_each_gpas(gpa, head) {
+			if (gpa == head)
+				continue;
+			lp = gpa->local_page;
+			debug_assert(lp);
+			debug_assert(lp->vmr_id == head->local_page->vmr_id);
+			if (lp->vmr_id < 0)
+				continue;
 			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
 		}
+
 		lp = head->local_page;
 		debug_assert(is_local_page_on_list(lp));
 		w = lp->w;

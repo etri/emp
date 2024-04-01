@@ -254,10 +254,9 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 /* @retval VM_FAULT_NOPAGE(256): Success
  * @retval 0: Error
  */
-static int COMPILER_DEBUG
-emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr, 
-			struct emp_gpa *head, struct emp_gpa *demand,
-			pmd_t *pmd, bool prefetch_hit, bool is_write)
+int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
+				struct emp_gpa *head, struct emp_gpa *demand,
+				pmd_t *pmd, bool prefetch_hit, bool is_write)
 {
 	struct emp_gpa *gpa;
 	int ret = VM_FAULT_NOPAGE;
@@ -337,6 +336,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	int ret;
 	pmd_t *pmd;
 	bool demand_check;
+	bool is_write = vmf->flags & FAULT_FLAG_WRITE;
 	unsigned int sb_order = gpa_subblock_order(head);
 	struct emp_gpa *prefetched_sb = prefetch_hit ?
 			(head + (head->local_page->demand_offset >> sb_order)) :
@@ -354,10 +354,10 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.prepare_install_hptes)
 		emp_ext.prepare_install_hptes(emm, vmr, head, demand,
-							prefetch_hit);
+							prefetch_hit, is_write);
 #endif	
-	ret = emp_install_hptes(emm, vmr, head, demand, pmd, prefetch_hit,
-						vmf->flags & FAULT_FLAG_WRITE);
+	ret = emp_install_hptes(emm, vmr, head, demand, pmd,
+							prefetch_hit, is_write);
 	vmf->page = demand->local_page->page
 			+ (vmf->pgoff & gpa_subblock_mask(demand));
 

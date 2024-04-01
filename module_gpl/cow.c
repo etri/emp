@@ -1333,7 +1333,7 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 #endif /* CONFIG_EMP_BLOCK */
 #ifdef CONFIG_EMP_EXT
 	if (check_map == false && emp_ext.prepare_install_hptes)
-		emp_ext.prepare_install_hptes(emm, vmr, head, NULL, false);
+		emp_ext.prepare_install_hptes(emm, vmr, head, NULL, false, true);
 #endif
 
 #ifdef CONFIG_EMP_IO

@@ -491,13 +491,22 @@ static inline bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id)
 	return false;
 }
 
-
 static inline struct mapped_pmd *
-emp_lp_get_any_mapped_pmd(struct local_page *lp) {
+emp_lp_first_mapped_pmd(struct local_page *lp) {
 	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
 		return NULL;
 	else
 		return &lp->pmds;
+}
+
+static inline struct mapped_pmd *
+emp_lp_next_mapped_pmd(struct local_page *lp, struct mapped_pmd *p) {
+	debug_assert(p);
+	debug_assert(!EMP_LP_PMDS_EMPTY(&lp->pmds));
+	if (p->next == &lp->pmds)
+		return NULL;
+	else
+		return p->next;
 }
 
 bool emp_lp_insert_pmd(struct emp_mm *, struct local_page *, int, pmd_t *);

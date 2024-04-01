@@ -972,7 +972,7 @@ static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
 	spinlock_t *ptl;
 	struct mmu_gather tlb;
 
-	while ((p = emp_lp_get_any_mapped_pmd(head->local_page)) != NULL) {
+	while ((p = emp_lp_first_mapped_pmd(head->local_page)) != NULL) {
 		vmr = emm->vmrs[p->vmr_id];
 		pmd = p ->pmd;
 		kernel_tlb_gather_mmu(&tlb, vmr->host_mm, head_hva, end_hva);
@@ -1857,6 +1857,7 @@ int gpa_init(struct emp_mm *emm)
 	emm->vops.unmap_gpas = unmap_gpas;
 	emm->vops.free_gpa = free_gpa;
 	emm->vops.set_gpa_remote = set_gpa_remote;
+	emm->vops.install_hptes = emp_install_hptes;
 
 #ifdef CONFIG_EMP_BLOCK
 	printk("GPA block: %d pages subblock: %d pages\n", 
