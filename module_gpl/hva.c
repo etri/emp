@@ -353,8 +353,8 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.prepare_install_hptes)
-		emp_ext.prepare_install_hptes(emm, head, demand, demand_idx, fs, fe,
-						prefetched_sb, fetch);
+		emp_ext.prepare_install_hptes(emm, vmr, head, demand,
+							prefetch_hit);
 #endif	
 	ret = emp_install_hptes(emm, vmr, head, demand, pmd, prefetch_hit,
 						vmf->flags & FAULT_FLAG_WRITE);

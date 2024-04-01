@@ -1294,6 +1294,9 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx)
 {
 	int ret = 0;
+#ifdef CONFIG_EMP_EXT
+	bool check_map = false;
+#endif
 #ifdef CONFIG_EMP_BLOCK
 	/* Support CSF and CPF
 	 * - We should wait for fetching whole block and install ptes. */
@@ -1318,6 +1321,9 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 					sb_off - head_idx,
 					head, head + num_subblock_in_block(head),
 					true, &vmf, true);
+#ifdef CONFIG_EMP_EXT
+			check_map = true;
+#endif
 		}
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 #ifdef CONFIG_EMP_STAT
@@ -1325,6 +1331,10 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 #endif
 	}
 #endif /* CONFIG_EMP_BLOCK */
+#ifdef CONFIG_EMP_EXT
+	if (check_map == false && emp_ext.prepare_install_hptes)
+		emp_ext.prepare_install_hptes(emm, vmr, head, NULL, false);
+#endif
 
 #ifdef CONFIG_EMP_IO
 	// wait for completion of IO in progress

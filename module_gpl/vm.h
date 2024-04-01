@@ -846,9 +846,8 @@ struct emp_ext {
 						struct vm_fault *);
 	bool (*early_handle_fault_hva)(struct emp_mm *, struct emp_vmr *,
 			struct vm_fault *, struct emp_gpa *, unsigned long);
-	bool (*prepare_install_hptes)(struct emp_mm *, struct emp_gpa *,
-			struct emp_gpa *, unsigned long, struct emp_gpa *,
-			struct emp_gpa *, struct emp_gpa *, bool fetch);
+	bool (*prepare_install_hptes)(struct emp_mm *, struct emp_vmr *,
+				struct emp_gpa *, struct emp_gpa *, bool);
 
 #ifdef CONFIG_EMP_VM
 	bool (*register_kvm)(struct emp_mm *, int);
