@@ -769,7 +769,7 @@ enum emp_op_type {
 struct emp_ops {
 	int (*handle_active_fault)(struct emp_vmr *, struct emp_gpa *,
 				   struct emp_gpa *, struct vcpu_var *,
-				   struct vm_fault *, int *);
+				   int *);
 	void (*handle_inactive_fault)(struct emp_vmr *, struct emp_gpa **,
 				      struct emp_gpa *, struct vcpu_var *);
 	int (*handle_writeback_fault)(struct emp_vmr *, struct emp_gpa **,

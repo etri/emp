@@ -850,9 +850,6 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	unsigned int pages_len;
 	bool mapped, accessed, dirty;
 	int i;
-#ifdef CONFIG_EMP_DEBUG
-	struct mapped_pmd *p, *pp;
-#endif
 
 	____local_gpa_to_hva_and_len(vmr, head, hva, pages_len);
 
@@ -881,8 +878,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 
 
 		/* block is aligned */
-		debug_assert(emp_lp_lookup_pmd(gpa->local_page, vmr->id, &p, &pp));
-		debug_assert(pmd == p->pmd);
+		debug_assert(emp_lp_lookup_pmd(gpa, vmr->id) == pmd);
 		if (unlikely(gpa->local_page->vmr_id < 0)) {
 			gpa->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->id);
@@ -1203,8 +1199,8 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 {
 	unsigned long i, head_idx, head_hva, sb_page_len;
 	struct emp_gpa *head, *gpa;
-	struct mapped_pmd *p, *pp;
 	spinlock_t *ptl;
+	pmd_t *pmd;
 
 	for (i = 0, head = max_head; i < size;
 			i += num_subblock_in_block(head),
@@ -1212,7 +1208,8 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		if (head->r_state != GPA_ACTIVE)
 			continue;
 		debug_assert(head->local_page);
-		if (!emp_lp_lookup_pmd(head->local_page, vmr->id, &p, &pp))
+		pmd = emp_lp_lookup_pmd(head, vmr->id);
+		if (!pmd)
 			continue;
 
 #ifdef CONFIG_EMP_VM
@@ -1224,7 +1221,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		/* NOTE: we acquire and release page table lock at block
 		 *       granularity to prevent deadlock with __unmap_ptes().
 		 */
-		ptl = pte_lockptr(vmr->host_mm, p->pmd);
+		ptl = pte_lockptr(vmr->host_mm, pmd);
 		spin_lock(ptl);
 
 		head_idx = max_head_idx + i;
@@ -1234,7 +1231,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 			sb_page_len = ____partial_gpa_to_page_len(vmr, head,
 							head_idx, head_hva);
 			__unmap_subblock_single_vmr(vmr, head, head_hva,
-							sb_page_len, p->pmd);
+							sb_page_len, pmd);
 			emp_update_rss_sub(vmr, sb_page_len,
 					DEBUG_RSS_SUB_UNMAP_MAX_BLOCK_PARTIAL,
 					head, DEBUG_UPDATE_RSS_BLOCK);
@@ -1246,13 +1243,12 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		sb_page_len = gpa_subblock_size(head);
 		for_each_gpas(gpa, head) {
 #ifdef CONFIG_EMP_DEBUG
-			struct mapped_pmd *sb_p, *sb_pp;
-			if (!emp_lp_lookup_pmd(gpa->local_page, vmr->id, &sb_p, &sb_pp))
-				BUG();
 			/* block is aligned */
-			debug_assert(p->pmd == sb_p->pmd);
+			debug_assert(gpa == head ||
+					emp_lp_lookup_pmd(gpa, vmr->id) == pmd);
 #endif
-			__unmap_subblock_single_vmr(vmr, gpa, head_hva, sb_page_len, p->pmd);
+			__unmap_subblock_single_vmr(vmr, gpa, head_hva,
+							sb_page_len, pmd);
 			head_hva += sb_page_len << PAGE_SHIFT;
 		}
 		emp_update_rss_sub(vmr, gpa_block_size(head),
@@ -1560,14 +1556,13 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 			 */
 			int __i;
 			struct emp_gpa *__head;
-			struct mapped_pmd *p, *pp;
 			for (__i = 0, __head = max_head; __i < step;
 					__i += num_subblock_in_block(__head),
 					__head += num_subblock_in_block(__head)) {
 				if (__head->r_state != GPA_ACTIVE)
 					continue;
 				debug_assert(__head->local_page);
-				if (!emp_lp_lookup_pmd(__head->local_page, vmr->id, &p, &pp))
+				if (!emp_lp_lookup_vmr_id(__head->local_page, vmr->id))
 					continue;
 				emp_update_rss_sub_kernel(vmr,
 					__local_block_to_page_len(vmr, __head),

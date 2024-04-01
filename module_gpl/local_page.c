@@ -5,51 +5,13 @@
 #include "local_page.h"
 #include "block-flag.h"
 
-inline bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id)
-{
-	struct local_page *lp = gpa->local_page;
-	struct mapped_pmd *p;
-	if (unlikely(!lp))
-		return false;
+#define SET_MAPPED_PMD(p, _vmr_id, _pmd, _next) do { \
+	(p)->vmr_id = (_vmr_id); \
+	(p)->pmd = (_pmd); \
+	(p)->next = (_next); \
+} while (0)
 
-	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
-		return false;
-
-	p = &lp->pmds;
-	do {
-		if (p->vmr_id == vmr_id)
-			return true;
-		p = p->next;
-	} while (p != &lp->pmds);
-	return false;
-}
-
-bool emp_lp_lookup_pmd(struct local_page *lp, int vmr_id,
-		       struct mapped_pmd **p, struct mapped_pmd **pp)
-{
-	bool found;
-
-	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
-		return false;
-
-	found = false;
-	*p = &lp->pmds;
-	*pp = *p;
-	do {
-		if ((*p)->vmr_id != vmr_id) {
-			*pp = *p;
-			*p = (*p)->next;
-			continue;
-		}
-
-		found = true;
-		break;
-	} while (*p != &lp->pmds);
-
-	return found;
-}
-EXPORT_SYMBOL(emp_lp_lookup_pmd);
-
+// vmr_id in the list are sorted in ascending order
 bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id,
 		       pmd_t *pmd) 
 {
@@ -64,20 +26,43 @@ bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id,
 		return true;
 	}
 
-	if (emp_lp_lookup_pmd(lp, vmr_id, &p, &pp)) {
-		debug_BUG_ON(p->pmd != pmd);
-		return true;
-	}
-
 	n = emp_lp_alloc_pmd(emm);
 	if (n == NULL)
 		return false;
 
-	n->vmr_id = vmr_id;
-	n->pmd = pmd;
+	p = &lp->pmds;
+	pp = p;
+	do {
+		if (vmr_id < p->vmr_id)
+			break;
 
-	n->next = pp->next;
-	pp->next = n;
+		if (unlikely(p->vmr_id == vmr_id)) {
+			debug_assert(p->pmd == pmd);
+			emp_lp_free_pmd(emm, n);
+			return true;
+		}
+		pp = p;
+		p = p->next;
+	} while (p != &lp->pmds);
+
+	if (p != pp) {
+		// insert middle in the list
+		debug_assert(pp->vmr_id < vmr_id);
+		debug_assert(p == &lp->pmds || vmr_id < p->vmr_id);
+		SET_MAPPED_PMD(n, vmr_id, pmd, p);
+		pp->next = n;
+	} else if (p->vmr_id > vmr_id) {
+		// insert at the first
+		debug_assert(p == &lp->pmds);
+		*n = *p;
+		SET_MAPPED_PMD(p, vmr_id, pmd, n);
+	} else {
+		// insert at the second in a singleton list
+		debug_assert(p == &lp->pmds);
+		debug_assert(lp->num_pmds == 1);
+		SET_MAPPED_PMD(n, vmr_id, pmd, p);
+		p->next = n;
+	}
 
 	lp->num_pmds++;
 
@@ -89,22 +74,32 @@ pmd_t *emp_lp_pop_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id)
 	struct mapped_pmd *p, *pp;
 	pmd_t *ret;
 
-	if (!emp_lp_lookup_pmd(lp, vmr_id, &p, &pp))
+	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
 		return NULL;
 
+	p = &lp->pmds;
+	pp = p;
+	do {
+		if (p->vmr_id == vmr_id)
+			goto found;
+		pp = p;
+		p = p->next;
+	} while (p != &lp->pmds);
+
+	return NULL;
+
+found:
 	ret = p->pmd;
 	if (p != &lp->pmds) {
 		// hit on any member of list excluding the head 
 		pp->next = p->next;
 		emp_lp_free_pmd(emm, p);
-		/*printk("%s hit on a member of rest nodes", __func__);*/
 	} else if (p->next != p) {
 		// hit on the first member of multi-members list
 		struct mapped_pmd *np = p->next;
 		*p = *np;
 		// release np
 		emp_lp_free_pmd(emm, np);
-		/*printk("%s hit on the first member of multi-members list", __func__);*/
 	} else {
 		// hit on the first member of single member list
 		INIT_MAPPED_PMD(&lp->pmds);

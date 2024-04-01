@@ -185,10 +185,8 @@ void handle_inactive_fault(struct emp_vmr *vmr, struct emp_gpa **head,
  */
 int handle_active_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		        struct emp_gpa *dma, struct vcpu_var *cpu,
-			struct vm_fault *vmf, int *vmf_ret)
+			int *vmf_ret)
 {
-	struct mapped_pmd *p, *pp;
-
 	if (!IS_IOTHREAD_VCPU(cpu->id))
 		return 0;
 
@@ -201,8 +199,8 @@ int handle_active_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		return 0;
 #endif
 
-	if (emp_lp_lookup_pmd(head->local_page, vmr->id, &p, &pp)) {
-		debug_handle_active_fault_handled(vmr, head, vmf);
+	if (emp_lp_lookup_vmr_id(head, vmr->id)) {
+		debug_handle_active_fault_handled(vmr, head);
 		*vmf_ret = VM_FAULT_NOPAGE;
 		return 1;
 	} else
@@ -228,43 +226,40 @@ int handle_local_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 	int ret = 0;
 
 	switch ((*head)->r_state) {
-		case GPA_ACTIVE:
+	case GPA_ACTIVE:
 #ifdef CONFIG_EMP_EXT
-			ret = emp_ops.handle_active_fault(vmr, *head, gpa, cpu,
-					vmf, vmf_ret);
+		ret = emp_ops.handle_active_fault(vmr, *head, gpa, cpu, vmf_ret);
 #else
-			ret = handle_active_fault(vmr, *head, gpa, cpu,
-					vmf, vmf_ret);
+		ret = handle_active_fault(vmr, *head, gpa, cpu, vmf_ret);
 #endif
-			break;
+		break;
 
-		case GPA_INACTIVE:
+	case GPA_INACTIVE:
 #ifdef CONFIG_EMP_EXT
-			emp_ops.handle_inactive_fault(vmr, head, gpa, cpu);
+		emp_ops.handle_inactive_fault(vmr, head, gpa, cpu);
 #else
-			handle_inactive_fault(vmr, head, gpa, cpu);
+		handle_inactive_fault(vmr, head, gpa, cpu);
 #endif
-			break;
+		break;
 
-		case GPA_WB:
+	case GPA_WB:
 #ifdef CONFIG_EMP_EXT
-			ret = emp_ops.handle_writeback_fault(vmr, head, gpa, cpu);
+		ret = emp_ops.handle_writeback_fault(vmr, head, gpa, cpu);
 #else
-			ret = handle_writeback_fault(vmr, head, gpa, cpu);
+		ret = handle_writeback_fault(vmr, head, gpa, cpu);
 #endif
-			/* inserting to page table is required */
-			if (ret > 0)
-				ret = 0;
-			break;
+		/* inserting to page table is required */
+		if (ret > 0)
+			ret = 0;
+		break;
 
-		case GPA_FETCHING:
-			printk(KERN_ERR "GPA_FETCHING should be a hidden state\n");
-			BUG();
+	case GPA_FETCHING:
+		printk(KERN_ERR "GPA_FETCHING should be a hidden state\n");
+		BUG();
 
-		default:
-			printk(KERN_ERR "invalid head state: %d\n", 
-					(*head)->r_state);
-			BUG();
+	default:
+		printk(KERN_ERR "invalid head state: %d\n", (*head)->r_state);
+		BUG();
 	}
 	
 	return ret;

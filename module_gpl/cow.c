@@ -1247,11 +1247,10 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 	__dup_cow_gpadesc(vmr, head_idx, old_head, new_head);
 
 	if (old_head->r_state != GPA_INIT) {
-		struct mapped_pmd *p, *pp;
 		struct local_page *old_lp = old_head->local_page;
 		debug_assert(old_lp != NULL);
 
-		if (emp_lp_lookup_pmd(old_lp, vmr->id, &p, &pp)) {
+		if (emp_lp_lookup_vmr_id(old_head, vmr->id)) {
 			debug_assert(old_head->r_state == GPA_ACTIVE);
 			if (!EMP_LP_PMDS_SINGLE(&old_lp->pmds)) {
 				/* CASE1 */
@@ -1686,7 +1685,6 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 	struct emp_gpa *head, *g;
 	unsigned long index, index_start, index_end;
 	unsigned long vpn_base, vpn_start, vpn_end;
-	struct mapped_pmd *mapped, *mapped2;
 
 	vpn_start = vmr->vm_start >> PAGE_SHIFT;
 	vpn_end = vmr->vm_end >> PAGE_SHIFT;
@@ -1711,8 +1709,7 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 		}
 
 		for_each_gpas(g, head) {
-			if (emp_lp_lookup_pmd(g->local_page, vmr->id,
-						&mapped, &mapped2) == false)
+			if (!emp_lp_lookup_vmr_id(g, vmr->id))
 				continue;
 			debug_page_ref_dup_beg(g->local_page);
 			debug_page_ref_mark(vmr->id, g->local_page, 0);
@@ -1752,8 +1749,7 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 		}
 
 		for_each_gpas(g, head) {
-			if (emp_lp_lookup_pmd(g->local_page, vmr->id,
-						&mapped, &mapped2) == false)
+			if (!emp_lp_lookup_vmr_id(g, vmr->id))
 				continue;
 			debug_page_ref_unmap_beg(g->local_page);
 			debug_page_ref_mark(vmr->id, g->local_page, 0);
@@ -2026,7 +2022,6 @@ void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool 
 	unsigned long index_start, index_end;
 	unsigned long vpn, vpn_base, vpn_start, vpn_end;
 	pmd_t *pmd;
-	struct mapped_pmd *mapped, *mapped2;
 
 	vpn_start = new_vmr->vm_start >> PAGE_SHIFT;
 	vpn_end = new_vmr->vm_end >> PAGE_SHIFT;
@@ -2072,8 +2067,7 @@ void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool 
 
 		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT, &pmd);
 		for_each_gpas(gpa, head) {
-			if (emp_lp_lookup_pmd(gpa->local_page, prev_vmr->id,
-						&mapped, &mapped2) == false) {
+			if (!emp_lp_lookup_vmr_id(gpa, prev_vmr->id)) {
 				debug_check_page_map_status(new_vmr, head,
 							head_idx, pmd, false);
 				continue;

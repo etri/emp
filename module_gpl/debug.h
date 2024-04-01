@@ -225,7 +225,7 @@ void debug_emp_map_prefetch_sptes2(struct emp_gpa *g, struct emp_gpa *eg);
 void debug_emp_page_fault_gpa(struct emp_gpa *head);
 void debug_emp_page_fault_gpa2(struct emp_gpa *);
 void debug_emp_page_fault_gpa3(struct emp_gpa *h, gva_t gva, pgoff_t o);
-void debug_handle_active_fault_handled(struct emp_vmr *, struct emp_gpa *, struct vm_fault *);
+void debug_handle_active_fault_handled(struct emp_vmr *, struct emp_gpa *);
 void debug___mmu_set_spte(u64 pfn);
 void debug_map_sptes_in_subblock(struct emp_gpa *sb_head, u64 *sptep);
 void debug_emp_install_sptes(struct emp_gpa *);
@@ -281,7 +281,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_emp_page_fault_gpa(head) do{}while(0)
 #define debug_emp_page_fault_gpa2(head) do{}while(0)
 #define debug_emp_page_fault_gpa3(h, v, o) do{}while(0)
-#define debug_handle_active_fault_handled(vmr, head, vmf) do {} while (0)
+#define debug_handle_active_fault_handled(vmr, head) do {} while (0)
 #define debug___mmu_set_spte(pfn) do{}while(0)
 #define debug_map_sptes_in_subblock(sb_head, sptep) do{}while(0)
 #define debug_emp_install_sptes(g) do{}while(0)

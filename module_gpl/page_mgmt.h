@@ -16,7 +16,7 @@ u64 *get_spte(struct kvm_vcpu *vcpu, int level, u64 offset);
 #endif
 
 int handle_active_fault(struct emp_vmr *, struct emp_gpa *, struct emp_gpa *,
-			struct vcpu_var *, struct vm_fault *, int *);
+			struct vcpu_var *, int *);
 void handle_inactive_fault(struct emp_vmr *, struct emp_gpa **,
 			   struct emp_gpa *, struct vcpu_var *);
 int handle_writeback_fault(struct emp_vmr *, struct emp_gpa **,

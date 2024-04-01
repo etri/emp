@@ -2157,20 +2157,20 @@ void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa,
 EXPORT_SYMBOL(__debug_sub_inactive_list_page_len);
 #endif /* CONFIG_EMP_DEBUG_LRU_LIST */
 
-void debug_handle_active_fault_handled(struct emp_vmr *vmr,
-				struct emp_gpa *head, struct vm_fault *vmf)
+void debug_handle_active_fault_handled(struct emp_vmr *vmr, struct emp_gpa *head)
 {
-	struct mapped_pmd *p, *pp;
 	struct emp_gpa *gpa;
 	unsigned long hva;
 	pte_t *ptep;
 	unsigned long pfn_pte, pfn_page;
+	pmd_t *pmd;
 
 	for_each_gpas(gpa, head) {
 		BUG_ON(!gpa->local_page);
-		BUG_ON(emp_lp_lookup_pmd(gpa->local_page, vmr->id, &p, &pp) == false);
+		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		BUG_ON(pmd == NULL);
 		hva = local_gpa_to_hva(vmr, gpa);
-		ptep = pte_offset_map(p->pmd, hva);
+		ptep = pte_offset_map(pmd, hva);
 		pfn_pte = pte_pfn(*ptep);
 		BUG_ON(pfn_pte == 0);
 		pfn_page = page_to_pfn(gpa->local_page->page);

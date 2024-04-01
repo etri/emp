@@ -450,20 +450,47 @@ static inline void emp_lp_free_pmd(struct emp_mm *emm, struct mapped_pmd *p) {
 	emp_kmem_cache_free(emm->ftm.mapped_pmd_cache, p);
 }
 
-bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id);
-bool emp_lp_lookup_pmd(struct local_page *, int, struct mapped_pmd **,
-		       struct mapped_pmd **);
-
-static inline pmd_t *emp_lp_get_pmd(struct local_page *lp, int vmr_id) {
-	struct mapped_pmd *p, *pp;
-	if (emp_lp_lookup_pmd(lp, vmr_id, &p, &pp))
-		return p->pmd;
-	else
-		return NULL;
-}
-
 #define EMP_LP_PMDS_EMPTY(p) ((p)->next == NULL)
 #define EMP_LP_PMDS_SINGLE(p) ((p)->next == (p))
+
+static inline pmd_t *emp_lp_lookup_pmd(struct emp_gpa *gpa, int vmr_id)
+{
+	struct local_page *lp = gpa->local_page;
+	struct mapped_pmd *p;
+	if (unlikely(!lp))
+		return NULL;
+
+	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
+		return NULL;
+
+	p = &lp->pmds;
+	do {
+		if (p->vmr_id == vmr_id)
+			return p->pmd;
+		p = p->next;
+	} while (p != &lp->pmds);
+	return NULL;
+}
+
+static inline bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id)
+{
+	struct local_page *lp = gpa->local_page;
+	struct mapped_pmd *p;
+	if (unlikely(!lp))
+		return false;
+
+	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
+		return false;
+
+	p = &lp->pmds;
+	do {
+		if (p->vmr_id == vmr_id)
+			return true;
+		p = p->next;
+	} while (p != &lp->pmds);
+	return false;
+}
+
 
 static inline struct mapped_pmd *
 emp_lp_get_any_mapped_pmd(struct local_page *lp) {
