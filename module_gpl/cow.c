@@ -1324,10 +1324,8 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 				.address = va,
 				.prealloc_pte = NULL,
 			};
-			emp_page_fault_hptes_map(emm, vmr, head, demand,
-					sb_off - head_idx,
-					head, head + num_subblock_in_block(head),
-					true, &vmf, true);
+			emp_page_fault_hptes_map(emm, vmr, head, demand, 0,
+							true, &vmf, true);
 #ifdef CONFIG_EMP_EXT
 			check_map = true;
 #endif

@@ -1428,7 +1428,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	struct emp_gpa *fs, *fe; // fetch_start, fetch_end
 	struct emp_vmr *vmr;
 	pgoff_t demand_off;
-	unsigned long demand_sb_off;
+	unsigned long demand_idx;
 	unsigned long head_idx;
 	unsigned long sb_mask;
 	unsigned int sb_order;
@@ -1478,9 +1478,9 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	/* hva to gpa */
 	sb_order = bvma_subblock_order(bvma);
 	demand_off = GPN_OFFSET(bvma, HVA_TO_GPN(bvma, vmr, hva));
-	demand_sb_off = demand_off >> sb_order;
-	demand = get_gpadesc(vmr, demand_sb_off);
-	emp_pf_history_add(cpu, gpa_offset, demand_sb_off);
+	demand_idx = demand_off >> sb_order;
+	demand = get_gpadesc(vmr, demand_idx);
+	emp_pf_history_add(cpu, gpa_offset, demand_idx);
 	if (unlikely(!demand)) {
 		emp_pf_history_add(cpu, goto_code, 1);
 		emp_pf_history_add(cpu, page_fault_ret, VM_FAULT_SIGBUS);
@@ -1506,7 +1506,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 #endif
 
 	// gpa lock will be released by barr_fetch
-	head = emp_lock_block(vmr, &demand, demand_sb_off);
+	head = emp_lock_block(vmr, &demand, demand_idx);
 	debug_BUG_ON(!head); // we already have @demand
 	debug_progress(head, (((u64) error_code) << 32)
 				| ((level & 0xff) << 16)
@@ -1515,7 +1515,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	fs = head;
 	fe = head + num_subblock_in_block(head);
 	/* Assume that gpa descriptors in a block reside on a contiguous memory */
-	head_idx = demand_sb_off - (demand - head);
+	head_idx = demand_idx - (demand - head);
 	emp_pf_history_add(cpu, gpa_flag_beg, __get_gpa_flags(demand));
 	emp_pf_history_add(cpu, head_flag_beg, __get_gpa_flags(head));
 	emp_pf_history_add(cpu, head_state_beg, head->r_state);
@@ -1529,14 +1529,14 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
 			struct vm_fault vmf = {
 				.vma = vmr->host_vma,
-				.pgoff = GPN_OFFSET(bvma, HVA_TO_GPN(bvma, vmr, hva)),
+				.pgoff = demand_off,
 				.address = hva,
 				.prealloc_pte = NULL,
 			};
 
 			vmf.flags = FAULT_FLAG_WRITE;
-			emp_page_fault_hptes_map(bvma, vmr, head, demand, demand_sb_off,
-						 fs, fe, true, &vmf, true);
+			emp_page_fault_hptes_map(bvma, vmr, head, demand,
+						demand_off, true, &vmf, true);
 		} else if (is_gpa_flags_set(head, GPA_EPT_MASK)) {
 			u64 mapping_attr;
 			u64 head_gpa = (gva & PAGE_MASK) - 
@@ -1570,7 +1570,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	if (emp_ext.early_handle_fault_gpa
 			&& emp_ext.early_handle_fault_gpa(bvma, kvm_vcpu, vmr,
 						hva, write_fault, *writable,
-						demand, demand_sb_off,
+						demand, demand_idx,
 						gva, level, error_code)) {
 		emp_pf_history_add(cpu, goto_code, 3);
 		goto return_to_fault_inst;
@@ -1588,7 +1588,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 		wait_on_page_locked(page);
 
 		head = emp_lock_block_local(vmr, &demand);
-		head_idx = demand_sb_off - (demand - head);
+		head_idx = demand_idx - (demand - head);
 	}
 #endif
 	
@@ -1654,7 +1654,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 		r = emp_ext.prepare_install_sptes(bvma, kvm_vcpu, vmr,
 					hva, write_fault, writable,
 					read_only_mapping,
-					head, demand, demand_sb_off,
+					head, demand, demand_idx,
 					fs, fe, gva);
 		if (unlikely(r < 0))
 			ret = r;

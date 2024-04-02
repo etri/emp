@@ -78,12 +78,11 @@ static void __pmd_populate(struct mm_struct *mm, struct vm_fault *vmf)
 	vmf->prealloc_pte = NULL;
 }
 
-static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_gpa *head,
-				  struct emp_gpa *demand, unsigned long pgoff,
-				  struct emp_gpa *fs, struct emp_gpa *fe,
-				  struct emp_gpa *prefetched_sb, bool fetch)
+static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
+		struct emp_gpa *head, struct emp_gpa *demand, unsigned long pgoff,
+		struct emp_gpa *prefetched_gpa, bool fetch)
 {
-	struct emp_gpa *sb_head;
+	struct emp_gpa *gpa;
 	struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
 #ifdef CONFIG_EMP_BLOCK
 	bool csf;
@@ -97,7 +96,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_gpa *head,
 	csf = bvma_csf_enabled(bvma) && 
 		!is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK);
 	
-	if (csf && fetch && !prefetched_sb) {
+	if (csf && fetch && !prefetched_gpa) {
 		/* processed only a sub-block, not all */
 		if ((bvma->sops.wait_read_async)(bvma, cpu, demand)) {
 			debug_page_ref_io_end(demand->local_page);
@@ -114,24 +113,19 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_gpa *head,
 	}
 #endif
 
-	// Assumption: only gpa descriptors in a block reside in a contiguous memory region.
-	debug_BUG_ON((fe - fs) > num_subblock_in_block(demand));
-
-	for_each_gpas(sb_head, head) {
-		if (fetch && prefetched_sb) {
-			if (sb_head == prefetched_sb)
-				continue;
-		}
+	for_each_gpas(gpa, head) {
+		if (fetch && gpa == prefetched_gpa)
+			continue;
 
 		// ignore already mapped subblocks
-		if (sb_head < fs || sb_head >= fe)
+		if (emp_lp_lookup_vmr_id(gpa, vmr->id))
 			continue;
 
 		// we must put subblock for fetch_page
 		// don't merge the put_subblock to get_subblock for pte_install
-		if ((bvma->sops.wait_read_async)(bvma, cpu, sb_head)) {
-			debug_page_ref_io_end(sb_head->local_page);
-			emp_put_subblock(sb_head);
+		if ((bvma->sops.wait_read_async)(bvma, cpu, gpa)) {
+			debug_page_ref_io_end(gpa->local_page);
+			emp_put_subblock(gpa);
 		}
 	}
 }
@@ -329,8 +323,7 @@ next:
 int COMPILER_DEBUG
 emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 			struct emp_gpa *head,
-			struct emp_gpa *demand, unsigned long demand_idx,
-			struct emp_gpa *fs, struct emp_gpa *fe,
+			struct emp_gpa *demand, unsigned long demand_off,
 			bool fetch, struct vm_fault *vmf, bool prefetch_hit)
 {
 	int ret;
@@ -348,7 +341,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 		__pmd_populate(vmr->host_mm, vmf);
 
 	demand_check = prefetch_hit && (prefetched_sb == demand);
-	emp_hpt_fetch_barrier(emm, head, demand, demand_idx, fs, fe,
+	emp_hpt_fetch_barrier(emm, vmr, head, demand, demand_off,
 				prefetched_sb, fetch);
 	
 #ifdef CONFIG_EMP_EXT
@@ -522,8 +515,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 
 		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
 			emp_page_fault_hptes_map(emm, vmr, head, demand,
-				       	demand_sb_off - head_idx, fs, fe,
-					true, vmf, true);
+						demand_off, true, vmf, true);
 		}
 #ifdef CONFIG_EMP_VM
 		else if (is_gpa_flags_set(head, GPA_EPT_MASK)) {
@@ -638,8 +630,7 @@ _emp_page_fault_hva_fetch_posted:
 #endif
 	{
 		ret = emp_page_fault_hptes_map(emm, vmr, head, demand,
-						demand_sb_off - head_idx,
-						fs, fe, fetch, vmf, false);
+						demand_off, fetch, vmf, false);
 		emp_pf_history_add(cpu, install_pte_ret, ret);
 		debug_progress(head, ret);
 	}

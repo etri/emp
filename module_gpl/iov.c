@@ -129,8 +129,8 @@ map_io_blocks(struct emp_vmr *vmr, unsigned long *head_idx_arr, int head_len)
 				clear_gpa_flags_if_set(h, GPA_IO_IP_MASK);
 				emp_unlock_subblock(h);
 
-				emp_page_fault_hptes_map(emm, vmr, h, g, g_idx,
-						fs, fe, true, &vmf, false);
+				emp_page_fault_hptes_map(emm, vmr, h, g,
+						vmf.pgoff, true, &vmf, false);
 			}
 			emp_unlock_block(h);
 		}

@@ -7,7 +7,6 @@
 
 int emp_page_fault_hptes_map(struct emp_mm *, struct emp_vmr *,
 			struct emp_gpa *, struct emp_gpa *, unsigned long,
-			struct emp_gpa *, struct emp_gpa *,
 			bool, struct vm_fault *, bool);
 int emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 			struct emp_gpa *head, struct emp_gpa *demand,
