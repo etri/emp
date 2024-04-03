@@ -18,7 +18,7 @@ EMP_IO := yes
 EMP_STAT := yes
 # Include debug codes
 EMP_DEBUG := no
-# Include instruction emulation
+# Include instruction emulation (VERY EXPERIMENTAL)
 EMP_INSN_EMUL := no
 # remote memory using block device support (e.g. NVMe SSD)
 BLOCKDEV_SUPPORT := yes
@@ -117,6 +117,9 @@ EXTRA_CFLAGS += -DCONFIG_EMP_STAT
 endif
 ifeq ($(EMP_DEBUG), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_DEBUG
+endif
+ifeq ($(EMP_INSN_EMUL), yes)
+EXTRA_CFLAGS += -DCONFIG_EMP_INSN_EMUL
 endif
 ifeq ($(EMP_SECURITY), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_SECURITY
