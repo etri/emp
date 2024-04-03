@@ -1339,16 +1339,13 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
 			}
 		}
-		goto out;
+		return 1;
 	}
 #endif
 	/* At this point, gpa is already in lru lists 
 	 * you don't have to insert this gpa into active list */
 	/* if GPA fetching is in progress, we have to wait(barrier). */
 	wait_fetching_except(bvma, vcpu, head, NULL);
-#ifdef CONFIG_EMP_BLOCK
-out:
-#endif
 	return 1;
 }
 

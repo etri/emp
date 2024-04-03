@@ -271,8 +271,8 @@ int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 	if (csf_prefetching) {
 		// if csf_prefetching is true, demand should exist.
 		debug_assert(demand);
+		debug_assert(!emp_lp_lookup_vmr_id(demand, vmr->id));
 		____local_gpa_to_hva_and_len(vmr, demand, hva, page_len);
-		debug_assert(emp_lp_lookup_vmr_id(demand, vmr->id));
 		spin_lock(ptl);
 		ret = __emp_install_hptes(vmr, demand, hva, page_len,
 							pmd, is_write);

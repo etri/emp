@@ -889,7 +889,7 @@ static int wait_read_async_demand_page(struct emp_mm *bvma, struct vcpu_var *cpu
 {
 	struct work_request *w = gpa->local_page->w;
 	if (w == NULL)
-		return false;
+		return 0;
 
 	return clear_fetching_demand_page(bvma, cpu, w, demand_sb_offset);
 }
