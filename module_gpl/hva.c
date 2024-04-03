@@ -85,7 +85,8 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 	struct emp_gpa *gpa;
 	struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
 #ifdef CONFIG_EMP_BLOCK
-	bool csf;
+	bool csf = bvma_csf_enabled(bvma);
+	bool cpf = bvma_cpf_enabled(bvma);
 #endif
 
 	head->r_state = GPA_ACTIVE;
@@ -93,25 +94,41 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 	clear_gpa_flags_if_set(head, GPA_REMOTE_MASK);
 
 #ifdef CONFIG_EMP_BLOCK
-	csf = bvma_csf_enabled(bvma) && 
-		!is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK);
-	
-	if (csf && fetch && !prefetched_gpa) {
-		/* processed only a sub-block, not all */
-		if ((bvma->sops.wait_read_async)(bvma, cpu, demand)) {
-			debug_page_ref_io_end(demand->local_page);
-			emp_put_subblock(demand);
-		}
-
-		if (gpa_subblock_order(head) != gpa_block_order(head)) {
-			head->local_page->demand_offset
-						= gpa_block_offset(head, pgoff);
-			set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+	if (csf && fetch && !prefetched_gpa
+			& !is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK)) {
+		if (cpf) {
+			/* waiting only for demand page */
+			int fallback;
+			unsigned int sb_off = pgoff & gpa_subblock_mask(head);
+			fallback = bvma->sops.wait_read_async_demand_page(bvma,
+							cpu, demand, sb_off);
+			/* processed only a page, not all */
+			head->local_page->demand_offset =
+						gpa_block_offset(head, pgoff);
+			if (fallback > 1)
+				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+			else
+				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CPF_MASK);
 			set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
+		} else {
+			/* waiting only for demand subblock */
+			if ((bvma->sops.wait_read_async)(bvma, cpu, demand))
+				clear_gpa_flags_if_set(demand, GPA_REMOTE_MASK);
+
+			/* processed only a sub-block, not all */
+			if (gpa_subblock_order(head) != gpa_block_order(head)) {
+				head->local_page->demand_offset =
+						gpa_block_offset(head, pgoff);
+				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
+			}
 		}
 		return;
 	}
 #endif
+
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK))
+		prefetched_gpa = NULL;
 
 	for_each_gpas(gpa, head) {
 		if (fetch && gpa == prefetched_gpa)
@@ -149,45 +166,46 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 	pte_t pte_entry;
 	pte_t *_pte, *pte;
 	struct page *_page;
-	int i, ret = 0;
+	int i;
 
 	debug_pte_install(page, page_len);
 
 	pte = pte_offset_map(pmd, haddr);
-	for (_pte = pte; _pte < pte + page_len; _pte++) {
-		pte_entry = *_pte;
-		if (unlikely(pte_val(pte_entry))) {
-#ifdef CONFIG_EMP_DEBUG
-			int idx = _pte - pte;
-			struct emp_vmr *vmr = __get_emp_vmr(vma);
-			if (vmr->magic != EMP_VMR_MAGIC_VALUE
-					|| vmr->id >= EMP_VMRS_MAX
-					|| vmr->emm->vmrs[vmr->id] != vmr)
-				vmr = NULL;
-			printk(KERN_ERR "%s ERROR: already occupied. "
-				"addr: %016lx idx: %d pte: %016lx pfn: %lx "
-				"page: %016lx pfn: %lx flag: %016lx "
-				"page[%d]: %016lx pfn: %lx flag: %016lx "
-				"vm_start: %016lx vm_end: %016lx "
-				"vm_flag: %016lx vm_base: %016lx\n",
-				__func__, haddr, idx,
-				pte_val(pte_entry), pte_pfn(pte_entry),
-				(unsigned long) page, page_to_pfn(page),
-				page->flags,
-				idx, (unsigned long) (page + idx),
-				page_to_pfn(page + idx), (page + idx)->flags,
-				vma->vm_start, vma->vm_end,
-				vma->vm_flags,
-				vmr ? vmr->descs->vm_base : 0);
-#endif
-			pte_unmap(pte);
-			goto pte_install_failed;
-		}
-	}
-
 	// now, empty pte is guaranteed
 	for (i = 0, _pte = pte, _page = page;
 		i < page_len; i++, _pte++, _page++, haddr += PAGE_SIZE) {
+		pte_entry = *_pte;
+		if (unlikely(pte_val(pte_entry))) {
+			/* CPF may have mapped this page */
+			if (pte_pfn(pte_entry) == page_to_pfn(_page))
+				continue;
+			else {
+#ifdef CONFIG_EMP_DEBUG
+				int idx = _pte - pte;
+				struct emp_vmr *vmr = __get_emp_vmr(vma);
+				if (vmr->magic != EMP_VMR_MAGIC_VALUE
+						|| vmr->id >= EMP_VMRS_MAX
+						|| vmr->emm->vmrs[vmr->id] != vmr)
+					vmr = NULL;
+				printk(KERN_ERR "%s ERROR: already occupied. "
+					"addr: %016lx idx: %d pte: %016lx pfn: %lx "
+					"page: %016lx pfn: %lx flag: %016lx "
+					"page[%d]: %016lx pfn: %lx flag: %016lx "
+					"vm_start: %016lx vm_end: %016lx "
+					"vm_flag: %016lx vm_base: %016lx\n",
+					__func__, haddr, idx,
+					pte_val(pte_entry), pte_pfn(pte_entry),
+					(unsigned long) page, page_to_pfn(page),
+					page->flags,
+					idx, (unsigned long) (page + idx),
+					page_to_pfn(page + idx), (page + idx)->flags,
+					vma->vm_start, vma->vm_end,
+					vma->vm_flags,
+					vmr ? vmr->descs->vm_base : 0);
+#endif
+				BUG();
+			}
+		}
 		/*
 		   following mk_pte could be a problem without compiler optimization
 		   with turning off the optimization of gcc (GCC) 4.4.7 20120313 (Red Hat 4.4.7-4)
@@ -207,10 +225,7 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 	if (is_write)
 		emp_set_page_dirty(page, page_len);
 
-	ret = VM_FAULT_NOPAGE;
-
-pte_install_failed:
-	return ret;
+	return VM_FAULT_NOPAGE;
 }
 
 /* @retval VM_FAULT_NOPAGE(256): Success
@@ -256,7 +271,7 @@ int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 	int ret = VM_FAULT_NOPAGE;
 	unsigned long hva;
 	unsigned int page_len;
-	bool csf_prefetching;
+	bool csf_prefetching, cpf_prefetching;
 	struct vm_area_struct *vma = vmr->host_vma;
 	spinlock_t *ptl;
 
@@ -265,8 +280,43 @@ int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
 
 	// prefetch_hit == true => csf == false
 	// prefetch_hit == false => csf == GPA_PREFETCHED_MASK
-	csf_prefetching = !prefetch_hit &&
-				is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK);
+	if (prefetch_hit) {
+		cpf_prefetching = false;
+		csf_prefetching = false;
+	} else {
+		cpf_prefetching = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+		csf_prefetching = is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK);
+	}
+
+	if (cpf_prefetching) {
+		struct page *page;
+		int sb_offset;
+		struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
+		if (bvma_transition_csf(bvma) &&
+				(bvma->sops.try_wait_read_async(bvma, cpu, demand))) {
+			clear_gpa_flags_if_set(demand, GPA_REMOTE_MASK);
+			clear_gpa_flags_if_set(head, GPA_PREFETCHED_CPF_MASK);
+			set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+#ifdef CONFIG_EMP_STAT
+			bvma->stat.cpf_to_csf_transition++;
+#endif
+			cpf_prefetching = false;
+			csf_prefetching = true;
+			// fall-through
+		} else {
+			debug_assert(demand);
+			debug_assert(!emp_lp_lookup_vmr_id(demand, vmr->id));
+			____local_gpa_to_hva_and_len(vmr, demand, hva, page_len);
+			sb_offset = head->local_page->demand_offset
+						& gpa_subblock_mask(demand);
+			hva += PAGE_SIZE * sb_offset;
+			page = demand->local_page->page + sb_offset;
+			spin_lock(ptl);
+			ret = pte_install(vmr->host_vma, pmd, page, hva, 1, is_write);
+			spin_unlock(ptl);
+			return ret;
+		}
+	}
 
 	if (csf_prefetching) {
 		// if csf_prefetching is true, demand should exist.

@@ -1290,7 +1290,6 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 #ifdef CONFIG_EMP_BLOCK
 	bool csf = bvma_csf_enabled(bvma);
 	bool cpf = bvma_cpf_enabled(bvma);
-	int fallback;
 #endif
 	unsigned long sb_index;
 	int gpa_sb_offset;
@@ -1314,7 +1313,7 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	if (csf && !is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK)) {
 		if (cpf) {
 			/* waiting only for demand page */
-			fallback = bvma->sops.wait_read_async_demand_page(bvma, vcpu,
+			int fallback = bvma->sops.wait_read_async_demand_page(bvma, vcpu,
 									  gpa, gpa_sb_offset);
 
 			/* processed only a page, not all */
