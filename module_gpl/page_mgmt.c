@@ -680,23 +680,28 @@ u64 emp_map_prefetch_sptes(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 /**
  * __emp_map_prefetch_sptes_memslot - Install shadow page table entries for prefetch pages using memslot
  * @param kvm_vcpu working vcpu info
+ * @param head head of the faulted block
+ * @param demand demand subblock
+ * @param demand_off page offset of demand page
  * @param s start page of the faulted block
  * @param e end page of the faulted block
  * @param sgfn guest physical frame number
  * @param sptep pointer of shadow page table entry
  * @param spte_attr attribute of spte
- * @param skip index of the processing pages
  *
  * Install sptes for prefetch pages using memslot
  */
 static void __emp_map_prefetch_sptes_memslot(struct kvm_vcpu *vcpu,
-	struct emp_gpa *s, struct emp_gpa *e, gfn_t sgfn, u64 *sptep, u64 spte_attr, int skip)
+	struct emp_gpa *head, struct emp_gpa *demand, pgoff_t demand_off,
+	struct emp_gpa *s, struct emp_gpa *e, gfn_t sgfn, u64 *sptep,
+	u64 spte_attr)
 {
 	struct emp_gpa *g;
 	struct local_page *l;
 	struct kvm_memory_slot *ms;
 	gfn_t target_gfn = sgfn;
 	int i, offset, map_spte_count;
+	int demand_offset = (int) (demand_off & gpa_subblock_mask(demand));
 
 	debug_BUG_ON(!s->local_page);
 	map_spte_count = 0;
@@ -713,6 +718,8 @@ static void __emp_map_prefetch_sptes_memslot(struct kvm_vcpu *vcpu,
 				emp_release_page_clean(l->page + i);
 				continue;
 			}
+			if (g == demand && i == demand_offset)
+				continue;
 			if (map_spte_count++ % PTE_PREFETCH_NUM == 0)
 				kvm_emp_mmu_topup_memory_caches(vcpu);
 #ifdef CONFIG_EMP_DEBUG_PROGRESS
@@ -766,26 +773,21 @@ void emp_map_prefetch_sptes2(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 
 	debug_BUG_ON(!head->local_page);
 
-	l = NULL;
-	sb_offset = 0;
 	map_spte_count = 0;
 
 	shadow_page_walk_begin(vcpu);
 
-	for (g = head; g < mapping_eg; g++) {
+	for (g = mapping_sg; g < mapping_eg; g++) {
 #ifdef CONFIG_EMP_DEBUG_PROGRESS
 		int debug_map_spte_record = 0;
 #endif
-		if (g < mapping_sg)
-			continue;
-
 		l = g->local_page;
 		offset = ((g - demand) << sb_order) - (demand_off & sb_mask);
 
 		for (sb_offset = 0; sb_offset < gpa_subblock_size(g);
 				sb_offset++, offset++) {
-			if (sb_offset == (demand_off & sb_mask))
-					continue;
+			if (g == demand && sb_offset == (demand_off & sb_mask))
+				continue;
 			if (map_spte_count++ % PTE_PREFETCH_NUM == 0)
 				kvm_emp_mmu_topup_memory_caches(vcpu);
 #ifdef CONFIG_EMP_DEBUG_PROGRESS
@@ -800,18 +802,17 @@ void emp_map_prefetch_sptes2(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 	}
 
 	if (unlikely(end != mapping_eg)) {
-
 		debug_emp_map_prefetch_sptes2(g, mapping_eg);
 
 		offset = ((mapping_eg - demand) << sb_order) - (demand_off & sb_mask);
 
-		__emp_map_prefetch_sptes_memslot(vcpu, mapping_eg, end, gfn + offset,
-				sptep + offset, spte_attr, 0);
+		__emp_map_prefetch_sptes_memslot(vcpu, head, demand, demand_off,
+			mapping_eg, end, gfn + offset, sptep + offset, spte_attr);
 	}
 
 	if (unlikely(head != mapping_sg)) {
-		__emp_map_prefetch_sptes_memslot(vcpu, head, mapping_sg,
-				head_gfn, head_sptep, spte_attr, 0);
+		__emp_map_prefetch_sptes_memslot(vcpu, head, demand, demand_off,
+			head, mapping_sg, head_gfn, head_sptep, spte_attr);
 	}
 
 	shadow_page_walk_end(vcpu);
@@ -1156,7 +1157,7 @@ static int install_sptes_for_subblock(struct kvm_vcpu *kvm_vcpu,
 	int ret = 0;
 	struct page *demand_p;
 	struct emp_gpa *head = emp_get_block_head(demand);
-	bool cpf_prefetched = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool cpf = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
 	int vcpu_id = kvm_vcpu->vcpu_id + VCPU_START_ID;
 	struct vcpu_var *vcpu = &bvma->vcpus[vcpu_id];
 	bool enable_transition_csf = bvma_transition_csf(bvma);
@@ -1165,11 +1166,13 @@ static int install_sptes_for_subblock(struct kvm_vcpu *kvm_vcpu,
 	demand_p = demand->local_page->page + sb_offset;
 	pfn = page_to_pfn(demand_p);
 
-	/* demand page install */
+	/* Demand page install
+	 * We call this func always since we need return value and @sptep */
 	ret = fast_install_spte(kvm_vcpu, bvma, demand, gpa, pfn, level,
 			false, write_fault, writable, slot, &sptep);
 	debug_check_sptep(sptep);
-	if (cpf_prefetched) { 
+
+	if (cpf) {
 		/* if the work request is completed, change the block to CSF */
 		if (enable_transition_csf &&
 				(bvma->sops.try_wait_read_async(bvma, vcpu, demand))) {
@@ -1214,7 +1217,7 @@ static int emp_install_sptes(struct kvm_vcpu *vcpu, struct emp_mm *bvma,
 		struct vcpu_var *cpu, struct emp_gpa *head,
 		struct emp_gpa *demand, pgoff_t demand_off, gva_t gpa,
 		int level, bool prefault, bool write_fault, bool writable,
-		struct kvm_memory_slot *slot, bool fetch)
+		struct kvm_memory_slot *slot)
 {
 	gfn_t head_gfn;
 	u64 *sptep, pfn;
@@ -1222,6 +1225,8 @@ static int emp_install_sptes(struct kvm_vcpu *vcpu, struct emp_mm *bvma,
 	bool multiple_ms = false;
 	unsigned int sb_order, sb_mask;
 	int ret;
+	bool csf = is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK);
+	bool cpf = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
 
 	sb_order = gpa_subblock_order(demand);
 	sb_mask = gpa_subblock_mask(demand);
@@ -1240,7 +1245,7 @@ static int emp_install_sptes(struct kvm_vcpu *vcpu, struct emp_mm *bvma,
 				writable, slot, &sptep);
 		debug_check_sptep(sptep);
 
-		if (!fetch)
+		if (!csf && !cpf)
 			emp_map_prefetch_sptes(vcpu, head, demand,
 					demand_off, gpa, sptep);
 		goto out;
@@ -1251,7 +1256,8 @@ static int emp_install_sptes(struct kvm_vcpu *vcpu, struct emp_mm *bvma,
 			false, write_fault, writable, slot, &sptep);
 	debug_check_sptep(sptep);
 
-	if (fetch) {
+	/* for cpf, fast_install_spte() is enough */
+	if (cpf || csf) {
 		wait_fetching_except(bvma, cpu, head, demand);
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 	}
@@ -1430,7 +1436,6 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	u64 ts_start;
 	enum emp_op_type ts_type;
 #endif
-	bool fetch;
 	int ret = RET_PF_RETRY, r;
 #ifdef CONFIG_EMP_SHOW_FAULT_PROGRESS
 	s64 __num_emp_gpa_fault;
@@ -1676,10 +1681,8 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	debug_emp_install_sptes(head);
 
 	/* fetching completed. now install shadow page table entry */
-	fetch = (is_gpa_flags_set(head, GPA_PREFETCHED_MASK))? true: false;
 	ret = emp_install_sptes(kvm_vcpu, bvma, cpu, head, demand, demand_off,
-			        gva, level, prefault, write_fault, *writable,
-				slot, fetch);
+			gva, level, prefault, write_fault, *writable, slot);
 	emp_pf_history_add(cpu, install_pte_ret, ret);
 
 	debug_emp_install_sptes2(bvma, head, demand);
