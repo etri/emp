@@ -1658,6 +1658,14 @@ static int __init emp_init(void)
 	initial_block_order = BLOCK_MAX_ORDER;
 	initial_subblock_order = 0;
 	initial_use_compound_page = true;
+	initial_critical_subblock_first = true;
+	initial_critical_page_first = false;
+	initial_mark_empty_page = false;
+	initial_mem_poll = false;
+	initial_enable_transition_csf = false;
+#endif
+#ifdef CONFIG_EMP_OPT
+	initial_eval_media = false;
 #endif
 	initial_remote_reuse = DEFAULT_REMOTE_REUSE;
 	initial_remote_policy_subblock = DEFAULT_REMOTE_POLICY_SUBBLOCK;
