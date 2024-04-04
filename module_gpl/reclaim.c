@@ -324,7 +324,7 @@ bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu,
 	int demand_offset;
 
 	/* release work requests of prefetch sub-blocks */
-	if (!clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK))
+	if (!is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
 		return false;
 
 	debug_wait_for_prefetch_subblocks(head);
@@ -360,6 +360,7 @@ bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		//continue; // This is unnecessary for now.
 #endif
 	}
+	clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 	head->local_page->demand_offset = 0;
 	return true;
 }
