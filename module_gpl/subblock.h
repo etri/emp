@@ -23,9 +23,8 @@ static inline unsigned int offset_in_subblock(struct emp_gpa *sbh, unsigned long
 /**
  * emp_get_subblock - increase reference count of the pages in a sub-block
  * @param g head of the sub-block
- * @param compund is it compound page?
  */
-static inline void __emp_get_subblock(struct emp_gpa *g, bool compound)
+static inline void __emp_get_subblock(struct emp_gpa *g)
 {
 	struct page *p, *e;
 
@@ -33,7 +32,7 @@ static inline void __emp_get_subblock(struct emp_gpa *g, bool compound)
 	p = g->local_page->page;
 	if (PageCompound(p)) {
 		p = compound_head(p);
-		page_ref_add(p, compound? gpa_subblock_size(g): 1);
+		page_ref_add(p, 1);
 		return;
 	} else {
 		e = p + gpa_subblock_size(g);
@@ -43,16 +42,14 @@ static inline void __emp_get_subblock(struct emp_gpa *g, bool compound)
 		get_page(p);
 }
 
-#define emp_get_subblock(g, compound) do { \
-	__emp_get_subblock(g, compound); \
-	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, \
-		PageCompound((g)->local_page->page) && (compound)  \
-					? gpa_subblock_size(g) : 1); \
+#define emp_get_subblock(g) do { \
+	__emp_get_subblock(g); \
+	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, 1); \
 } while (0)
 
 #define emp_get_subblock_calibrate(g) do { \
 	debug_page_ref_calibrate_beg((g)->local_page, 1); \
-	__emp_get_subblock(g, false); \
+	__emp_get_subblock(g); \
 	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, 0); \
 	debug_page_ref_calibrate_end((g)->local_page, 1); \
 } while (0)
@@ -159,9 +156,8 @@ static inline void __emp_put_subblock_except(struct emp_gpa *g, int except_idx)
 /**
  * emp_get_subblock - increase reference count of the pages in a sub-block
  * @param g head of the sub-block
- * @param compund is it compound page?
  */
-static inline void __emp_get_subblock(struct emp_gpa *g, bool compound)
+static inline void __emp_get_subblock(struct emp_gpa *g)
 {
 	struct page *p;
 
@@ -183,7 +179,7 @@ static inline void __emp_get_subblock(struct emp_gpa *g, bool compound)
 
 #define emp_get_subblock_calibrate(g) do { \
 	debug_page_ref_calibrate_beg((g)->local_page, 1); \
-	__emp_get_subblock(g, false); \
+	__emp_get_subblock(g); \
 	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, 0); \
 	debug_page_ref_calibrate_end((g)->local_page, 1); \
 } while (0)

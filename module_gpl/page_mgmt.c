@@ -880,7 +880,7 @@ u64 emp_page_fault_sptes_map(struct kvm_vcpu *kvm_vcpu, struct vcpu_var *cpu,
 				pf_gpa >> PAGE_SHIFT);
 	if (sptep == NULL || !is_shadow_present_pte(*sptep)) {
 		if (!is_shadow_present_pte(*sptep))
-			emp_get_subblock(pf_sb_head, false);
+			emp_get_subblock(pf_sb_head);
 
 		install_sptes_for_subblock(kvm_vcpu, bvma, 
 				pf_sb_head, demand_offset, pf_gpa,

@@ -645,7 +645,7 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 	ew_len = 0;
 	for_each_gpas(victim, head) {
 		debug_page_ref_io_beg(victim->local_page);
-		emp_get_subblock(victim, false);
+		emp_get_subblock(victim);
 		emp_lock_subblock(victim);
 
 		/* this code block writes gpas to remote device at smaller size */

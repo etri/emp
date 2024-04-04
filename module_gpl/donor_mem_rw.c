@@ -45,7 +45,7 @@ fetch_pages(struct emp_mm *bvma, struct connection *conn, struct emp_gpa *gpa,
 
 	/* read saved page contents into lp->page according to the local_page */
 	debug_page_ref_io_beg(gpa->local_page);
-	emp_get_subblock(gpa, false);
+	emp_get_subblock(gpa);
 	demand_w = post_read(conn, gpa, pgoff, pglen, rp, criticality,
 			     head_wr, tail_wr, ops);
 	if (IS_ERR_OR_NULL(demand_w)) {
