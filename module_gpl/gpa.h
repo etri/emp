@@ -19,22 +19,23 @@ enum gpa_flags {
 	GPA_remote = 5,
 	GPA_prefetched_csf = 6,
 	GPA_prefetched_cpf = 7,
-	GPA_prefetch_once = 8,
-	GPA_referenced = 9,
+	GPA_prefetched_blk = 8,
+	GPA_prefetch_once = 9,
+	GPA_referenced = 10,
 #ifdef CONFIG_EMP_VM
-	GPA_lowmemory_block = 10,
+	GPA_lowmemory_block = 11,
 #endif
-	GPA_stale_block = 11,
+	GPA_stale_block = 12,
 #ifdef CONFIG_EMP_USER
 	// subblock order and block order of partial mapped block must be same
-	GPA_partial_map = 12,
+	GPA_partial_map = 13,
 #endif
 #ifdef CONFIG_EMP_IO
-	GPA_io_read_page = 13,
-	GPA_io_write_page = 14,
-	GPA_io_in_progress = 15,
+	GPA_io_read_page = 14,
+	GPA_io_write_page = 15,
+	GPA_io_in_progress = 16,
 #endif
-	NUM_GPA_FLAGS = 16,
+	NUM_GPA_FLAGS = 17,
 };
 
 #define GPA_TOUCHED_MASK    (1 << GPA_touched)
@@ -51,7 +52,10 @@ enum gpa_flags {
 #define GPA_REMOTE_MASK     (1 << GPA_remote)
 #define GPA_PREFETCHED_CSF_MASK  (1 << GPA_prefetched_csf)
 #define GPA_PREFETCHED_CPF_MASK  (1 << GPA_prefetched_cpf)
-#define GPA_PREFETCHED_MASK  (GPA_PREFETCHED_CSF_MASK | GPA_PREFETCHED_CPF_MASK)
+#define GPA_PREFETCHED_BLK_MASK  (1 << GPA_prefetched_blk)
+#define GPA_PREFETCHED_MASK  (GPA_PREFETCHED_CSF_MASK \
+				| GPA_PREFETCHED_CPF_MASK \
+				| GPA_PREFETCHED_BLK_MASK)
 #define GPA_PREFETCH_ONCE_MASK  (1 << GPA_prefetch_once)
 #define GPA_REFERENCED_MASK (1 << GPA_referenced)
 #ifdef CONFIG_EMP_IO
