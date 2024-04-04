@@ -1685,6 +1685,8 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 
 #ifdef CONFIG_EMP_USER
 	if (vm_refcnt > 0) {
+		debug_assert(atomic_read(&desc->is_closing) == 1);
+		atomic_set(&desc->is_closing, 0);
 		wake_up_interruptible(&desc->closing_wq);
 		return vm_refcnt;
 	}
