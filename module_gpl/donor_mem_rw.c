@@ -645,6 +645,18 @@ static int wait_writeback_async_steal(struct emp_mm *emm, struct vcpu_var *waiti
 	}
 }
 
+static void __clear_fetching_work_request(struct emp_mm *emm,
+					struct work_request *w)
+{
+	struct emp_gpa *gpa = w->gpa;
+	debug_assert(gpa);
+#ifdef CONFIG_EMP_USER
+	if (put_cow_remote_page(emm, gpa))
+#endif
+		free_remote_page(emm, gpa, true);
+	free_work_request(emm, w);
+}
+
 /**
  * clear_fetching_work_request - Clear completed fetch work request
  * @param bvma bvma data structure
@@ -656,45 +668,25 @@ static void clear_fetching_work_request(struct emp_mm *bvma,
 					struct work_request *w)
 {
 	struct work_request *head_wr;
-	struct emp_gpa *gpa;
 
 	wait_read(bvma, w, cpu, false);
 	debug_check_tag(w);
 
 	head_wr = w->head_wr;
 	if (w != head_wr) {
-		if (!w->chained_ops || w != head_wr->eh_wr) {
-			gpa = w->gpa;
-			debug_assert(gpa);
-#ifdef CONFIG_EMP_USER
-			if (put_cow_remote_page(bvma, gpa))
-#endif
-				free_remote_page(bvma, gpa, true);
-			free_work_request(bvma, w);
-		}
+		if (!w->chained_ops || w != head_wr->eh_wr)
+			__clear_fetching_work_request(bvma, w);
 	}
 	//atomic_dec_and_test returns true when the argument is zero.
 	if (atomic_dec_and_test(&head_wr->wr_refc) == false)
 		return;
 
-	if (head_wr->eh_wr) {
-		gpa = head_wr->eh_wr->gpa;
-		debug_assert(gpa);
-#ifdef CONFIG_EMP_USER
-		if (put_cow_remote_page(bvma, gpa))
-#endif
-			free_remote_page(bvma, gpa, true);
-		free_work_request(bvma, head_wr->eh_wr);
-	}
+	if (head_wr->eh_wr)
+		__clear_fetching_work_request(bvma, head_wr->eh_wr);
+
 	/* At this point, &head_wr->wr_refc is zero.
 	 * In other words, all pages in a block have been fetched successfully. */
-	gpa = head_wr->gpa;
-	debug_assert(gpa);
-#ifdef CONFIG_EMP_USER
-	if (put_cow_remote_page(bvma, gpa))
-#endif
-		free_remote_page(bvma, gpa, true);
-	free_work_request(bvma, head_wr);
+	__clear_fetching_work_request(bvma, head_wr);
 }
 
 /**
@@ -711,26 +703,16 @@ static bool try_clear_fetching_work_request(struct emp_mm *bvma,
 					    struct vcpu_var *cpu,
 					    struct work_request *w)
 {
-	struct work_request *head_wr;
-
-	head_wr = w->head_wr;
-
 	/* Here, only the demand subblock is entered */
-	debug_BUG_ON(w != head_wr);
+	debug_BUG_ON(w != w->head_wr);
 
 	if (try_wait_read(bvma, w, cpu, false) == 0)
 		return false;
 	debug_check_tag(w);
 
-	if (atomic_dec_and_test(&head_wr->wr_refc) == true) {
-		struct emp_gpa *gpa = head_wr->gpa;
-		debug_assert(gpa);
-#ifdef CONFIG_EMP_USER
-		if (put_cow_remote_page(bvma, gpa))
-#endif
-			free_remote_page(bvma, gpa, true);
-		free_work_request(bvma, head_wr);
-	}
+	/* NOTE: w == head_wr */
+	if (atomic_dec_and_test(&w->wr_refc) == true)
+		__clear_fetching_work_request(bvma, w);
 
 	return true;
 }
