@@ -1936,7 +1936,6 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 	struct emp_gpa *head, *g;
 	unsigned long index, index_start, index_end;
 	unsigned long vpn_base, vpn_start, vpn_end;
-	struct mapped_pmd *mapped, *mapped2;
 
 	vpn_start = vmr->vm_start >> PAGE_SHIFT;
 	vpn_end = vmr->vm_end >> PAGE_SHIFT;
