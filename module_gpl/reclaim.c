@@ -319,7 +319,6 @@ bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu,
 				 struct emp_gpa *head)
 {
 	struct emp_gpa *g, *pf_sb_head;
-	bool cpf_prefetched;
 	int pf_sb_base, pf_sb_offset;
 	int demand_offset;
 
@@ -334,31 +333,15 @@ bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu,
 	pf_sb_offset = demand_offset & gpa_subblock_mask(head);
 	pf_sb_head = head + pf_sb_base;
 
-	cpf_prefetched = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK))
+		pf_sb_head = NULL;
+
 	for_each_gpas(g, head) {
-		if (g == pf_sb_head && !cpf_prefetched)
+		if (g == pf_sb_head)
 			continue;
 
-		if (!emm->sops.wait_read_async(emm, cpu, g))
-			continue;
-
-		clear_gpa_flags_if_set(g, GPA_REMOTE_MASK);
-
-#ifdef CONFIG_EMP_VM
-		/* To ensure the page reference count at unmap_gpas()
-		 * HPT: 2
-		 * EPT: 1
-		 * TODO: Actually, reference counter of prefetched HPT
-		 * should be reduced */
-		if (!is_gpa_flags_set(head, GPA_EPT_MASK))
-			continue;
-		if (g == pf_sb_head && cpf_prefetched)
-			emp_put_subblock_except(g, pf_sb_offset);
-		else
-			emp_put_subblock(g);
-#else
-		//continue; // This is unnecessary for now.
-#endif
+		if (emm->sops.wait_read_async(emm, cpu, g))
+			clear_gpa_flags_if_set(g, GPA_REMOTE_MASK);
 	}
 	clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 	head->local_page->demand_offset = 0;

@@ -140,10 +140,8 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 
 		// we must put subblock for fetch_page
 		// don't merge the put_subblock to get_subblock for pte_install
-		if ((bvma->sops.wait_read_async)(bvma, cpu, gpa)) {
-			debug_page_ref_io_end(gpa->local_page);
-			emp_put_subblock(gpa);
-		}
+		if ((bvma->sops.wait_read_async)(bvma, cpu, gpa))
+			clear_gpa_flags_if_set(demand, GPA_REMOTE_MASK);
 	}
 }
 

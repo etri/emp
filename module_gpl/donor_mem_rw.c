@@ -324,15 +324,14 @@ static int clear_writeback_work_request(struct emp_mm *bvma,
 	 */
 	for_each_gpas_reverse(g, head) {
 		debug_assert(g->local_page);
+		debug_assert(!is_gpa_flags_set(g, ZERO_BLOCK));
 
-		/* TODO: ZERO_BLOCK checking should be located on module_pro */
-		if ((!is_gpa_flags_set(g, ZERO_BLOCK))) {
-			// counter part of get_page right
-			// before post_writeback_async
-			debug_page_ref_io_end(g->local_page);
-			emp_put_subblock(g);
-			emp_unlock_subblock(g);
-		}
+		// counter part of get_page right
+		// before post_writeback_async
+		debug_page_ref_io_end(g->local_page);
+		emp_put_subblock(g);
+		emp_unlock_subblock(g);
+
 		if (do_reclaim)
 			bvma->vops.set_gpa_remote(bvma, cpu, g);
 		else
@@ -827,6 +826,8 @@ wait_read_async(struct emp_mm *bvma, struct vcpu_var *cpu, struct emp_gpa *gpa)
 		return false;
 
 	clear_fetching_work_request(bvma, cpu, w);
+	debug_page_ref_io_end(gpa->local_page);
+	emp_put_subblock(gpa);
 	gpa->local_page->w = NULL;
 	return true;
 }
@@ -848,6 +849,8 @@ static bool try_wait_read_async(struct emp_mm *bvma, struct vcpu_var *cpu,
 		return false;
 
 	if (try_clear_fetching_work_request(bvma, cpu, w)) {
+		debug_page_ref_io_end(gpa->local_page);
+		emp_put_subblock(gpa);
 		gpa->local_page->w = NULL;
 		return true;
 	} else
