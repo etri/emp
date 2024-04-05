@@ -573,7 +573,7 @@ __get_pte_val(struct emp_vmr *vmr, pmd_t *pmdp, unsigned long hva)
 	return ptep ? ((unsigned long) ptep->pte) : 0UL;
 }
 
-inline void
+inline void COMPILER_DEBUG
 __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 					unsigned long idx, bool head)
 {
