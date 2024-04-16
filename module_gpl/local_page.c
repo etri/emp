@@ -157,6 +157,9 @@ static inline void emp_init_local_page(struct local_page *lp, int vmr_id,
 	debug_update_rss_init_local_page(lp);
 	INIT_LIST_HEAD(&lp->lru_list);
 	lp->page = page;
+#ifdef CONFIG_EMP_DEBUG
+	lp->page_pfn = page_to_pfn(page);
+#endif
 	lp->sptep = NULL;
 	lp->flags = 0;
 

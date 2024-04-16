@@ -70,6 +70,7 @@ struct local_page {
 #endif
 #ifdef CONFIG_EMP_DEBUG
 	struct emp_mm *emm;
+	unsigned long page_pfn;
 #endif
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	struct debug_page_ref_history debug_page_ref_history[DEBUG_PAGE_REF_SIZE];
