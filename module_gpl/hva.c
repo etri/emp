@@ -429,6 +429,10 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 	if (emp_lp_count_pmd(lp_head) == 0 && emp_lp_count_pmd(lp_gpa) == 0)
 		return;
 
+	if (emp_lp_count_pmd(lp_head) == 1 && emp_lp_count_pmd(lp_gpa) == 1
+			&& lp_head->pmds.vmr_id == lp_gpa->pmds.vmr_id)
+		return;
+
 	p_head = emp_lp_first_mapped_pmd(lp_head);
 	p_gpa = emp_lp_first_mapped_pmd(lp_gpa);
 	debug_assert(p_head || p_gpa);
@@ -444,12 +448,12 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 		} else if (p_head->vmr_id < p_gpa->vmr_id) {
 			vmr = emm->vmrs[p_head->vmr_id];
 			emp_install_hptes(emm, vmr, head, NULL,
-						p_head->pmd, false, is_write);
+						p_head->pmd, true, is_write);
 			p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
 		} else {
 			vmr = emm->vmrs[p_gpa->vmr_id];
 			emp_install_hptes(emm, vmr, head, NULL,
-						p_gpa->pmd, false, is_write);
+						p_gpa->pmd, true, is_write);
 			p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
 		}
 	}
@@ -460,14 +464,14 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 	while (p_head) {
 		vmr = emm->vmrs[p_head->vmr_id];
 		emp_install_hptes(emm, vmr, head, NULL,
-					p_head->pmd, false, is_write);
+					p_head->pmd, true, is_write);
 		p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
 	}
 
 	while (p_gpa) {
 		vmr = emm->vmrs[p_gpa->vmr_id];
 		emp_install_hptes(emm, vmr, head, NULL,
-					p_gpa->pmd, false, is_write);
+					p_gpa->pmd, true, is_write);
 		p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
 	}
 }
