@@ -870,7 +870,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
 
 			/* NOTE: RSS is not changed. @vmr is the only vmr and it is the owner. */
-			continue;
+			goto next;
 		}
 
 		mapped = false;
@@ -945,6 +945,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			SetPageReferenced(gpa->local_page->page);
 		}
 
+next:
 		hva += pages_len * PAGE_SIZE;
 	}
 	if (dirty) {
