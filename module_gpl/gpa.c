@@ -878,12 +878,14 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 
 
 		/* block is aligned */
-		debug_assert(emp_lp_lookup_pmd(gpa, vmr->id) == pmd);
+		debug_assert(emp_lp_lookup_pmd(gpa, vmr->id) == pmd
+				|| emp_lp_lookup_pmd(gpa, vmr->id) == NULL);
 		if (unlikely(gpa->local_page->vmr_id < 0)) {
 			gpa->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->id);
 		}
-		emp_lp_remove_pmd(emm, gpa->local_page, vmr->id);
+		if (emp_lp_remove_pmd(emm, gpa->local_page, vmr->id) == false)
+			goto next;
 		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->id);
 		if (gpa->local_page->vmr_id != vmr->id)
 			emp_update_rss_sub(vmr, pages_len,
@@ -967,25 +969,28 @@ static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
 		       unsigned long head_hva, unsigned long size)
 {
 	unsigned long end_hva = head_hva + size;
+	struct emp_gpa *gpa;
 	struct mapped_pmd *p;
 	struct emp_vmr *vmr;
 	pmd_t *pmd;
 	spinlock_t *ptl;
 	struct mmu_gather tlb;
 
-	while ((p = emp_lp_first_mapped_pmd(head->local_page)) != NULL) {
-		vmr = emm->vmrs[p->vmr_id];
-		pmd = p ->pmd;
-		kernel_tlb_gather_mmu(&tlb, vmr->host_mm, head_hva, end_hva);
-		/* NOTE: we acquire and release page table lock at block
-		 *       granularity to prevent deadlock with
-		 *       __unmap_max_block().
-		 */
-		ptl = pte_lockptr(vmr->host_mm, pmd);
-		spin_lock(ptl);
-		__unmap_ptes(vmr, head, head_hva, pmd, &tlb);
-		spin_unlock(ptl);
-		kernel_tlb_finish_mmu(&tlb, head_hva, end_hva);
+	for_each_gpas(gpa, head) {
+		while ((p = emp_lp_first_mapped_pmd(gpa->local_page)) != NULL) {
+			vmr = emm->vmrs[p->vmr_id];
+			pmd = p->pmd;
+			kernel_tlb_gather_mmu(&tlb, vmr->host_mm, head_hva, end_hva);
+			/* NOTE: we acquire and release page table lock at block
+			 *       granularity to prevent deadlock with
+			 *       __unmap_max_block().
+			 */
+			ptl = pte_lockptr(vmr->host_mm, pmd);
+			spin_lock(ptl);
+			__unmap_ptes(vmr, head, head_hva, pmd, &tlb);
+			spin_unlock(ptl);
+			kernel_tlb_finish_mmu(&tlb, head_hva, end_hva);
+		}
 	}
 
 	debug_unmap_ptes(emm, head, size);
