@@ -4,6 +4,7 @@
 #include "config.h"
 #include "gpa.h"
 #include "vm.h"
+#include "local_page.h"
 #include "debug.h"
 #include "kvm_mmu.h"
 #include "page_mgmt.h"
@@ -1413,45 +1414,111 @@ void debug_check_head(struct page *page) {
 	BUG_ON(PageCompound(page) && !PageHead(page));
 }
 
-void debug__handle_gpa_on_inactive_fault(struct emp_gpa *head)
+static int __debug_page_count_eq(struct emp_mm *emm, struct emp_gpa *gpa,
+						int expected, const char *func)
 {
-	int i;
-	struct emp_gpa *g;
 	struct page *p;
-
-	for_each_gpas(g, head) {
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (page_count(p + i) != 1)
-				printk(KERN_ERR "WARN: %s page count is not matched. "
-						"page_count(%016lx): %d != 1\n",
-						__func__, (unsigned long)(p + i),
-						page_count(p + i));
+	BUG_ON(!gpa->local_page);
+	p = gpa->local_page->page;
+	if (PageCompound(p)) {
+		if (page_count(p) != expected) {
+			printk(KERN_ERR "WARN: %s page count is not matched. "
+					"page_count(%016lx): %d != %d\n",
+					func, (unsigned long)(p),
+					page_count(p), expected);
+			debug_page_ref_check(gpa);
+			return -1;
 		}
-	}
-}
+	} else {
+		int i;
+		int page_len;
+		struct local_page *lp = gpa->local_page;
+		if (lp->vmr_id >= 0 && lp->vmr_id < EMP_VMRS_MAX
+				&& emm->vmrs[lp->vmr_id] != NULL) {
+			struct emp_vmr *vmr = emm->vmrs[lp->vmr_id];
+			page_len = __local_gpa_to_page_len(vmr, gpa);
+		} else {
+			page_len = gpa_subblock_size(gpa);
+		}
 
-void debug_fetch_block(struct emp_gpa *head, int fip)
-{
-	struct emp_gpa *g;
-	struct page *p;
-	int i, expected_count;
-
-	if (fip < 0) /* error case */
-		return;
-
-	for_each_gpas(g, head) {
-		p = g->local_page->page;
-		expected_count = 1;
-		if (fip)
-			expected_count++;
-		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (page_count(p + i) != expected_count)
+		for (i = 0; i < page_len; i++) {
+			if (page_count(p + i) != expected) {
 				printk(KERN_ERR "WARN: %s page count is not matched. "
 						"page_count(%016lx): %d != %d\n",
 						__func__, (unsigned long)(p + i),
-						page_count(p + i), expected_count);
+						page_count(p + i), expected);
+				debug_page_ref_check(gpa);
+				return -1;
+			}
 		}
+	}
+	return 0;
+}
+
+static int __debug_page_count_lt(struct emp_mm *emm, struct emp_gpa *gpa,
+						int expected, const char *func)
+{
+	struct page *p;
+	BUG_ON(!gpa->local_page);
+	p = gpa->local_page->page;
+	if (PageCompound(p)) {
+		if (page_count(p) < expected) {
+			printk(KERN_ERR "WARN: %s page count is not matched. "
+					"page_count(%016lx): %d < %d\n",
+					func, (unsigned long)(p),
+					page_count(p), expected);
+			debug_page_ref_check(gpa);
+			return -1;
+		}
+	} else {
+		int i;
+		int page_len;
+		struct local_page *lp = gpa->local_page;
+		if (lp->vmr_id >= 0 && lp->vmr_id < EMP_VMRS_MAX
+				&& emm->vmrs[lp->vmr_id] != NULL) {
+			struct emp_vmr *vmr = emm->vmrs[lp->vmr_id];
+			page_len = __local_gpa_to_page_len(vmr, gpa);
+		} else {
+			page_len = gpa_subblock_size(gpa);
+		}
+		for (i = 0; i < page_len; i++) {
+			if (page_count(p + i) < expected) {
+				printk(KERN_ERR "WARN: %s page count is not matched. "
+						"page_count(%016lx): %d < %d\n",
+						__func__, (unsigned long)(p + i),
+						page_count(p + i), expected);
+				debug_page_ref_check(gpa);
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
+void debug__handle_gpa_on_inactive_fault(struct emp_mm *emm, struct emp_gpa *head)
+{
+	struct emp_gpa *g;
+
+	for_each_gpas(g, head) {
+		if (__debug_page_count_eq(emm, g, 1, __func__))
+			break;
+	}
+}
+
+void debug_fetch_block(struct emp_mm *emm, struct emp_gpa *head, int fip)
+{
+	struct emp_gpa *g;
+	int expected;
+
+	if (fip < 0) /* error case */
+		return;
+	if (fip)
+		expected = 2;
+	else
+		expected = 1;
+	for_each_gpas(g, head) {
+		if (__debug_page_count_eq(emm, g, expected, __func__))
+			break;
 	}
 }
 
@@ -1476,47 +1543,35 @@ void debug_emp_page_fault_gpa(struct emp_gpa *head) {
 #endif
 }
 
-void debug_emp_page_fault_gpa2(struct emp_gpa *head)
+void debug_emp_page_fault_gpa2(struct emp_mm *emm, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
-	struct page *p;
-	int i, sb_head_count = 1;
+	int sb_head_count;
 
-	if (__is_gpa_flags_set(head, GPA_HPT_MASK) || head->r_state == GPA_INIT)
+       if (__is_gpa_flags_set(head, GPA_HPT_MASK) || head->r_state == GPA_INIT)
 		return;
 
+	sb_head_count = 1;
 	if (WB_BLOCK(head))
 		sb_head_count++;
-	else if (__is_gpa_flags_set(head, EAGER_WBR) && INACTIVE_BLOCK(head))
+       else if (__is_gpa_flags_set(head, EAGER_WBR) && INACTIVE_BLOCK(head))
 		sb_head_count++;
 
 	for_each_gpas(g, head) {
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (WB_BLOCK(head) && !g->local_page->w) {
-				if (page_count(p + i) != (sb_head_count - 1))
-					printk(KERN_ERR "WARN: %s page count is not matched. (writeback) "
-							"page_count(%016lx): %d != %d\n",
-							__func__, (unsigned long)(p + i),
-							page_count(p + i), sb_head_count - 1);
-				continue;
-			}
-			if (INACTIVE_BLOCK(head) &&
+		if (WB_BLOCK(head) && !g->local_page->w) {
+			if (__debug_page_count_eq(emm, g, sb_head_count - 1,
+					"debug_emp_page_fault_gpa2(writeback)"))
+				break;
+		} else if (INACTIVE_BLOCK(head) &&
 					__is_gpa_flags_set(head, EAGER_WBR) &&
 					__is_gpa_flags_set(g, ZERO_BLOCK)) {
-				if (page_count(p + i) != (sb_head_count - 1))
-					printk(KERN_ERR "WARN: %s page count is not matched. (inactive, eager, zero) "
-							"page_count(%016lx): %d != %d\n",
-							__func__, (unsigned long)(p + i),
-							page_count(p + i), sb_head_count - 1);
-				continue;
-			}
-
-			if (page_count(p + i) != sb_head_count)
-				printk(KERN_ERR "WARN: %s page count is not matched. "
-						"page_count(%016lx): %d != %d\n",
-						__func__, (unsigned long)(p + i),
-						page_count(p + i), sb_head_count);
+			if (__debug_page_count_eq(emm, g, sb_head_count - 1,
+					"debug_emp_page_fault_gpa2(inactive,eager,zero)"))
+				break;
+		} else {
+			if (__debug_page_count_eq(emm, g, sb_head_count,
+					"debug_emp_page_fault_gpa2(etc)"))
+				break;
 		}
 	}
 }
@@ -1540,94 +1595,48 @@ void debug_map_sptes_in_subblock(struct emp_gpa *sb_head, u64 *sptep) {
 	BUG_ON(sb_head->local_page->page == NULL);
 }
 
-void debug_emp_install_sptes(struct emp_gpa *head)
+void debug_emp_install_sptes(struct emp_mm *emm, struct emp_gpa *head)
 {
-	int i;
 	struct emp_gpa *g;
-	struct page *p;
+	int pc_max;
+	char *errmsg;
+
+	if (__is_gpa_flags_set(head, GPA_HPT_MASK)) {
+		pc_max = 3;
+		errmsg = "debug_emp_install_sptes(hpt)";
+	} else {
+		pc_max = 2;
+		errmsg = "debug_emp_install_sptes(not_hpt)";
+	}
 
 	for_each_gpas(g, head) {
-		BUG_ON(g->local_page == NULL);
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (__is_gpa_flags_set(head, GPA_HPT_MASK)) {
-				if (page_count(p + i) < 3)
-					printk(KERN_ERR "WARN: %s page count is not matched. (hpt) "
-							"page_count(%016lx): %d < 3\n",
-							__func__, (unsigned long)(p + i),
-							page_count(p + i));
-			} else {
-				if (page_count(p + i) < 2)
-					printk(KERN_ERR "WARN: %s page count is not matched. (not hpt) "
-							"page_count(%016lx): %d < 2\n",
-							__func__, (unsigned long)(p + i),
-							page_count(p + i));
-			}
-		}
+		if (__debug_page_count_lt(emm, g, pc_max, errmsg))
+			break;
 	}
 }
 
-void debug_emp_install_sptes2(struct emp_mm *bvma, struct emp_gpa *head, struct emp_gpa *gpa) {
+void debug_emp_install_sptes2(struct emp_mm *emm, struct emp_gpa *head, struct emp_gpa *gpa) {
 	struct emp_gpa *g;
-	struct page *p;
-	int i;
-	int demand_page_offset = head->local_page->demand_offset & gpa_subblock_mask(gpa);
 	bool cpf_prefetched = __is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
 
 	if (__is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
 		for_each_gpas(g, head) {
-			BUG_ON(g->local_page == NULL);
-			p = g->local_page->page;
-			for (i = 0; i < gpa_subblock_size(g); i++) {
-				if (cpf_prefetched && !PageCompound(p + i)) {
-					/* cpf_prefetched && page_level count */
-					if (g == gpa && demand_page_offset == i) {
-						/* prefetched page ==> already mapped */
-						if (page_count(p + i) < 1)
-							printk(KERN_ERR "WARN: %s page count is not matched. (cpf, not compound, prefetched) "
-									"page_count(%016lx): %d < 1\n",
-										__func__, (unsigned long)(p + i),
-										page_count(p + i));
-					} else {
-						/* other pages */
-						if (page_count(p + i) < 2)
-							printk(KERN_ERR "WARN: %s page count is not matched. (cpf, not compound, other) "
-									"page_count(%016lx): %d < 2\n",
-										__func__, (unsigned long)(p + i),
-										page_count(p + i));
-					}
-				} else {
-					/* csf prefetched in any case || cpf prefetched with compound page */
-					if (g == gpa) {
-						/* prefetched sub-block or compound page ==> already mapped */
-						if (page_count(p + i) < 1)
-							printk(KERN_ERR "WARN: %s page count is not matched. (csf prefetched or cpf prefetched with compound) "
-									"page_count(%016lx): %d < 1\n",
-										__func__, (unsigned long)(p + i),
-										page_count(p + i));
-					} else {
-						/* other subblocks or compund pages */
-						if (page_count(p + i) < 2)
-							printk(KERN_ERR "WARN: %s page count is not matched. (not prefetched or compound) "
-									"page_count(%016lx): %d < 2\n",
-										__func__, (unsigned long)(p + i),
-										page_count(p + i));
-					}
-				}
+			if (g == gpa && !cpf_prefetched)  {
+				if (__debug_page_count_lt(emm, g, 1,
+							"debug_emp_install_sptes2(csf&demand)"))
+					break;
+			} else {
+				if (__debug_page_count_lt(emm, g, 2,
+							"debug_emp_install_sptes2(cpf|non-demand)"))
+					break;
 			}
 		}
 	} else {
-		int pc = __is_gpa_flags_set(head, GPA_HPT_MASK)?2:1;
+		int pc = __is_gpa_flags_set(head, GPA_HPT_MASK) ? 2 : 1;
 		for_each_gpas(g, head) {
-			BUG_ON(g->local_page == NULL);
-			p = g->local_page->page;
-			for (i = 0; i < gpa_subblock_size(g); i++) {
-				if (page_count(p + i) < pc)
-					printk(KERN_ERR "WARN: %s page count is not matched. (normal) "
-							"page_count(%016lx): %d < %d\n",
-								__func__, (unsigned long)(p + i),
-								page_count(p + i), pc);
-			}
+			if (__debug_page_count_lt(emm, g, pc,
+						"debug_emp_install_sptes2(normal)"))
+				break;
 		}
 	}
 }
@@ -1713,17 +1722,12 @@ void COMPILER_DEBUG debug_set_gpa_remote(struct emp_mm *bvma, struct emp_gpa *g)
 	BUG_ON(emp_page_count_max(page, gpa_subblock_size(g)) != 1);
 }
 
-void debug_clear_and_map_pages(struct emp_gpa *head)
+void debug_clear_and_map_pages(struct emp_mm *emm, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
-	struct page *p;
 	for_each_gpas(g, head) {
-		int i;
-
-		BUG_ON(g->local_page == NULL);
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++)
-			BUG_ON(page_count(p + i) < 2);
+		if (__debug_page_count_lt(emm, g, 2, __func__))
+			break;
 	}
 }
 
@@ -1736,21 +1740,14 @@ void debug___emp_page_fault_hva(struct emp_gpa *head) {
 			__is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
 }
 
-void debug___emp_page_fault_hva2(struct emp_gpa *head)
+void debug___emp_page_fault_hva2(struct emp_mm *emm, struct emp_gpa *head)
 {
-	int i;
 	struct emp_gpa *g;
-	struct page *p;
 
 	for_each_gpas(g, head) {
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++)
-			if (page_count(p + i) < 2)
-				printk(KERN_ERR "WARN: %s page count is not matched. "
-						"page_count(%016lx): %d < 2\n",
-						__func__, (unsigned long)(p + i),
-						page_count(p + i));
-		}
+		if (__debug_page_count_lt(emm, g, 2, __func__))
+			break;
+	}
 }
 
 void debug_pte_install(struct page *page, int page_compound_len)
@@ -1769,37 +1766,13 @@ void debug_wait_for_prefetch_subblocks(struct emp_gpa *g) {
 	BUG_ON(__is_gpa_flags_same(g, GPA_nPT_MASK, 0));
 }
 
-void debug_evict_block(struct emp_gpa *head)
+void debug_evict_block(struct emp_mm *emm, struct emp_gpa *head)
 {
-	int i;
 	struct emp_gpa *g;
-	struct page *p;
-	bool warn = false;
 
 	for_each_gpas(g, head) {
-		BUG_ON(g->local_page == NULL);
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (page_count(p + i) == 1)
-				continue;
-
-			warn = true;
+		if (__debug_page_count_eq(emm, g, 1, __func__))
 			break;
-		}
-	}
-
-	if (unlikely(warn)) {
-		printk("%s target block %lx not free yet. ",
-				__func__, head->local_page->gpa_index);
-		for_each_gpas(g, head) {
-			p = g->local_page->page;
-			if (page_count(p) == 1)
-				continue;
-
-			printk("%s gpa %lx pc: %d", __func__,
-					g->local_page->gpa_index,
-					page_count(p));
-		}
 	}
 }
 
@@ -1807,20 +1780,12 @@ void debug_update_inactive_list(struct emp_gpa *head, struct emp_gpa *g) {
 	BUG_ON(head != g);
 }
 
-void debug_update_inactive_list2(struct emp_gpa *head)
+void debug_update_inactive_list2(struct emp_mm *emm, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
-	int i;
-	struct page *p;
 	for_each_gpas(g, head) {
-		p = g->local_page->page;
-		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (page_count(p + i) != 1)
-				printk(KERN_ERR "WARN: %s page count is not matched. "
-						"page_count(%016lx): %d != 1\n",
-						__func__, (unsigned long)(p + i),
-						page_count(p + i));
-		}
+		if (__debug_page_count_eq(emm, g, 1, __func__))
+			break;
 	}
 }
 
@@ -1893,15 +1858,12 @@ void debug_unmap_ptes(struct emp_mm *emm, struct emp_gpa *heads, unsigned long s
 			warned = true;
 		}
 
-		if (page_count(g->local_page->page) != 1) {
-			printk(KERN_ERR "WARN: %s page count is not matched. "
-					"gpa: %016lx idx: %lx page_count(%016lx): %d != 1\n",
-					__func__, (unsigned long) g,
-					g->local_page->gpa_index,
-					(unsigned long) g->local_page->page,
-					page_count(g->local_page->page));
+		if (__debug_page_count_eq(emm, g, 1, __func__)) {
 			warned = true;
 		}
+
+		if (warned)
+			break;
 	}
 
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE

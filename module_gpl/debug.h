@@ -217,18 +217,18 @@ static inline void debug_generate_tag(struct emp_gpa *gpa) {}
 
 void debug_emp_unlock_block(struct emp_gpa *head);
 void debug_check_head(struct page *page);
-void debug__handle_gpa_on_inactive_fault(struct emp_gpa *);
-void debug_fetch_block(struct emp_gpa *g, int fip);
+void debug__handle_gpa_on_inactive_fault(struct emp_mm *emm, struct emp_gpa *);
+void debug_fetch_block(struct emp_mm *emm, struct emp_gpa *g, int fip);
 void debug_map_spte(struct page *p);
 void debug_check_sptep(u64 *sptep);
 void debug_emp_map_prefetch_sptes2(struct emp_gpa *g, struct emp_gpa *eg);
 void debug_emp_page_fault_gpa(struct emp_gpa *head);
-void debug_emp_page_fault_gpa2(struct emp_gpa *);
+void debug_emp_page_fault_gpa2(struct emp_mm *emm, struct emp_gpa *);
 void debug_emp_page_fault_gpa3(struct emp_gpa *h, gva_t gva, pgoff_t o);
 void debug_handle_active_fault_handled(struct emp_vmr *, struct emp_gpa *);
 void debug___mmu_set_spte(u64 pfn);
 void debug_map_sptes_in_subblock(struct emp_gpa *sb_head, u64 *sptep);
-void debug_emp_install_sptes(struct emp_gpa *);
+void debug_emp_install_sptes(struct emp_mm *, struct emp_gpa *);
 void debug_emp_install_sptes2(struct emp_mm *, struct emp_gpa *, struct emp_gpa *);
 void debug__alloc_pages(struct page *, int);
 void debug_emp_bdev_wait_rw(struct work_request *, int);
@@ -237,15 +237,15 @@ void debug_alloc_and_fetch_pages(struct emp_mm *, struct emp_gpa *,
 void debug_alloc_and_fetch_pages2(struct emp_vmr *, struct emp_gpa *);
 void debug_unmap_gpas(struct emp_mm *, struct emp_gpa *, u64, bool *);
 void debug_set_gpa_remote(struct emp_mm *, struct emp_gpa *);
-void debug_clear_and_map_pages(struct emp_gpa *);
+void debug_clear_and_map_pages(struct emp_mm *emm, struct emp_gpa *);
 void debug___emp_page_fault_hva(struct emp_gpa *head);
-void debug___emp_page_fault_hva2(struct emp_gpa *);
+void debug___emp_page_fault_hva2(struct emp_mm *, struct emp_gpa *);
 void debug_pte_install(struct page *, int);
 void debug_select_victims_al(struct list_head *, int);
 void debug_wait_for_prefetch_subblocks(struct emp_gpa *g);
-void debug_evict_block(struct emp_gpa *);
+void debug_evict_block(struct emp_mm *, struct emp_gpa *);
 void debug_update_inactive_list(struct emp_gpa *head, struct emp_gpa *g);
-void debug_update_inactive_list2(struct emp_gpa *);
+void debug_update_inactive_list2(struct emp_mm *, struct emp_gpa *);
 void debug_add_gpas_to_inactive(struct emp_gpa **gpas, int n_new);
 void debug_add_gpas_to_inactive2(struct emp_gpa *head, struct emp_gpa *g);
 void debug_flush_direct_pages(struct emp_gpa *g);
@@ -273,34 +273,34 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_check_notlocked(g) do{}while(0)
 #define debug_emp_unlock_block(head) do{}while(0)
 #define debug_check_head(page) do{}while(0)
-#define debug__handle_gpa_on_inactive_fault(g) do{}while(0)
-#define debug_fetch_block(g, fip) do{}while(0)
+#define debug__handle_gpa_on_inactive_fault(emm, g) do{}while(0)
+#define debug_fetch_block(emm, g, fip) do{}while(0)
 #define debug_map_spte(p) do{}while(0)
 #define debug_check_sptep(sptep) do{}while(0)
 #define debug_emp_map_prefetch_sptes2(g, eg) do{}while(0)
 #define debug_emp_page_fault_gpa(head) do{}while(0)
-#define debug_emp_page_fault_gpa2(head) do{}while(0)
+#define debug_emp_page_fault_gpa2(emm, head) do{}while(0)
 #define debug_emp_page_fault_gpa3(h, v, o) do{}while(0)
 #define debug_handle_active_fault_handled(vmr, head) do {} while (0)
 #define debug___mmu_set_spte(pfn) do{}while(0)
 #define debug_map_sptes_in_subblock(sb_head, sptep) do{}while(0)
-#define debug_emp_install_sptes(g) do{}while(0)
-#define debug_emp_install_sptes2(b, h, g) do{}while(0)
+#define debug_emp_install_sptes(emm, g) do{}while(0)
+#define debug_emp_install_sptes2(emm, h, g) do{}while(0)
 #define debug__alloc_pages(page, page_order) do{}while(0)
 #define debug_emp_bdev_wait_rw(w, rw) do{}while(0)
 #define debug_alloc_and_fetch_pages(bvma, gpa, free_page, page_order, avail_dma_order) do{}while(0)
 #define debug_alloc_and_fetch_pages2(v, gpa) do{}while(0)
 #define debug_unmap_gpas(bvma, head, addr, tlb_flush_force) do{}while(0)
 #define debug_set_gpa_remote(bvma, g) do{}while(0)
-#define debug_clear_and_map_pages(head) do{}while(0)
+#define debug_clear_and_map_pages(emm, head) do{}while(0)
 #define debug___emp_page_fault_hva(head) do{}while(0)
-#define debug___emp_page_fault_hva2(head) do{}while(0)
+#define debug___emp_page_fault_hva2(emm, head) do{}while(0)
 #define debug_pte_install(p, pl) do{}while(0)
 #define debug_select_victims_al(h, l) do{}while(0)
 #define debug_wait_for_prefetch_subblocks(g) do{}while(0)
-#define debug_evict_block(head) do{}while(0)
+#define debug_evict_block(emm, head) do{}while(0)
 #define debug_update_inactive_list(head, g) do{}while(0)
-#define debug_update_inactive_list2(head) do{}while(0)
+#define debug_update_inactive_list2(emm, head) do{}while(0)
 #define debug_add_gpas_to_inactive(gpas, n_new) do{}while(0)
 #define debug_add_gpas_to_inactive2(head, g) do{}while(0)
 #define debug_flush_direct_pages(g) do{}while(0)

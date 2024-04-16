@@ -349,7 +349,7 @@ next:
 
 	emp_update_rss_cached(vmr);
 
-	debug_clear_and_map_pages(head);
+	debug_clear_and_map_pages(bvma, head);
 
 	return ret;
 }
@@ -694,7 +694,7 @@ _emp_page_fault_hva_fetch_posted:
 	set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 #endif
 
-	debug___emp_page_fault_hva2(head);
+	debug___emp_page_fault_hva2(emm, head);
 
 #ifdef CONFIG_EMP_USER
 	if (!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)) {

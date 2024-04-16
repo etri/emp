@@ -129,7 +129,7 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		}
 	}
 
-	debug__handle_gpa_on_inactive_fault(head);
+	debug__handle_gpa_on_inactive_fault(emm, head);
 
 	head->r_state = GPA_INIT;
 
@@ -409,7 +409,7 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 	if (unlikely(fip < 0))
 		return fip;
 
-	debug_fetch_block(*head, fip);
+	debug_fetch_block(bvma, *head, fip);
 
 #ifdef CONFIG_EMP_STAT
 	/* update stats - increase fetch num counters for the block order */
@@ -1557,7 +1557,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	}
 #endif
 
-	debug_emp_page_fault_gpa2(head);
+	debug_emp_page_fault_gpa2(bvma, head);
 
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.early_handle_fault_gpa
@@ -1674,7 +1674,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 #endif
 	}
 
-	debug_emp_install_sptes(head);
+	debug_emp_install_sptes(bvma, head);
 
 	/* fetching completed. now install shadow page table entry */
 	ret = emp_install_sptes(kvm_vcpu, bvma, cpu, head, demand, demand_off,

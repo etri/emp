@@ -243,7 +243,8 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 	int ____next = (lp)->debug_page_ref_next; \
 	int ____print_all = 0; \
 	int ____ref, ____map; \
-	(lp)->debug_page_ref_sum += (add_data); \
+	if ((add_data) != 0) \
+		(lp)->debug_page_ref_sum += (add_data); \
 	if (!is_debug_page_ref_correct(lp, &____ref, &____map, known_diff)) { \
 		(lp)->debug_page_ref_wrong++; \
 		emp_debug_bulk_msg_lock(); \
@@ -266,22 +267,24 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 				__func__, __FILE__, __LINE__); \
 		____print_all = 1; \
 	} \
-	(lp)->debug_page_ref_history[____next].file = __FILE__; \
-	(lp)->debug_page_ref_history[____next].line = __LINE__; \
-	(lp)->debug_page_ref_history[____next].add = (add_data); \
-	(lp)->debug_page_ref_history[____next].curr = ____ref; \
-	(lp)->debug_page_ref_history[____next].sum = (lp)->debug_page_ref_sum; \
-	(lp)->debug_page_ref_history[____next].map = ____map; \
-	(lp)->debug_page_ref_history[____next].vmr_id = (vmrid) != -100 ? (vmrid) : (lp)->vmr_id; \
-	(lp)->debug_page_ref_history[____next].num_pmds = (lp)->num_pmds; \
-	(lp)->debug_page_ref_history[____next].timestamp = get_ts_in_ns(); \
-	(lp)->debug_page_ref_history[____next].in_mmu_noti = (lp)->debug_page_ref_in_mmu_noti; \
-	(lp)->debug_page_ref_history[____next].in_io = (lp)->debug_page_ref_in_io; \
-	(lp)->debug_page_ref_history[____next].in_will_pte = (lp)->debug_page_ref_in_will_pte; \
-	(lp)->debug_page_ref_history[____next].in_unmap = (lp)->debug_page_ref_in_unmap; \
-	(lp)->debug_page_ref_history[____next].in_dup = (lp)->debug_page_ref_in_dup; \
-	(lp)->debug_page_ref_history[____next].in_calibrate = (lp)->debug_page_ref_in_calibrate; \
-	(lp)->debug_page_ref_next = ((lp)->debug_page_ref_next + 1) % DEBUG_PAGE_REF_SIZE; \
+	if ((add_data) != 0) { \
+		(lp)->debug_page_ref_history[____next].file = __FILE__; \
+		(lp)->debug_page_ref_history[____next].line = __LINE__; \
+		(lp)->debug_page_ref_history[____next].add = (add_data); \
+		(lp)->debug_page_ref_history[____next].curr = ____ref; \
+		(lp)->debug_page_ref_history[____next].sum = (lp)->debug_page_ref_sum; \
+		(lp)->debug_page_ref_history[____next].map = ____map; \
+		(lp)->debug_page_ref_history[____next].vmr_id = (vmrid) != -100 ? (vmrid) : (lp)->vmr_id; \
+		(lp)->debug_page_ref_history[____next].num_pmds = (lp)->num_pmds; \
+		(lp)->debug_page_ref_history[____next].timestamp = get_ts_in_ns(); \
+		(lp)->debug_page_ref_history[____next].in_mmu_noti = (lp)->debug_page_ref_in_mmu_noti; \
+		(lp)->debug_page_ref_history[____next].in_io = (lp)->debug_page_ref_in_io; \
+		(lp)->debug_page_ref_history[____next].in_will_pte = (lp)->debug_page_ref_in_will_pte; \
+		(lp)->debug_page_ref_history[____next].in_unmap = (lp)->debug_page_ref_in_unmap; \
+		(lp)->debug_page_ref_history[____next].in_dup = (lp)->debug_page_ref_in_dup; \
+		(lp)->debug_page_ref_history[____next].in_calibrate = (lp)->debug_page_ref_in_calibrate; \
+		(lp)->debug_page_ref_next = ((lp)->debug_page_ref_next + 1) % DEBUG_PAGE_REF_SIZE; \
+	} \
 	if (____print_all) { \
 		__debug_page_ref_print_all(lp); \
 		emp_debug_bulk_msg_unlock(); \
@@ -291,6 +294,10 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 	struct local_page *____lp = ((struct emp_gpa *)(p)->private)->local_page; \
 	debug_assert(____lp->page == (p)); \
 	__debug_page_ref_mark(vmrid, ____lp, add_data, known_diff); \
+} while (0)
+#define debug_page_ref_check(gpa) do { \
+	struct local_page *____lp = (gpa)->local_page; \
+	__debug_page_ref_mark(____lp->vmr_id, ____lp, 0, 0); \
 } while (0)
 #define debug_page_ref_mark(vmrid, lp, add_data) __debug_page_ref_mark(vmrid, lp, add_data, 0);
 #define debug_page_ref_mark_known_diff(vmrid, lp, add_data, diff) __debug_page_ref_mark(vmrid, lp, add_data, diff);
@@ -322,6 +329,7 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 #define debug_page_ref_mark_map(vmrid, lp) debug_page_ref_mark(vmrid, lp, (lp)->debug_page_ref_page_len)
 #define debug_page_ref_mark_unmap(vmrid, lp) debug_page_ref_mark(vmrid, lp, -(lp)->debug_page_ref_page_len)
 #else
+#define debug_page_ref_check(gpa) do {} while (0)
 #define debug_page_ref_mark(vmrid, lp, add_data) do {} while (0)
 #define debug_page_ref_mark_known_diff(vmrid, lp, add_data, diff) do {} while (0)
 #define debug_page_ref_mark_page(vmrid, p, add_data) do {} while (0)

@@ -620,7 +620,7 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 	tail_wr = NULL;
 	eh_wr = NULL;
 
-	debug_evict_block(head);
+	debug_evict_block(emm, head);
 
 	if (!alloc_remote_page(emm, head))
 		goto error;
@@ -759,7 +759,7 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 		debug_update_inactive_list(head,
 				emp_get_block_head(victims[i]));
 
-		debug_update_inactive_list2(head);
+		debug_update_inactive_list2(bvma, head);
 
 		n_victim_pages += gpa_block_size(head);
 		writeback_done = emp_writeback_block(bvma, head, local_cpu);
