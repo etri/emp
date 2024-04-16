@@ -644,8 +644,8 @@ static int wait_writeback_async_steal(struct emp_mm *emm, struct vcpu_var *waiti
 	}
 }
 
-static void __clear_fetching_work_request(struct emp_mm *emm,
-					struct work_request *w)
+static inline void
+__clear_fetching_work_request(struct emp_mm *emm, struct work_request *w)
 {
 	struct emp_gpa *gpa = w->gpa;
 	debug_assert(gpa);
@@ -654,6 +654,31 @@ static void __clear_fetching_work_request(struct emp_mm *emm,
 #endif
 		free_remote_page(emm, gpa, true);
 	free_work_request(emm, w);
+}
+
+/**
+ * _clear_fetching_work_request - Clear completed fetch work request
+ * @param bvma bvma data structure
+ * @param w work request
+ */
+static void
+_clear_fetching_work_request(struct emp_mm *bvma, struct work_request *w)
+{
+	struct work_request *head_wr = w->head_wr;
+
+	if (w != head_wr && (!w->chained_ops || w != head_wr->eh_wr))
+		__clear_fetching_work_request(bvma, w);
+
+	//atomic_dec_and_test returns true when the argument is zero.
+	if (atomic_dec_and_test(&head_wr->wr_refc) == false)
+		return;
+
+	if (head_wr->eh_wr)
+		__clear_fetching_work_request(bvma, head_wr->eh_wr);
+
+	/* At this point, &head_wr->wr_refc is zero.
+	 * In other words, all pages in a block have been fetched successfully. */
+	__clear_fetching_work_request(bvma, head_wr);
 }
 
 /**
@@ -666,26 +691,9 @@ static void clear_fetching_work_request(struct emp_mm *bvma,
 					struct vcpu_var *cpu,
 					struct work_request *w)
 {
-	struct work_request *head_wr;
-
 	wait_read(bvma, w, cpu, false);
 	debug_check_tag(w);
-
-	head_wr = w->head_wr;
-	if (w != head_wr) {
-		if (!w->chained_ops || w != head_wr->eh_wr)
-			__clear_fetching_work_request(bvma, w);
-	}
-	//atomic_dec_and_test returns true when the argument is zero.
-	if (atomic_dec_and_test(&head_wr->wr_refc) == false)
-		return;
-
-	if (head_wr->eh_wr)
-		__clear_fetching_work_request(bvma, head_wr->eh_wr);
-
-	/* At this point, &head_wr->wr_refc is zero.
-	 * In other words, all pages in a block have been fetched successfully. */
-	__clear_fetching_work_request(bvma, head_wr);
+	_clear_fetching_work_request(bvma, w);
 }
 
 /**
@@ -702,17 +710,10 @@ static bool try_clear_fetching_work_request(struct emp_mm *bvma,
 					    struct vcpu_var *cpu,
 					    struct work_request *w)
 {
-	/* Here, only the demand subblock is entered */
-	debug_BUG_ON(w != w->head_wr);
-
 	if (try_wait_read(bvma, w, cpu, false) == 0)
 		return false;
 	debug_check_tag(w);
-
-	/* NOTE: w == head_wr */
-	if (atomic_dec_and_test(&w->wr_refc) == true)
-		__clear_fetching_work_request(bvma, w);
-
+	_clear_fetching_work_request(bvma, w);
 	return true;
 }
 
