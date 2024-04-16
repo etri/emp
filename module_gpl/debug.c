@@ -1762,10 +1762,6 @@ void debug_select_victims_al(struct list_head *to_lru_head, int to_lru_len)
 	BUG_ON(to_lru_len && list_empty(to_lru_head));
 }
 
-void debug_wait_for_prefetch_subblocks(struct emp_gpa *g) {
-	BUG_ON(__is_gpa_flags_same(g, GPA_nPT_MASK, 0));
-}
-
 void debug_evict_block(struct emp_mm *emm, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
@@ -1800,14 +1796,6 @@ void debug_add_gpas_to_inactive2(struct emp_gpa *head, struct emp_gpa *g) {
 
 void debug_flush_direct_pages(struct emp_gpa *g) {
 	BUG_ON(__is_gpa_flags_set(g, GPA_PREFETCHED_MASK));
-}
-
-bool check_gpa_block_reclaimable(struct emp_mm *bvma, struct emp_gpa *gpa);
-void debug_flush_direct_pages2(struct emp_mm *bvma, struct emp_gpa *head) {
-	if (!check_gpa_block_reclaimable(bvma, head))
-		printk("%s forced_reclaim: gfn %lx pfn %lx",
-				__func__, head->local_page->gpa_index,
-				page_to_pfn(head->local_page->page));
 }
 
 void debug_unregister_bvma(struct emp_mm *bvma)

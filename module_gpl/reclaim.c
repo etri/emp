@@ -18,8 +18,9 @@
 #define TLB_VALID_PERIOD (10ULL * MS_TO_NS)
 #define MRU_BUF_FULL(size, len) ((len) >= (size))
 
-static int reclaim_gpa_many(struct emp_mm *, struct emp_gpa **, int,
-			    struct emp_gpa **, struct emp_gpa **);
+static void
+reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas);
+
 bool make_all_cpus_req(struct kvm *kvm, unsigned int req); /* gpa.c */
 
 /**
@@ -258,13 +259,12 @@ int add_gpas_to_active_list(struct emp_mm *bvma, struct vcpu_var *cpu,
 }
 
 static inline bool COMPILER_DEBUG
-gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
+gpa_acquire(struct emp_vmr *vmr, struct vcpu_var *cpu, struct emp_gpa *head)
 {
-	struct emp_gpa *g;
+	struct emp_gpa *g, *pf_sb;
 	struct page *p;
-	int page_size, ret;
-	int count_max, count_private;
-	int count_shared = emp_lp_count_pmd(head->local_page);
+	int page_size;
+	int count_page, count_max, count_def;
 
 #ifdef CONFIG_EMP_VM
 	if (unlikely(is_gpa_flags_set(head, GPA_LOWMEM_BLOCK_MASK)))
@@ -274,22 +274,43 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 	if (!is_gpa_flags_set(head, GPA_HPT_MASK))
 		return true;
 
-	ret = true;
-	count_shared = emp_lp_count_pmd(head->local_page);
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+		count_def = 2;
+		if (is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK))
+			pf_sb = head + (head->local_page->demand_offset
+						>> gpa_subblock_order(head));
+		else
+			pf_sb = NULL;
+	} else {
+		count_def = 1;
+	}
+
+	page_size = __local_gpa_to_page_len(vmr, g);
+
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
-		page_size = __local_gpa_to_page_len(vmr, g);
 
-		count_max = emp_page_count_max(p, page_size);
-		count_private = 1 + (PageCompound(p)?page_size:1)*count_shared;
+		count_page = emp_page_count_max(p, page_size);
+		count_max = count_def + (PageCompound(p) ? page_size : 1)
+					* emp_lp_count_pmd(g->local_page);
 
-		if (count_max > count_private) {
+		// prefetched subblock in CSF has been handled its I/O
+		if (g == pf_sb)
+			count_max -= 1;
+
+		if (count_page > count_max) {
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 			int refcnt, mapcnt;
-			if (!is_debug_page_ref_correct(g->local_page, &refcnt, &mapcnt, 0)) {
+			if (!is_debug_page_ref_correct(g->local_page, &refcnt,
+								&mapcnt, 0)) {
 				struct local_page *lp = g->local_page;
 				emp_debug_bulk_msg_lock();
-				printk(KERN_ERR "DEBUG: [CANNOT_ACQUIRE] (%s) lp: %016lx vmr: %d gpa: %lx curr: %2d sum: %2d map: %2d mmu: %d io: %d pte: %d unmap: %d count_max: %d count_private: %d\n",
+				printk(KERN_ERR "DEBUG: [CANNOT_ACQUIRE] (%s) "
+						"lp: %016lx vmr: %d gpa: %lx "
+						"curr: %2d sum: %2d map: %2d "
+						"mmu: %d io: %d pte: %d "
+						"unmap: %d count_page: %d "
+						"count_max: %d\n",
 						__func__,
 						(unsigned long) lp,
 						lp->vmr_id,
@@ -301,37 +322,28 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 						lp->debug_page_ref_in_io,
 						lp->debug_page_ref_in_will_pte,
 						lp->debug_page_ref_in_unmap,
-						count_max, count_private);
+						count_page, count_max);
 				__debug_page_ref_print_all(lp);
 				emp_debug_bulk_msg_unlock();
 			}
 #endif
-			ret = false;
-			break;
+			return false;
 		}
 	}
 
-	return ret;
+	return true;
 }
 
 #ifdef CONFIG_EMP_BLOCK
-bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu, 
-				 struct emp_gpa *head)
+void wait_for_prefetched_block(struct emp_mm *emm,
+				struct vcpu_var *cpu, struct emp_gpa *head)
 {
 	struct emp_gpa *g, *pf_sb_head;
-	int pf_sb_base, pf_sb_offset;
-	int demand_offset;
 
-	/* release work requests of prefetch sub-blocks */
-	if (!is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
-		return false;
+	debug_assert(__is_gpa_flags_set(head, GPA_PREFETCHED_MASK));
 
-	debug_wait_for_prefetch_subblocks(head);
-
-	demand_offset = head->local_page->demand_offset;
-	pf_sb_base = demand_offset >> gpa_subblock_order(head);
-	pf_sb_offset = demand_offset & gpa_subblock_mask(head);
-	pf_sb_head = head + pf_sb_base;
+	pf_sb_head = head + (head->local_page->demand_offset
+				>> gpa_subblock_order(head));
 
 	if (is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK))
 		pf_sb_head = NULL;
@@ -343,36 +355,27 @@ bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		if (emm->sops.wait_read_async(emm, cpu, g))
 			clear_gpa_flags_if_set(g, GPA_REMOTE_MASK);
 	}
+
 	clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 	head->local_page->demand_offset = 0;
-	return true;
 }
 
-/**
- * wait_for_prefetch_subblocks - Wait for the fetching prefetch sub-blocks
- * @param bvma bvma data structure
- * @param cpu working vcpu ID
- * @param vs victims list
- * @param n_vs the number of victims
- *
- * Since the blocks in the inactive list are unmapped,
- * all the prefetch work requests relatd in the block should be done
- * before the block is moved on the inactive list.
- */
-void wait_for_prefetch_subblocks(struct emp_mm *emm, struct vcpu_var *cpu,
-				 struct emp_gpa *vs[], int n_vs)
+static void wait_for_prefetched_blocks(struct emp_mm *emm,
+		struct vcpu_var *cpu, struct emp_gpa **heads, int num_head)
 {
 	int i;
-	for (i = 0; i < n_vs; i++) {
-		if (__wait_for_prefetched_block(emm, cpu, vs[i]) == false)
+	struct emp_gpa *head;
+	for (i = 0; i < num_head; i++) {
+		head = heads[i];
+		if (!is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
 			continue;
+		wait_for_prefetched_block(emm, cpu, head);
 #ifdef CONFIG_EMP_STAT
 		emm->stat.csf_useful++;
 #endif
 	}
 }
-EXPORT_SYMBOL(wait_for_prefetch_subblocks);
-#endif
+#endif /* CONFIG_EMP_BLOCK */
 
 /**
  * select_victims_al - select victims from active list
@@ -416,7 +419,7 @@ retry_start:
 					&& is_local_page_on_lru(lp));
 
 		if (!is_unmapped_active(v) &&
-				gpa_acquire(bvma->vmrs[lp->vmr_id], v)) {
+				gpa_acquire(bvma->vmrs[lp->vmr_id], cpu, v)) {
 			emp_list_del(&lp->lru_list, list);
 			clear_local_page_on_lru(lp);
 			v->r_state = GPA_TRANS_AL;
@@ -468,36 +471,23 @@ update_active_list(struct emp_mm *emm, struct vcpu_var *local_cpu,
 	int n_vs = 0;
 	struct vcpu_var *cpu;
 	int cpu_id;
-	struct emp_gpa *new_vs[vs_max];
-	struct emp_gpa *active_gpas[vs_max];
-	int active_gpas_len = 0;
-	int i, n_new_victim = 0;
 
 	for_all_vcpus_from(cpu, cpu_id, local_cpu, emm) {
-		n_new_victim += select_victims_active_list(emm, cpu,
-				new_vs + n_new_victim,
-				vs_max - n_new_victim);
-		if (n_new_victim >= vs_max)
+		n_vs += select_victims_active_list(emm, cpu,
+				vs + n_vs,
+				vs_max - n_vs);
+		if (n_vs >= vs_max)
 			break;
 	}
 
-	if (unlikely(n_new_victim == 0))
+	if (unlikely(n_vs == 0))
 		return 0;
 
 	/* release work requests of prefetch sub-blocks */
-	wait_for_prefetch_subblocks(emm, local_cpu, new_vs, n_new_victim);
+	wait_for_prefetched_blocks(emm, local_cpu, vs, n_vs);
 
 	/* reclaiming gpas to move them to inactive list */
-	n_vs = reclaim_gpa_many(emm, new_vs, n_new_victim, vs, active_gpas);
-	if (n_vs == n_new_victim)
-		goto out;
-
-	/* failed to reclaim a few gpas. */
-	active_gpas_len = n_new_victim - n_vs;
-	add_gpas_to_active_list(emm, local_cpu, active_gpas, active_gpas_len);
-	for (i = 0; i < active_gpas_len; i++)
-		emp_unlock_block(active_gpas[i]);
-out:
+	reclaim_gpa_many(emm, vs, n_vs);
 	return n_vs;
 }
 
@@ -962,129 +952,30 @@ int update_lru_lists_lru(struct emp_mm *b, struct vcpu_var *cpu,
 }
 
 /**
- * _reclaim_gpa_many - Reclaim mutliple gpas
+ * reclaim_gpa_many - Reclaim mutliple gpas
  * @param bvma bvma data structure
  * @param gpas gpas to reclaim
  * @param n_gpas the number of gpas
- * @param tlb_flush_force should do TLB flush?
 */
-static int 
-_reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas,
-		  bool *tlb_flush_force)
+static void
+reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas)
 {
 	int i, end;
+	bool tlb_flush_force = false;
 
 	if (unlikely(n_gpas <= 0))
-		return -1;
+		return;
 
 	end = n_gpas - 1; // always larger than or equal to 0
 	for (i = 0; i < end; i++)
-		bvma->vops.unmap_gpas(bvma, gpas[i], tlb_flush_force);
+		bvma->vops.unmap_gpas(bvma, gpas[i], &tlb_flush_force);
 
-	*tlb_flush_force = true;
-	bvma->vops.unmap_gpas(bvma, gpas[end], tlb_flush_force);
+	tlb_flush_force = true;
+	bvma->vops.unmap_gpas(bvma, gpas[end], &tlb_flush_force);
 
 #ifdef CONFIG_EMP_STAT
 	bvma->stat.recl_count += n_gpas;
 #endif
-
-	return 0;
-}
-
-/**
- * check_gpa_block_reclaimable - Check if the block is reclaimable
- * @param bvma bvma data structure
- * @param gpa gpa of the block
- *
- * @retval true: Reclaimable
- * @retval false: Not reclaimable
- */
-bool check_gpa_block_reclaimable(struct emp_mm *bvma, struct emp_gpa *gpa)
-{
-	struct emp_vmr *vmr;
-	struct emp_gpa *head, *g;
-	struct page *page;
-	int expected_page_count;
-	int page_size, shared_count;
-
-	vmr = bvma->vmrs[gpa->local_page->vmr_id];
-	head = emp_get_block_head(gpa);
-
-	/* if flags are are unset -> skip this gpa */
-	if (is_gpa_flags_same(head, GPA_nPT_MASK, 0))
-		return true;
-
-	shared_count = page_mapcount(head->local_page->page);
-	for_each_gpas(g, head) {
-		/* Normally, page reference count is increased.
-		 * However, when mapped to EPT, page reference count is not increased.
-		 *
-		 * If the gpa is mapped to HPT (for I/O), page count should be two.
-		 * While serving I/O operations, page count can be more than two.
-		 * Those pages should not be reclaimed.
-		 */
-		/* code block not to reclaim I/O pages */
-		expected_page_count = 1;
-
-		page = g->local_page->page;
-		page_size = __local_gpa_to_page_len(vmr, g);
-		if (is_gpa_flags_set(head, GPA_HPT_MASK))
-			expected_page_count += shared_count *
-				(PageCompound(page)? page_size: 1);
-
-		if (emp_page_count_max(page, page_size) >
-				expected_page_count)
-			return false;
-	}
-	return true;
-}
-EXPORT_SYMBOL(check_gpa_block_reclaimable);
-
-static int _reclaim_gpa(struct emp_mm *bvma, struct emp_gpa *gpa,
-			bool *tlb_flush_force)
-{
-	_reclaim_gpa_many(bvma, &gpa, 1, tlb_flush_force);
-	return 0;
-}
-
-int reclaim_gpa(struct emp_mm *bvma, struct emp_gpa *gpa, bool *tlb_flush_force)
-{
-	if (!check_gpa_block_reclaimable(bvma, gpa))
-		return 1;
-	return _reclaim_gpa(bvma, gpa, tlb_flush_force);
-}
-EXPORT_SYMBOL(reclaim_gpa);
-
-/**
- * reclaim_gpa_many - Separate active blocks and victim blocks, and reclaim the victim blocks
- * @param bvma bvma data structure
- * @param gpas gpas to reclaim
- * @param n_gpas the number of gpas
- * @param victims victim blocks list
- * @param actives active blocks list
- *
- * @return the number of victims
-*/
-static int
-reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa **gpas, int n_gpas,
-		struct emp_gpa **victims, struct emp_gpa **actives)
-{
-	int n_victims = 0, n_actives = 0, i;
-	bool tlb_flush_force = false;
-
-	/* select active gpas and victim gpas */
-	for (i = 0; i < n_gpas; i++) {
-		if (!check_gpa_block_reclaimable(bvma, gpas[i])) {
-			actives[n_actives++] = gpas[i];
-		} else {
-			victims[n_victims++] = gpas[i];
-		}
-	}
-
-	if (n_victims)
-		_reclaim_gpa_many(bvma, victims, n_victims, &tlb_flush_force);
-
-	return n_victims;
 }
 
 /**

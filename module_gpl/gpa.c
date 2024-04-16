@@ -1456,6 +1456,7 @@ next_vmr_found:
 	return refcnt + vm_refcnt;
 }
 
+#ifdef CONFIG_EMP_BLOCK
 static inline void
 __wait_for_prefetch_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 				struct emp_gpa *max_head, unsigned long size)
@@ -1465,11 +1466,16 @@ __wait_for_prefetch_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 	for (i = 0, gpa = max_head; i < size;
 			i += num_subblock_in_block(gpa),
 			gpa += num_subblock_in_block(gpa)) {
-		if (!is_gpa_flags_set(gpa, GPA_PREFETCHED_CPF_MASK))
-			continue; // early check before function call
-		wait_for_prefetch_subblocks(emm, cpu, &gpa, 1);
+		if (!is_gpa_flags_set(gpa, GPA_PREFETCHED_MASK))
+			continue;
+		wait_for_prefetched_block(emm, cpu, gpa);
+		/* TODO: During unmap vma, calling sync_hpt_map_in_block() is
+		 *       NOT theoretically required. But, the following codes
+		 *       assume that hpt map in block is synchronized.*/
+		sync_hpt_map_in_block(emm, gpa, false);
 	}
 }
+#endif /* CONFIG_EMP_BLOCK */
 
 void flush_gpa(struct emp_vmr *vmr, struct vcpu_var *cpu,
 	struct emp_gpa *max_head, unsigned long head_idx, unsigned long size)
@@ -1553,6 +1559,9 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 #endif
 		__lock_max_block(max_head, step);
 		debug_free_gpa_dir_region(max_head, desc_order);
+#ifdef CONFIG_EMP_BLOCK
+		__wait_for_prefetch_max_block(emm, cpu, max_head, step);
+#endif
 		if (do_unmap)
 			__unmap_max_block(vmr, max_head, i, step);
 #ifdef CONFIG_EMP_DEBUG_RSS
@@ -1584,7 +1593,6 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 			continue;
 		}
 
-		__wait_for_prefetch_max_block(emm, cpu, max_head, step);
 #ifdef CONFIG_EMP_EXT
 		if (emp_ext.flush_gpa)
 			emp_ext.flush_gpa(vmr, cpu, max_head, i, step);
@@ -1865,7 +1873,7 @@ int gpa_init(struct emp_mm *emm)
 	emm->vops.unmap_gpas = unmap_gpas;
 	emm->vops.free_gpa = free_gpa;
 	emm->vops.set_gpa_remote = set_gpa_remote;
-	emm->vops.install_hptes = emp_install_hptes;
+	emm->vops.sync_hpt_map_in_block = sync_hpt_map_in_block;
 
 #ifdef CONFIG_EMP_BLOCK
 	printk("GPA block: %d pages subblock: %d pages\n", 

@@ -76,15 +76,12 @@ int reclaim_init(struct emp_mm *);
 void reclaim_exit(struct emp_mm *);
 
 #ifdef CONFIG_EMP_BLOCK
-void wait_for_prefetch_subblocks(struct emp_mm *, struct vcpu_var *,
-				 struct emp_gpa **, int);
+void wait_for_prefetched_block(struct emp_mm *emm,
+				struct vcpu_var *cpu, struct emp_gpa *head);
 #else
-static inline void  
-wait_for_prefetch_subblocks(struct emp_mm *emm, struct vcpu_var *cpu,
-			    struct emp_gpa *vs[], int n_vs) {}
+static inline void wait_for_prefetched_block(struct emp_mm *emm,
+				struct vcpu_var *cpu, struct emp_gpa *head) {}
 #endif
-
-bool check_gpa_block_reclaimable(struct emp_mm *, struct emp_gpa *);
 
 /**
  * is_unmapped_active - Check the pages status (unmapped and active)

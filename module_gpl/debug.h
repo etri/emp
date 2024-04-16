@@ -242,14 +242,12 @@ void debug___emp_page_fault_hva(struct emp_gpa *head);
 void debug___emp_page_fault_hva2(struct emp_mm *, struct emp_gpa *);
 void debug_pte_install(struct page *, int);
 void debug_select_victims_al(struct list_head *, int);
-void debug_wait_for_prefetch_subblocks(struct emp_gpa *g);
 void debug_evict_block(struct emp_mm *, struct emp_gpa *);
 void debug_update_inactive_list(struct emp_gpa *head, struct emp_gpa *g);
 void debug_update_inactive_list2(struct emp_mm *, struct emp_gpa *);
 void debug_add_gpas_to_inactive(struct emp_gpa **gpas, int n_new);
 void debug_add_gpas_to_inactive2(struct emp_gpa *head, struct emp_gpa *g);
 void debug_flush_direct_pages(struct emp_gpa *g);
-void debug_flush_direct_pages2(struct emp_mm *bvma, struct emp_gpa *head);
 void debug_unregister_bvma(struct emp_mm *);
 void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new);
 void debug_add_list_count(struct slru *target_list, int count);
@@ -297,14 +295,12 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug___emp_page_fault_hva2(emm, head) do{}while(0)
 #define debug_pte_install(p, pl) do{}while(0)
 #define debug_select_victims_al(h, l) do{}while(0)
-#define debug_wait_for_prefetch_subblocks(g) do{}while(0)
 #define debug_evict_block(emm, head) do{}while(0)
 #define debug_update_inactive_list(head, g) do{}while(0)
 #define debug_update_inactive_list2(emm, head) do{}while(0)
 #define debug_add_gpas_to_inactive(gpas, n_new) do{}while(0)
 #define debug_add_gpas_to_inactive2(head, g) do{}while(0)
 #define debug_flush_direct_pages(g) do{}while(0)
-#define debug_flush_direct_pages2(bvma, head) do{}while(0)
 #define debug_unregister_bvma(bvma) do{}while(0)
 #define debug_add_gpas_to_active_list(gpas, n_new) do{}while(0)
 #define debug_add_list_count(target_list, count) do{}while(0)

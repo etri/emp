@@ -329,6 +329,8 @@ struct emp_vm_ops {
 	int (*install_hptes)(struct emp_mm *, struct emp_vmr *,
 				struct emp_gpa *, struct emp_gpa *,
 				pmd_t *pmd, bool, bool);
+	void (*sync_hpt_map_in_block)(struct emp_mm *emm,
+				struct emp_gpa *head, const bool is_write);
 };
 
 // ops to create/distruct a memory region

@@ -261,9 +261,10 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 /* @retval VM_FAULT_NOPAGE(256): Success
  * @retval 0: Error
  */
-int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma, struct emp_vmr *vmr,
-				struct emp_gpa *head, struct emp_gpa *demand,
-				pmd_t *pmd, bool prefetch_hit, bool is_write)
+static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
+				struct emp_vmr *vmr, struct emp_gpa *head,
+				struct emp_gpa *demand, pmd_t *pmd,
+				bool prefetch_hit, bool is_write)
 {
 	struct emp_gpa *gpa;
 	int ret = VM_FAULT_NOPAGE;
@@ -410,6 +411,82 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	}
 
 	return ret;
+}
+
+static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
+		struct emp_gpa *head, struct emp_gpa *gpa, const bool is_write)
+{
+	struct local_page *lp_head, *lp_gpa;
+	struct mapped_pmd *p_head, *p_gpa;
+	struct emp_vmr *vmr;
+
+	debug_assert(head->local_page);
+	debug_assert(gpa->local_page);
+
+	lp_head = head->local_page;
+	lp_gpa = gpa->local_page;
+
+	if (emp_lp_count_pmd(lp_head) == 0 && emp_lp_count_pmd(lp_gpa) == 0)
+		return;
+
+	p_head = emp_lp_first_mapped_pmd(lp_head);
+	p_gpa = emp_lp_first_mapped_pmd(lp_gpa);
+	debug_assert(p_head || p_gpa);
+
+	/* TODO: handle the error from emp_install_hptes().
+	 * NOTE: __pmd_populate() is not required since at least one
+	 *       of the subblocks has the mapping.
+	 */
+	while (p_head && p_gpa) {
+		if (p_head->vmr_id == p_gpa->vmr_id) {
+			p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
+			p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
+		} else if (p_head->vmr_id < p_gpa->vmr_id) {
+			vmr = emm->vmrs[p_head->vmr_id];
+			emp_install_hptes(emm, vmr, head, NULL,
+						p_head->pmd, false, is_write);
+			p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
+		} else {
+			vmr = emm->vmrs[p_gpa->vmr_id];
+			emp_install_hptes(emm, vmr, head, NULL,
+						p_gpa->pmd, false, is_write);
+			p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
+		}
+	}
+
+	if (p_head == NULL && p_gpa == NULL)
+		return;
+
+	while (p_head) {
+		vmr = emm->vmrs[p_head->vmr_id];
+		emp_install_hptes(emm, vmr, head, NULL,
+					p_head->pmd, false, is_write);
+		p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
+	}
+
+	while (p_gpa) {
+		vmr = emm->vmrs[p_gpa->vmr_id];
+		emp_install_hptes(emm, vmr, head, NULL,
+					p_gpa->pmd, false, is_write);
+		p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
+	}
+}
+
+void sync_hpt_map_in_block(struct emp_mm *emm, struct emp_gpa *head,
+							const bool is_write)
+{
+	struct emp_gpa *end = head + gpa_desc_size(head);
+	struct emp_gpa *gpa;
+
+	for (gpa = head + 1; gpa < end; gpa++) {
+		__sync_hpt_map_in_block(emm, head, gpa, is_write);
+#ifdef CONFIG_EMP_DEBUG_LRU_LIST
+		if (gpa->local_page->vmr_id != head->local_page->vmr_id)
+			debug_lru_set_vmr_id_mark(gpa->local_page,
+						head->local_page->vmr_id);
+#endif
+		gpa->local_page->vmr_id = head->local_page->vmr_id;
+	}
 }
 
 /**
