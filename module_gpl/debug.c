@@ -1586,7 +1586,10 @@ void debug_emp_page_fault_gpa3(struct emp_gpa *h, gva_t gva, pgoff_t o) {
 }
 
 void debug___mmu_set_spte(u64 pfn) {
-	BUG_ON(page_count(pfn_to_page(pfn)) < 2);
+	struct page *page = pfn_to_page(pfn);
+	if (PageCompound(page))
+		page = compound_head(page);
+	BUG_ON(page_count(page) < 2);
 }
 
 void debug_map_sptes_in_subblock(struct emp_gpa *sb_head, u64 *sptep) {
