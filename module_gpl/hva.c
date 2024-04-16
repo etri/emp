@@ -392,6 +392,9 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	demand_check = prefetch_hit && (prefetched_sb == demand);
 	emp_hpt_fetch_barrier(emm, vmr, head, demand, demand_off,
 				prefetched_sb, fetch);
+
+	if (prefetch_hit)
+		sync_hpt_map_in_block(emm, head, is_write);
 	
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.prepare_install_hptes)
