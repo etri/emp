@@ -1397,7 +1397,7 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 				&& w->sibling.prev != LIST_POISON2);
 	} else if (head->r_state == GPA_INIT) {
 		debug_assert(!head->local_page);
-		if (is_gpa_flags_set(head, GPA_REMOTE_MASK))
+		if (__is_gpa_flags_set(head, GPA_REMOTE_MASK))
 			debug_assert(is_block_remote_page_valid(head));
 	} else if (head->r_state == GPA_FETCHING) {
 		printk(KERN_ERR "WARN: gpa will be unlocked with "
@@ -1471,8 +1471,8 @@ void debug_emp_map_prefetch_sptes2(struct emp_gpa *g, struct emp_gpa *eg) {
 
 void debug_emp_page_fault_gpa(struct emp_gpa *head) {
 #ifdef CONFIG_EMP_VM
-	BUG_ON(is_gpa_flags_set(head, GPA_HPT_MASK) &&
-			is_gpa_flags_set(head, GPA_EPT_MASK));
+	BUG_ON(__is_gpa_flags_set(head, GPA_HPT_MASK) &&
+			__is_gpa_flags_set(head, GPA_EPT_MASK));
 #endif
 }
 
@@ -1482,12 +1482,12 @@ void debug_emp_page_fault_gpa2(struct emp_gpa *head)
 	struct page *p;
 	int i, sb_head_count = 1;
 
-	if (is_gpa_flags_set(head, GPA_HPT_MASK) || head->r_state == GPA_INIT)
+	if (__is_gpa_flags_set(head, GPA_HPT_MASK) || head->r_state == GPA_INIT)
 		return;
 
 	if (WB_BLOCK(head))
 		sb_head_count++;
-	else if (is_gpa_flags_set(head, EAGER_WBR) && INACTIVE_BLOCK(head))
+	else if (__is_gpa_flags_set(head, EAGER_WBR) && INACTIVE_BLOCK(head))
 		sb_head_count++;
 
 	for_each_gpas(g, head) {
@@ -1502,8 +1502,8 @@ void debug_emp_page_fault_gpa2(struct emp_gpa *head)
 				continue;
 			}
 			if (INACTIVE_BLOCK(head) &&
-					is_gpa_flags_set(head, EAGER_WBR) &&
-					is_gpa_flags_set(g, ZERO_BLOCK)) {
+					__is_gpa_flags_set(head, EAGER_WBR) &&
+					__is_gpa_flags_set(g, ZERO_BLOCK)) {
 				if (page_count(p + i) != (sb_head_count - 1))
 					printk(KERN_ERR "WARN: %s page count is not matched. (inactive, eager, zero) "
 							"page_count(%016lx): %d != %d\n",
@@ -1550,7 +1550,7 @@ void debug_emp_install_sptes(struct emp_gpa *head)
 		BUG_ON(g->local_page == NULL);
 		p = g->local_page->page;
 		for (i = 0; i < gpa_subblock_size(g); i++) {
-			if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
+			if (__is_gpa_flags_set(head, GPA_HPT_MASK)) {
 				if (page_count(p + i) < 3)
 					printk(KERN_ERR "WARN: %s page count is not matched. (hpt) "
 							"page_count(%016lx): %d < 3\n",
@@ -1572,9 +1572,9 @@ void debug_emp_install_sptes2(struct emp_mm *bvma, struct emp_gpa *head, struct 
 	struct page *p;
 	int i;
 	int demand_page_offset = head->local_page->demand_offset & gpa_subblock_mask(gpa);
-	bool cpf_prefetched = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool cpf_prefetched = __is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
 
-	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+	if (__is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
 		for_each_gpas(g, head) {
 			BUG_ON(g->local_page == NULL);
 			p = g->local_page->page;
@@ -1617,7 +1617,7 @@ void debug_emp_install_sptes2(struct emp_mm *bvma, struct emp_gpa *head, struct 
 			}
 		}
 	} else {
-		int pc = is_gpa_flags_set(head, GPA_HPT_MASK)?2:1;
+		int pc = __is_gpa_flags_set(head, GPA_HPT_MASK)?2:1;
 		for_each_gpas(g, head) {
 			BUG_ON(g->local_page == NULL);
 			p = g->local_page->page;
@@ -1673,7 +1673,7 @@ void debug_alloc_and_fetch_pages(struct emp_mm *bvma, struct emp_gpa *gpa,
 void debug_alloc_and_fetch_pages2(struct emp_vmr *v, struct emp_gpa *gpa)
 {
 	BUG_ON(page_count(gpa->local_page->page) > 1 &&
-		!is_gpa_flags_set(emp_get_block_head(gpa), GPA_HPT_MASK));
+		!__is_gpa_flags_set(emp_get_block_head(gpa), GPA_HPT_MASK));
 }
 
 void debug_unmap_gpas(struct emp_mm *bvma, struct emp_gpa *head, u64 addr,
@@ -1683,7 +1683,7 @@ void debug_unmap_gpas(struct emp_mm *bvma, struct emp_gpa *head, u64 addr,
 	u64 *spte, gfn;
 	int i, j;
 
-	if (!is_gpa_flags_set(head, GPA_EPT_MASK))
+	if (!__is_gpa_flags_set(head, GPA_EPT_MASK))
 		return;
 
 	gfn = (head->local_page->gpa_index << bvma_subblock_order(bvma))
@@ -1729,11 +1729,11 @@ void debug_clear_and_map_pages(struct emp_gpa *head)
 
 void debug___emp_page_fault_hva(struct emp_gpa *head) {
 #ifdef CONFIG_EMP_VM
-	BUG_ON(is_gpa_flags_set(head, GPA_HPT_MASK) &&
-			is_gpa_flags_set(head, GPA_EPT_MASK));
+	BUG_ON(__is_gpa_flags_set(head, GPA_HPT_MASK) &&
+			__is_gpa_flags_set(head, GPA_EPT_MASK));
 #endif
-	BUG_ON(is_gpa_flags_set(head, GPA_HPT_MASK) &&
-			is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
+	BUG_ON(__is_gpa_flags_set(head, GPA_HPT_MASK) &&
+			__is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
 }
 
 void debug___emp_page_fault_hva2(struct emp_gpa *head)
@@ -1766,7 +1766,7 @@ void debug_select_victims_al(struct list_head *to_lru_head, int to_lru_len)
 }
 
 void debug_wait_for_prefetch_subblocks(struct emp_gpa *g) {
-	BUG_ON(is_gpa_flags_same(g, GPA_nPT_MASK, 0));
+	BUG_ON(__is_gpa_flags_same(g, GPA_nPT_MASK, 0));
 }
 
 void debug_evict_block(struct emp_gpa *head)
@@ -1834,7 +1834,7 @@ void debug_add_gpas_to_inactive2(struct emp_gpa *head, struct emp_gpa *g) {
 }
 
 void debug_flush_direct_pages(struct emp_gpa *g) {
-	BUG_ON(is_gpa_flags_set(g, GPA_PREFETCHED_MASK));
+	BUG_ON(__is_gpa_flags_set(g, GPA_PREFETCHED_MASK));
 }
 
 bool check_gpa_block_reclaimable(struct emp_mm *bvma, struct emp_gpa *gpa);
