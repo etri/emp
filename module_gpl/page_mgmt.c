@@ -570,11 +570,27 @@ static inline void shadow_page_walk_end(struct kvm_vcpu *vcpu)
 	kvm_emp_walk_shadow_page_lockless_end(vcpu);
 }
 
-static inline void emp_release_page_clean(struct page *p)
+static inline void __emp_release_page_clean(struct page *p)
 {
 	if (!PageCompound(p) || PageHead(p))
 		kvm_release_page_clean(p);
 }
+
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
+/* We use macro here to record the file name and the line number. */
+#define emp_release_page_clean(p) do { \
+		__emp_release_page_clean(p); \
+		if (!PageCompound(p) || PageHead(p)) { \
+			struct local_page *____lp = \
+				((struct emp_gpa *)(p)->private)->local_page; \
+			debug_assert(____lp->page == (p)); \
+			debug_page_ref_calibrate_end(____lp, 1); \
+			debug_page_ref_mark(-100, ____lp, -1); \
+		} \
+	} while (0)
+#else
+#define emp_release_page_clean(p) __emp_release_page_clean(p)
+#endif
 
 /**
  * map_spte - Install shadow page table entry

@@ -48,10 +48,9 @@ static inline void __emp_get_subblock(struct emp_gpa *g)
 } while (0)
 
 #define emp_get_subblock_calibrate(g) do { \
-	debug_page_ref_calibrate_beg((g)->local_page, 1); \
 	__emp_get_subblock(g); \
-	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, 0); \
-	debug_page_ref_calibrate_end((g)->local_page, 1); \
+	debug_page_ref_calibrate_beg((g)->local_page, 1); \
+	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, 1); \
 } while (0)
 
 /**
