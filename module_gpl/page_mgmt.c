@@ -1397,8 +1397,7 @@ void calibrate_block_count(struct emp_gpa *head, struct emp_gpa *fs, struct emp_
 
 		case GPA_FETCHING:
 			for_each_gpas(g, head) {
-				if (g < fs || fe <= g)
-					emp_get_subblock_calibrate(g);
+				emp_get_subblock_calibrate(g);
 			}
 
 			break;
