@@ -651,12 +651,9 @@ __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 static inline void
 cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *head)
 {
-	pmd_t *pmd;
+	pmd_t *pmd = NULL;
 	unsigned long addr, page_len;
 	struct emp_gpa *gpa;
-
-	debug_assert(emp_lp_count_pmd(head->local_page) == 1);
-	debug_assert(head->local_page->pmds.vmr_id == vmr->id);
 
 	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
 	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
@@ -670,14 +667,22 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 		__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
 	for_each_gpas(gpa, head) {
+		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		if (pmd == NULL)
+			goto next;
 		debug_assert(emp_lp_count_pmd(gpa->local_page) == 1);
 		debug_assert(gpa->local_page->pmds.vmr_id == vmr->id);
-		debug_assert(gpa->local_page->pmds.pmd == pmd);
+		if (debug_WARN_ONCE(pmd_none(*pmd),
+				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
+				"pmd: 0x%016lx hva: 0x%016lx",
+				__func__, vmr->id, head_idx, (unsigned long) pmd, addr))
+			__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
 		__cow_mkwrite_pte(vmr->host_vma, gpa_page(gpa),
 						pmd, addr, page_len);
+next:
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
 }
