@@ -4,19 +4,60 @@
 #include "block.h"
 #include "reclaim.h"
 #include "paging.h"
+#include "vcpu_var.h"
+
+#define LEN_FLUSH_HEADS NUM_VICTIM_CLUSTER
+struct blk_pf_ctx {
+	struct vcpu_var *cpu; // current cpu
+	struct emp_gpa *heads[LEN_FLUSH_HEADS];
+	int num_heads;
+	int size_heads;
+};
+
+static inline void
+blk_pf_ctx_init(struct emp_mm *emm, struct blk_pf_ctx *ctx)
+{
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->cpu = emp_this_cpu_ptr(emm->pcpus);
+}
+
+static inline void
+blk_pf_ctx_add_head(struct blk_pf_ctx *ctx, struct emp_gpa *head)
+{
+	debug_assert(ctx->num_heads < LEN_FLUSH_HEADS);
+	ctx->heads[ctx->num_heads] = head;
+	ctx->num_heads++;
+	ctx->size_heads += gpa_block_size(head);
+}
+
+static inline int
+blk_pf_ctx_flush(struct emp_mm *emm, struct blk_pf_ctx *ctx, bool force)
+{
+	if (ctx->num_heads >= LEN_FLUSH_HEADS || force) {
+		int i, ret;
+		ret = update_lru_lists(emm, ctx->cpu, ctx->heads,
+					ctx->num_heads, ctx->size_heads);
+		for (i = 0; i < ctx->num_heads; i++)
+			emp_unlock_block(ctx->heads[i]);
+		ctx->num_heads = 0;
+		ctx->size_heads = 0;
+		return ret;
+	} else
+		return 0;
+}
 
 static int handle_remote_prefetch(struct emp_mm *emm, struct emp_vmr *vmr,
-				struct emp_gpa *head, unsigned long idx) {
-	struct vcpu_var *cpu;
+				struct emp_gpa *head, unsigned long idx,
+				struct blk_pf_ctx *ctx) {
 	int ret;
-	cpu = emp_this_cpu_ptr(emm->pcpus);
-	ret = fetch_block(emm, vmr, head, idx, 0, cpu, false, false, false);
+	ret = fetch_block(emm, vmr, head, idx, 0, ctx->cpu, false, false, false);
 	debug_progress(head, ret);
 	if (unlikely(ret < 0))
 		return ret;
 	set_gpa_flags_if_unset(head, GPA_PREFETCHED_BLK_MASK);	
 	set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
-	return update_lru_lists(emm, cpu, &head, 1, gpa_block_size(head)); 
+	blk_pf_ctx_add_head(ctx, head);
+	return ret;
 }
 
 /**
@@ -29,7 +70,8 @@ static int handle_remote_prefetch(struct emp_mm *emm, struct emp_vmr *vmr,
  * @retval 0: prefetch is skipped
  * @retval -n: Error
  */
-int __emp_blk_prefetch(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long idx)
+static int __emp_blk_prefetch(struct emp_mm *emm, struct emp_vmr *vmr,
+				unsigned long idx, struct blk_pf_ctx *ctx)
 {
 	struct emp_gpa *gpa, *head;
 	int r, ret = 0;
@@ -59,19 +101,19 @@ int __emp_blk_prefetch(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long id
 #ifdef CONFIG_EMP_BLOCK
 	/* Already prefetched, even if CSF or CPF */
 	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
-		goto out;
+		goto unlock;
 #endif /* CONFIG_EMP_BLOCK */
 	
 	if (is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK))
-		goto out;
+		goto unlock;
 
 #ifdef CONFIG_EMP_IO
 	if (is_gpa_flags_set(head, GPA_IO_MASK))
-		goto out;
+		goto unlock;
 #endif
 #ifdef CONFIG_EMP_OPT
 	if (is_gpa_flags_set(head, GPA_STALE_BLOCK_MASK))
-		goto out;
+		goto unlock;
 #endif
 
 	if (head->r_state != GPA_INIT) {
@@ -91,22 +133,28 @@ int __emp_blk_prefetch(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long id
 		else if (head->r_state == GPA_WB)
 			emm->stat.blk_prefetch_writeback++;
 #endif
-		goto out;
+		goto unlock;
 	} else {
 #ifdef CONFIG_EMP_STAT
 		emm->stat.blk_prefetch_remote++;
 #endif
-		r = handle_remote_prefetch(emm, vmr, head, idx);
+		r = handle_remote_prefetch(emm, vmr, head, idx, ctx);
 		debug_progress(head, r);
 		if (r < 0) {
 			ret = r;
-			goto out;
+			goto unlock;
 		}
 	}
 
 	head->r_state = GPA_ACTIVE;
 	set_gpa_flags_if_unset(head, GPA_HPT_MASK);
-out:
+
+	r = blk_pf_ctx_flush(emm, ctx, false);
+	if (r < 0)
+		ret = r;
+	return ret;
+
+unlock:
 	emp_unlock_block(head);
 	return ret;
 }
@@ -130,6 +178,9 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long size
 	int sb_order = bvma_subblock_order(emm), order;
 	unsigned long idx;
 	int block_size;
+	struct blk_pf_ctx ctx;
+
+	blk_pf_ctx_init(emm, &ctx);
 
 	if ((addr & (PAGE_SIZE - 1)) != 0) {
 		size += addr & ~PAGE_MASK;
@@ -145,7 +196,7 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long size
 		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
 
 		while (addr < vmr_addr_end) {
-			block_size = __emp_blk_prefetch(emm, vmr, idx);
+			block_size = __emp_blk_prefetch(emm, vmr, idx, &ctx);
 			if (unlikely(block_size < 0))
 				return (long) block_size;
 			if (block_size > 0) {
@@ -166,5 +217,5 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long size
 		}
 	}
 
-	return 0;
+	return (long) blk_pf_ctx_flush(emm, &ctx, true);
 }
