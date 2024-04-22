@@ -144,6 +144,12 @@ struct emp_stat {
 	u64      post_read_mempoll;
 
 	u64      fsync_count;
+
+	u64      blk_prefetch_try;
+	u64      blk_prefetch_active;
+	u64      blk_prefetch_inactive;
+	u64      blk_prefetch_writeback;
+	u64      blk_prefetch_remote;
 };
 
 // second-tier memory for a mm

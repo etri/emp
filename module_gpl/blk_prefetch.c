@@ -38,6 +38,10 @@ int __emp_blk_prefetch(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long id
 	if (!gpa)
 		return 0;
 
+#ifdef CONFIG_EMP_STAT
+	emm->stat.blk_prefetch_try++;
+#endif
+
 	head = emp_trylock_block(vmr, &gpa, idx);
 	if (head == NULL)
 		return gpa_block_size(gpa);
@@ -79,8 +83,19 @@ int __emp_blk_prefetch(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long id
 		 *            When pop_writeback_request, clear the flag and move to active.
 		 * 4) GPA_FETCHING: never happened. This is a hidden state.
 		 */
+#ifdef CONFIG_EMP_STAT
+		if (head->r_state == GPA_ACTIVE)
+			emm->stat.blk_prefetch_active++;
+		if (head->r_state == GPA_INACTIVE)
+			emm->stat.blk_prefetch_inactive++;
+		else if (head->r_state == GPA_WB)
+			emm->stat.blk_prefetch_writeback++;
+#endif
 		goto out;
 	} else {
+#ifdef CONFIG_EMP_STAT
+		emm->stat.blk_prefetch_remote++;
+#endif
 		r = handle_remote_prefetch(emm, vmr, head, idx);
 		debug_progress(head, r);
 		if (r < 0) {

@@ -910,6 +910,11 @@ EMP_PROC_STAT_VM(csf_useful)
 EMP_PROC_STAT_VM(cpf_to_csf_transition)
 EMP_PROC_STAT_VM(post_read_mempoll)
 __EMP_PROC_STAT_VM(fsync, fsync_count)
+EMP_PROC_STAT_VM(blk_prefetch_try)
+EMP_PROC_STAT_VM(blk_prefetch_active)
+EMP_PROC_STAT_VM(blk_prefetch_inactive)
+EMP_PROC_STAT_VM(blk_prefetch_writeback)
+EMP_PROC_STAT_VM(blk_prefetch_remote)
 #endif /* CONFIG_EMP_STAT */
 
 /**************************************************/
@@ -1077,6 +1082,11 @@ static struct emp_proc_entry emp_proc_stat[] = {
 	emp_proc_entry_rw(cpf_to_csf_transition),
 	emp_proc_entry_rw(post_read_mempoll),
 	emp_proc_entry_rw(fsync),
+	emp_proc_entry_rw(blk_prefetch_try),
+	emp_proc_entry_rw(blk_prefetch_active),
+	emp_proc_entry_rw(blk_prefetch_inactive),
+	emp_proc_entry_rw(blk_prefetch_writeback),
+	emp_proc_entry_rw(blk_prefetch_remote),
 	emp_proc_entry_END,
 };
 #endif
