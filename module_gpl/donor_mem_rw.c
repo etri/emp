@@ -874,10 +874,17 @@ static int wait_read_async_demand_page(struct emp_mm *bvma, struct vcpu_var *cpu
 					struct emp_gpa *gpa, unsigned int demand_sb_offset)
 {
 	struct work_request *w = gpa->local_page->w;
+	int ret;
 	if (w == NULL)
 		return 0;
 
-	return clear_fetching_demand_page(bvma, cpu, w, demand_sb_offset);
+	ret = clear_fetching_demand_page(bvma, cpu, w, demand_sb_offset);
+	if (ret == 2) {
+		debug_page_ref_io_end(gpa->local_page);
+		emp_put_subblock(gpa);
+		gpa->local_page->w = NULL;
+	}
+	return ret;
 }
 #endif
 
