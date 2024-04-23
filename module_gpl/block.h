@@ -39,6 +39,15 @@ static inline void ____emp_gpa_unlock(struct emp_gpa *gpa)
 
 #ifdef CONFIG_EMP_BLOCK
 static inline unsigned long
+emp_get_block_offset(struct emp_gpa *head, struct emp_gpa *demand, pgoff_t pgoff)
+{
+	debug_assert(demand >= head);
+	debug_assert((demand - head) < gpa_desc_size(head));
+	return ((demand - head) << gpa_subblock_order(head))
+		+ (pgoff & (gpa_subblock_size(head) - 1));
+}
+
+static inline unsigned long
 _emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index, int order)
 {
 	unsigned long gpa_offset;

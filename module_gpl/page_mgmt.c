@@ -384,7 +384,7 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 	bool no_fetch = false, is_stale = false, io_read_mask = false;
 	int block_size, block_order;
 	struct emp_mm *bvma = vmr->emm;
-	int demand_offset = gpa_block_offset(*head, demand_off);
+	int demand_offset = emp_get_block_offset(*head, gpa, demand_off);
 
 	block_size = gpa_block_size(*head);
 	block_order = gpa_block_order(*head);
@@ -1333,7 +1333,7 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 									  gpa, gpa_sb_offset);
 
 			/* processed only a page, not all */
-			head->local_page->demand_offset = gpa_block_offset(head, gpa_off);
+			head->local_page->demand_offset = emp_get_block_offset(head, gpa, gpa_off);
 			if (fallback > 1)
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 			else
@@ -1349,7 +1349,7 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 
 			/* processed only a sub-block, not all */
 			if (gpa_subblock_order(head) != gpa_block_order(head)) {
-				head->local_page->demand_offset = gpa_block_offset(head, gpa_off);
+				head->local_page->demand_offset = emp_get_block_offset(head, gpa, gpa_off);
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
 			}

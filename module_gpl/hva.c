@@ -104,7 +104,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 							cpu, demand, sb_off);
 			/* processed only a page, not all */
 			head->local_page->demand_offset =
-						gpa_block_offset(head, pgoff);
+					emp_get_block_offset(head, demand, pgoff);
 			if (fallback > 1)
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 			else
@@ -118,7 +118,10 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 			/* processed only a sub-block, not all */
 			if (gpa_subblock_order(head) != gpa_block_order(head)) {
 				head->local_page->demand_offset =
-						gpa_block_offset(head, pgoff);
+					emp_get_block_offset(head, demand, pgoff);
+				debug_assert(demand ==
+					head + (head->local_page->demand_offset
+						>> gpa_subblock_order(head)));
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
 			}
@@ -131,17 +134,22 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 		prefetched_gpa = NULL;
 
 	for_each_gpas(gpa, head) {
-		if (fetch && gpa == prefetched_gpa)
+		if (fetch && gpa == prefetched_gpa) {
+			debug_assert(gpa->local_page->w == NULL);
 			continue;
+		}
 
 		// ignore already mapped subblocks
-		if (emp_lp_lookup_vmr_id(gpa, vmr->id))
+		if (emp_lp_lookup_vmr_id(gpa, vmr->id)) {
+			debug_assert(gpa->local_page->w == NULL);
 			continue;
+		}
 
 		// we must put subblock for fetch_page
 		// don't merge the put_subblock to get_subblock for pte_install
 		if ((bvma->sops.wait_read_async)(bvma, cpu, gpa))
 			clear_gpa_flags_if_set(demand, GPA_REMOTE_MASK);
+		debug_assert(gpa->local_page->w == NULL);
 	}
 }
 
