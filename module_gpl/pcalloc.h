@@ -2,6 +2,7 @@
 #define __PCALLOC_H__
 #include <linux/cpumask.h>
 #include <linux/topology.h>
+#include "debug.h"
 
 static inline void __pcfree_data(void **arr)
 {
