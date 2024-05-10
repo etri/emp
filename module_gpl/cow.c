@@ -659,13 +659,6 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
-	pmd = head->local_page->pmds.pmd;
-	if (debug_WARN_ONCE(pmd_none(*pmd),
-			"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
-			"pmd: 0x%016lx hva: 0x%016lx",
-			__func__, vmr->id, head_idx, (unsigned long) pmd, addr))
-		__cow_pmd_populate(vmr->host_mm, pmd, addr);
-
 	for_each_gpas(gpa, head) {
 		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
 		if (pmd == NULL)
@@ -675,7 +668,8 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 		if (debug_WARN_ONCE(pmd_none(*pmd),
 				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
 				"pmd: 0x%016lx hva: 0x%016lx",
-				__func__, vmr->id, head_idx, (unsigned long) pmd, addr))
+				__func__, vmr->id, head_idx + (gpa - head),
+				(unsigned long) pmd, addr))
 			__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
 		/* we does not update page_len since partial map gpa block
