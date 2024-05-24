@@ -25,8 +25,21 @@
 #define ACC_ALL          (ACC_EXEC_MASK | ACC_WRITE_MASK | ACC_USER_MASK)
 #endif /* CONFIG_EMP_VM */
 
+#ifdef CONFIG_EMP_PAGE_RMAP_OPT
+static inline void
+kernel_page_add_file_rmap(struct page *page, struct vm_area_struct *vma, bool compound)
+{
+       atomic_inc(&page->_mapcount);
+}
+static inline void
+kernel_page_remove_rmap(struct page *page, struct vm_area_struct *vma, bool compound)
+{
+       atomic_dec(&page->_mapcount);
+}
+#else
 void kernel_page_add_file_rmap(struct page *page, struct vm_area_struct *vma, bool compound);
 void kernel_page_remove_rmap(struct page *pg, struct vm_area_struct *vma, bool compound);
+#endif
 void kernel_tlb_finish_mmu(struct mmu_gather *tlb, unsigned long start, unsigned long end);
 void kernel_tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,
 			unsigned long start, unsigned long end);

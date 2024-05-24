@@ -37,6 +37,8 @@ WSS_ESTIMATOR_AVL_SHARDS := no
 WSS_ESTIMATOR_AVL_PM := no
 # add optimizations for sequential access pattern (EXPERIMENTAL)
 EMP_SEQUENTIAL := no
+# optimize page_add_file_rmap() and page_remove_rmap() (EXPERIMENTAL)
+EMP_PAGE_RMAP_OPT := no
 
 # Profile memory allocation of KVM (EXPERIMENTAL)
 KVM_ALLOC_PROFILE := no
@@ -134,6 +136,9 @@ EXTRA_CFLAGS += -DCONFIG_EMP_BLOCKDEV
 endif
 ifeq ($(EMP_SEQUENTIAL), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_SEQUENTIAL
+endif
+ifeq ($(EMP_PAGE_RMAP_OPT), yes)
+EXTRA_CFLAGS += -DCONFIG_EMP_PAGE_RMAP_OPT
 endif
 ifeq ($(KVM_ALLOC_PROFILE), yes)
 EXTRA_CFLAGS += -DCONFIG_KVM_ALLOC_PROFILE

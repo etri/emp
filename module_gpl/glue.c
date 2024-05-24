@@ -80,6 +80,7 @@ void kernel_symbol_close(void) {
 		emp_kfree(ksym);
 }
 
+#ifndef CONFIG_EMP_PAGE_RMAP_OPT
 void kernel_page_add_file_rmap(struct page *page, struct vm_area_struct *vma, bool compound)
 {
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)) \
@@ -112,6 +113,7 @@ void kernel_page_remove_rmap(struct page *pg, struct vm_area_struct *vma, bool c
 	f(pg, compound);
 #endif
 }
+#endif /* CONFIG_EMP_PAGE_RMAP_OPT */
 
 void kernel_tlb_finish_mmu(struct mmu_gather *tlb, unsigned long start,
 		unsigned long end)
