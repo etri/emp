@@ -39,6 +39,8 @@ WSS_ESTIMATOR_AVL_PM := no
 EMP_SEQUENTIAL := no
 # optimize page_add_file_rmap() and page_remove_rmap() (EXPERIMENTAL)
 EMP_PAGE_RMAP_OPT := no
+# skip writeback on clean pages with HVA fault (EXPERIMENTAL)
+EMP_HVA_CLEAN_OPT := no
 
 # Profile memory allocation of KVM (EXPERIMENTAL)
 KVM_ALLOC_PROFILE := no
@@ -139,6 +141,9 @@ EXTRA_CFLAGS += -DCONFIG_EMP_SEQUENTIAL
 endif
 ifeq ($(EMP_PAGE_RMAP_OPT), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_PAGE_RMAP_OPT
+endif
+ifeq ($(EMP_HVA_CLEAN_OPT), yes)
+EXTRA_CFLAGS += -DCONFIG_EMP_HVA_CLEAN_OPT
 endif
 ifeq ($(KVM_ALLOC_PROFILE), yes)
 EXTRA_CFLAGS += -DCONFIG_KVM_ALLOC_PROFILE

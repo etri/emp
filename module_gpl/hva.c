@@ -792,6 +792,7 @@ _emp_page_fault_hva_fetch_posted:
 		debug_progress(head, ret);
 	}
 
+#ifndef CONFIG_EMP_HVA_CLEAN_OPT
 #ifdef CONFIG_EMP_EXT
 	// XXX we must set the block as dirty???
 	if (!set_gpa_flags_if_unset(head, GPA_DIRTY_MASK)) {
@@ -802,6 +803,7 @@ _emp_page_fault_hva_fetch_posted:
 #else
 	set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 #endif
+#endif /* !CONFIG_EMP_HVA_CLEAN_OPT */
 
 	debug___emp_page_fault_hva2(emm, head);
 
