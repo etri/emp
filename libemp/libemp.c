@@ -88,9 +88,6 @@ void __attribute__((constructor)) libemp_init()
 	int ret;
 	char *param_emp_path, *param_emp_verbose;
 
-	mem_alloc_init();
-	emp_cuda_runtime_init();
-
 	param_emp_path = getenv("EMP_MEM_PATH");
 	if (!param_emp_path) {
 		fprintf(stderr, "libemp.so: [ERROR] no emp_path parameters\n");
@@ -100,6 +97,9 @@ void __attribute__((constructor)) libemp_init()
 	param_emp_verbose = getenv("EMP_VERBOSE");
 	if (param_emp_verbose)
 		verbose = atoi(param_emp_verbose);
+
+	mem_alloc_init();
+	emp_cuda_runtime_init();
 
 	if (param_emp_path[0] == '!') {
 		// empfd was opened at parent process

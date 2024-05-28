@@ -13,8 +13,9 @@ void emp_restore(int);
 }
 #endif
 
-#define print_verbose(...)  \
-	if (verbose) fprintf(stderr, __VA_ARGS__) 
+#define print_verbose(...)  do { \
+	if (verbose) fprintf(stderr, __VA_ARGS__); \
+} while (0)
 
 #define LIBEMP_READY (empfd != -1 && emp_enabled)
 
