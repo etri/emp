@@ -8,12 +8,10 @@
 #include <asm/bitops.h>
 #include "config.h"
 #include "gpa.h"
-#include "emp_ioctl.h"
 #include "vm.h"
 #include "glue.h"
 #include "block.h"
 #include "reclaim.h"
-#include "iov.h"
 #include "donor_mem_rw.h"
 #include "alloc.h"
 #include "hva.h"
@@ -29,7 +27,6 @@
 #ifdef CONFIG_EMP_USER
 #include "cow.h"
 #endif
-#include "blk_prefetch.h"
 
 #undef MEASURE_COMPONENTS
 
@@ -84,6 +81,10 @@ int emp_procfs_add(struct emp_mm *bvma, int id);
 void emp_procfs_del(struct emp_mm *bvma);
 int emp_procfs_init(void);
 void emp_procfs_exit(void);
+
+/* ----- functions from ioctl.c ------ */
+long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
+		unsigned long ioctl_param);
 	
 #ifdef CONFIG_EMP_EXT
 /**
@@ -904,7 +905,7 @@ mmap_fail:
  *
  * Register memslot using vm's memory info
  */
-static void register_mem_slot(struct emp_mm *bvma, unsigned long start, unsigned long size)
+void register_mem_slot(struct emp_mm *bvma, unsigned long start, unsigned long size)
 {
 	struct kvm_memory_slot *slot;
 
@@ -928,43 +929,7 @@ static void register_mem_slot(struct emp_mm *bvma, unsigned long start, unsigned
 			start, bvma->ekvm.memslot[memslot].hva, size, base);
 	}
 }
-#endif /* CONFIG_EMP_VM */
 
-/**
- * realloc_donor_info - Allocate donor's memory info
- * @param d new donor memory info
- * @param usr_d donor memory info from user
- *
- * @retval NULL: Error
- * @retval n: Success
- *
- * Allocate a donor's data structure with donor's memory information
- */
-static struct donor_info *realloc_donor_info(struct donor_info *d,
-		struct donor_info *usr_d)
-{
-	struct donor_info *donor;
-	unsigned int uret;
-
-	if (d->path_len == 0)
-		return d;
-
-	donor = emp_kmalloc(sizeof(struct donor_info) + d->path_len, GFP_KERNEL);
-	if (donor == NULL)
-		return NULL;
-
-	memcpy(donor, d, sizeof(struct donor_info));
-	uret = copy_from_user(donor->path, (void __user *)usr_d->path,
-			d->path_len);
-	if (uret) {
-		emp_kfree(donor);
-		return NULL;
-	}
-
-	return donor;
-}
-
-#ifdef CONFIG_EMP_VM
 /**
  * register_kvm - Register KVM functions for mapping EMP functions to use
  * @param bvma bvma data structure
@@ -976,7 +941,7 @@ static struct donor_info *realloc_donor_info(struct donor_info *d,
  *
  * Replace functionalities of KVM to EMP's functions
  */
-static int COMPILER_DEBUG
+int COMPILER_DEBUG
 register_kvm(struct emp_mm *bvma, int kvm_fd, int kvm_max_vcpus)
 {
 	struct file *kvm_filp;
@@ -1044,187 +1009,6 @@ reg_kvm_get_vcpus_err:
 	return false;
 }
 #endif /* CONFIG_EMP_VM */
-
-/**
- * emp_unlocked_ioctl - Provide a communication channel between QEMU and EMP module
- * @param file device file
- * @param ioctl_num IOCTL number
- * @param ioctl_param IOCTL parameters
- *
- * @retval 0: Success
- * @retval n: Error
- *
- * Communicate QEMU with the information listed below
- * + IOCTL_GET_LOWER_SIZE
- * + IOCTL_CONN_DONOR
- * + IOCTL_SET_DRAM
- * + IOCTL_REG_KVM
- * + IOCTL_HINT_IOV_W/R
- * + IOCTL_REG_MEM_REGION
- * + IOCTL_CONNECT_EM
- */
-static long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
-		unsigned long ioctl_param)
-{
-	int ret = 0;
-	struct emp_mm *bvma;
-
-	if (!file->private_data)
-		return -ENODEV;
-
-	bvma = (struct emp_mm *)file->private_data;
-#ifdef CONFIG_EMP_EXT
-	if (emp_ext.emp_unlocked_ioctl
-			&& emp_ext.emp_unlocked_ioctl(bvma, ioctl_num, ioctl_param) == 0)
-		return 0;
-#endif
-	switch (ioctl_num) {
-		unsigned int uret;
-		struct donor_info _donor, *donor;
-		/*struct file *kvm_filp;*/
-		size_t size;
-#ifdef CONFIG_EMP_IO
-		struct QEMUIOVector qiov, *qiov_req;
-		struct iovec *iov;
-		size_t niov;
-#endif
-		struct emp_prefetch pf_info;
-		struct {
-			unsigned long start;
-			unsigned long size;
-		} memreg;
-#ifdef CONFIG_EMP_VM
-		struct {
-			int kvm_fd;
-			int max_cpus;
-		} reg_kvm;
-		int kvm_fd, kvm_max_vcpus;
-#endif /* CONFIG_EMP_VM */
-
-		case IOCTL_GET_LOWER_SIZE:
-			ret = LOWER_MEM_SIZE;
-			break;
-
-		case IOCTL_CONN_DONOR:
-			uret = copy_from_user(&_donor,
-					(void __user *)ioctl_param,
-					sizeof(_donor));
-			if (uret) {
-				ret = -EINVAL;
-				break;
-			}
-			
-			donor = realloc_donor_info(&_donor, 
-					(struct donor_info *)ioctl_param);
-			if (donor == NULL) {
-				ret = -EINVAL;
-				break;
-			}
-			ret = bvma->mops.create_mr(bvma, donor, NULL);
-			if (donor != &_donor)
-				emp_kfree(donor);
-
-			break;
-
-		case IOCTL_FINI_CONN:
-			uret = check_creation_mrs(bvma);
-			printk(KERN_INFO "check creation mrs: %s",
-					(uret == 0)? "success":"failed");
-			if (uret)
-				ret = -EINVAL;
-			break;
-
-		case IOCTL_SET_DRAM:
-			uret = copy_from_user(&_donor,
-					(void __user *)ioctl_param,
-					sizeof(_donor));
-			if (uret) {
-				ret = -EINVAL;
-				break;
-			}
-			donor = &_donor;
-			atomic_set(&bvma->ftm.local_cache_pages,
-					MB_TO_PAGE(donor->size));
-#ifdef CONFIG_EMP_EXT
-			emp_ops.reclaim_set(bvma);
-#else
-			reclaim_set(bvma);
-#endif
-			printk(KERN_INFO "set dram capacity: %ld MiB\n",
-					donor->size);
-			break;
-
-#ifdef CONFIG_EMP_VM
-		case IOCTL_REG_KVM:
-			size = copy_from_user(&reg_kvm, (void __user *)ioctl_param, 
-					sizeof(reg_kvm));
-			if (size) {
-				ret = -EINVAL;
-				break;
-			}
-			kvm_fd = reg_kvm.kvm_fd;
-			kvm_max_vcpus = reg_kvm.max_cpus;
-			ret = register_kvm(bvma, kvm_fd, kvm_max_vcpus);
-			break;
-#endif /* CONFIG_EMP_VM */
-
-		case IOCTL_HINT_IOV_W:
-		case IOCTL_HINT_IOV_R:
-#ifdef CONFIG_EMP_IO
-			// for now, turn off iov handling in case of multi-order page
-			qiov_req = (struct QEMUIOVector *)ioctl_param;
-			size = copy_from_user(&qiov, qiov_req, sizeof(struct QEMUIOVector));
-			if (size) {
-				printk("failed: copy_from_user: qiov %ld\n", size);
-				ret = -EINVAL;
-				break;
-			}
-			niov = qiov.niov;
-			iov = emp_kmalloc(sizeof(struct iovec) * niov, GFP_KERNEL);
-			if (!iov)
-				break;
-
-			size = copy_from_user(iov, qiov.iov,
-					sizeof(struct iovec) * niov);
-			if (size) {
-				printk("failed: copy_from_user: iov %ld\n", size);
-				ret = -EINVAL;
-				emp_kfree(iov);
-				break;
-			}
-			handle_qiov(bvma, ioctl_num==IOCTL_HINT_IOV_W, iov, niov);
-			emp_kfree(iov);
-#endif
-			break;
-		case IOCTL_REG_MEM_REGION:
-			size = copy_from_user(&memreg, (void __user *)ioctl_param, sizeof(memreg));
-			if (size) {
-				ret = -EINVAL;
-				break;
-			}
-#ifdef CONFIG_EMP_VM
-			register_mem_slot(bvma, memreg.start, memreg.size);
-#endif
-			break;
-		case IOCTL_EMP_PREFETCH:
-			size = copy_from_user(&pf_info,
-					(struct emp_prefetch *) ioctl_param,
-					sizeof(struct emp_prefetch));
-			if (size) {
-				printk("failed: copy_from_user: prefetch_info %ld\n", size);
-				ret = -EINVAL;
-				break;
-			}
-			ret = emp_blk_prefetch(bvma, pf_info.addr, pf_info.size);
-			break;
-		default:
-			printk(KERN_ERR "unknown ioctl called %d\n", ioctl_num);
-			ret = -EINVAL;
-			break;
-	}
-
-	return ret;
-}
 
 /**
  * register_bvma - Initialize the virtual memory information for each VM used in EMP
