@@ -341,11 +341,12 @@ void wait_for_prefetched_block(struct emp_mm *emm,
 	struct emp_gpa *g, *pf_sb_head;
 
 	debug_assert(__is_gpa_flags_set(head, GPA_PREFETCHED_MASK));
+	debug_assert(!__is_gpa_flags_same(head, GPA_nPT_MASK, 0));
 
-	pf_sb_head = head + (head->local_page->demand_offset
-				>> gpa_subblock_order(head));
-
-	if (is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK))
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK))
+		pf_sb_head = head + (head->local_page->demand_offset
+					>> gpa_subblock_order(head));
+	else
 		pf_sb_head = NULL;
 
 	for_each_gpas(g, head) {

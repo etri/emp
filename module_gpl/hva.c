@@ -130,7 +130,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 	}
 #endif
 
-	if (is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK))
+	if (!is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK))
 		prefetched_gpa = NULL;
 
 	for_each_gpas(gpa, head) {

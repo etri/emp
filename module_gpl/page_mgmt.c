@@ -664,6 +664,11 @@ u64 emp_map_prefetch_sptes(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 #ifdef CONFIG_EMP_DEBUG_PROGRESS
 		int debug_map_spte_record = 0;
 #endif
+		/* NOTE: cpf_prefetched is the only case that the demand
+		 *       subblock is not mapped (except for the demand page).
+		 *       Otherwise, install_sptes_for_subblock() have mapped
+		 *       the demand subblock.
+		 */
 		if (g == demand && !cpf_prefetched) {
 			offset += gpa_subblock_size(g);
 			continue;
@@ -844,11 +849,11 @@ void emp_map_prefetch_sptes2(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 static void wait_fetching_except(struct emp_mm *b, struct vcpu_var *cpu, 
 				 struct emp_gpa *head, struct emp_gpa *except)
 {
-	bool cpf_prefetched = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool pf_mapped = is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK);
 	struct emp_gpa *g;
 
 	for_each_gpas(g, head) {
-		if (g == except && !cpf_prefetched)
+		if (g == except && pf_mapped)
 			continue;
 
 		if (!(b->sops.wait_read_async)(b, cpu, g))
