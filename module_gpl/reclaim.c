@@ -285,7 +285,7 @@ gpa_acquire(struct emp_vmr *vmr, struct vcpu_var *cpu, struct emp_gpa *head)
 		count_def = 1;
 	}
 
-	page_size = __local_gpa_to_page_len(vmr, g);
+	page_size = __local_gpa_to_page_len(vmr, head);
 
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
