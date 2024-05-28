@@ -22,6 +22,7 @@ int verbose = 0;
 int emp_enabled = 0;
 
 static void *(*real_mmap)(void *, size_t , int, int, int, off_t) = NULL;
+static int (*real_madvise)(void *, size_t, int) = NULL;
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
@@ -41,18 +42,55 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 	return real_mmap(addr, length, prot, flags, fd, offset);
 }
 
-static void mem_alloc_init(void)
-{
-	real_mmap = dlsym(RTLD_NEXT, "mmap");
-	if (!real_mmap) {
-		const char *errmsg = dlerror();
-		print_verbose("libemp.so: uable to intercept mmap\n");
-		if (errmsg)
-			fprintf(stderr, "%s\n", errmsg);
-		exit(1);
+int madvise(void *addr, size_t length, int advise) {
+	struct emp_prefetch pf_info;
+	print_verbose("[libemp] empfd: %d addr: %lx length: %lx advise: %d\n",
+			empfd, (unsigned long) addr, length, advise);
+
+	if (!LIBEMP_READY)
+		goto fallback;
+
+	switch (advise) {
+	case MADV_NORMAL:
+	case MADV_RANDOM:
+	case MADV_SEQUENTIAL:
+			break;
+	case MADV_WILLNEED:
+			pf_info.addr = (unsigned long) addr;
+			pf_info.size = length;
+			if (ioctl(empfd, IOCTL_EMP_PREFETCH, &pf_info) == 0)
+				return 0;
+			break;
+	case MADV_DONTNEED:
+			break;
+	default:
+			break;
 	}
 
-	print_verbose("libemp.so: successfully intercept mmap\n");
+fallback:
+	return real_madvise(addr, length, advise);
+}
+
+#define GET_NEXT_SYMBOL(ptr, name) ({ \
+	(ptr) = dlsym(RTLD_NEXT, name); \
+	if (!(ptr)) { \
+		const char *errmsg = dlerror(); \
+		print_verbose("libemp.so: unable to intercept %s\n", #name); \
+		if (errmsg) \
+			fprintf(stderr, "errmsg: %s\n", errmsg); \
+	} \
+	(ptr) ? 0 : -1; \
+})
+
+static void mem_alloc_init(void)
+{
+	if (GET_NEXT_SYMBOL(real_mmap, "mmap"))
+		exit(1);
+
+	if (GET_NEXT_SYMBOL(real_madvise, "madvise"))
+		exit(1);
+
+	print_verbose("libemp.so: successfully intercept mmap and madvise\n");
 }
 
 void emp_disable(void)
