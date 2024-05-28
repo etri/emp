@@ -14,6 +14,10 @@ int emp_page_fault_gpa(struct kvm_vcpu *, const unsigned long, bool, bool *,
 		u64 *, gva_t, int, u32, bool, struct kvm_memory_slot *);
 u64 *get_spte(struct kvm_vcpu *vcpu, int level, u64 offset);
 #endif
+int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
+			struct emp_gpa *head, unsigned long head_idx,
+			int demand_offset, struct vcpu_var *cpu,
+			bool no_fetch, bool is_stale, bool io_read_mask);
 
 int handle_active_fault(struct emp_vmr *, struct emp_gpa *, struct emp_gpa *,
 			struct vcpu_var *, int *);

@@ -29,6 +29,7 @@
 #ifdef CONFIG_EMP_USER
 #include "cow.h"
 #endif
+#include "blk_prefetch.h"
 
 #undef MEASURE_COMPONENTS
 
@@ -1087,6 +1088,7 @@ static long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
 		struct iovec *iov;
 		size_t niov;
 #endif
+		struct emp_prefetch pf_info;
 		struct {
 			unsigned long start;
 			unsigned long size;
@@ -1204,7 +1206,17 @@ static long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
 			register_mem_slot(bvma, memreg.start, memreg.size);
 #endif
 			break;
-
+		case IOCTL_EMP_PREFETCH:
+			size = copy_from_user(&pf_info,
+					(struct emp_prefetch *) ioctl_param,
+					sizeof(struct emp_prefetch));
+			if (size) {
+				printk("failed: copy_from_user: prefetch_info %ld\n", size);
+				ret = -EINVAL;
+				break;
+			}
+			ret = emp_blk_prefetch(bvma, pf_info.addr, pf_info.size);
+			break;
 		default:
 			printk(KERN_ERR "unknown ioctl called %d\n", ioctl_num);
 			ret = -EINVAL;

@@ -285,7 +285,7 @@ int handle_local_fault(struct emp_vmr *vmr, struct emp_gpa **head,
  * (block_size / page_size) times, the alloc_and_fetch_page funnction fetchs
  * multiple pages in a single local_pages 
  * emp block uses 4k local_page */
-static int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
+int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx,
 			int demand_offset, struct vcpu_var *cpu,
 			bool no_fetch, bool is_stale, bool io_read_mask)
