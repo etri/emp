@@ -1193,6 +1193,7 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		 * GPA_remote: clear. This func frees the remote page of @new.
 		 * GPA_prefetched_csf: must be unset.
 		 * GPA_prefetched_cpf: must be unset.
+		 * GPA_prefetched_blk: must be unset.
 		 * GPA_prefetch_once: copy. This is used to prevent prefetch
 		 *                          in the future.
 		 * GPA_referenced: copy.
@@ -1207,6 +1208,7 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		clear_gpa_flags_if_set(new, GPA_REMOTE_MASK);
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CSF_MASK));
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CPF_MASK));
+		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_BLK_MASK));
 #ifdef CONFIG_EMP_IO
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_IO_READ_MASK));
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_IO_WRITE_MASK));
