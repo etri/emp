@@ -591,6 +591,22 @@ static void clear_writeback_block(struct emp_mm *bvma, struct emp_gpa *head,
 	__clear_writeback_block(bvma, w, cpu, false, do_reclaim);
 }
 
+static void __promote_gpa(struct emp_mm *emm, int cpu, struct emp_gpa *gpa)
+{
+	struct slru *target;
+	struct emp_list *list;
+	target = &emm->ftm.active_list;
+	list = get_list_ptr_mru(emm, target, cpu);
+	emp_list_lock(list);
+	set_local_page_cpu_mru(gpa->local_page, cpu);
+	emp_list_add_tail(&gpa->local_page->lru_list, list);
+	emp_list_unlock(list);
+	gpa->r_state = GPA_ACTIVE;
+	set_gpa_flags_if_unset(gpa, GPA_PREFETCHED_BLK_MASK);
+	set_gpa_flags_if_unset(gpa, GPA_PREFETCH_ONCE_MASK);
+	atomic_add(gpa_block_size(gpa), &target->page_len);
+}
+
 /**
  * wait_writeback_async - Pop a writeback request and clear it
  * @param bvma bvma data structure
@@ -602,17 +618,27 @@ static void clear_writeback_block(struct emp_mm *bvma, struct emp_gpa *head,
 static int 
 wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, bool prefetch)
 {
-	int ret = 0;
-	struct work_request *w = pop_writeback_request(bvma, cpu);
-	if (w) {
+	struct work_request *w;
+	int ret;
+	struct emp_gpa *head;
+retry:
+	w = pop_writeback_request(bvma, cpu);
+	if (!w)
+		return 0;
+	else {
 		/* NOTE: __clear_writeback_block() frees @w. Backup the block
 		 *       head that need to be unlocked. */
-		struct emp_gpa *head = emp_get_block_head(w->gpa);
+		head = emp_get_block_head(w->gpa);
 		debug_progress(w, list_empty(&w->subsibling));
 		ret = __clear_writeback_block(bvma, w, cpu, prefetch, true);
+		if (is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
+			__promote_gpa(bvma, cpu->id, head);
+			emp_unlock_block(head);
+			goto retry;
+		}
 		emp_unlock_block(head);
+		return ret;
 	}
-	return ret;
 }
 
 /**
@@ -627,21 +653,25 @@ static int wait_writeback_async_steal(struct emp_mm *emm, struct vcpu_var *waiti
 	int c;
 	struct vcpu_var *v;
 	struct work_request *w = NULL;
+	struct emp_gpa *head;
+	int ret;
 
 	for_all_vcpus_from(v, c, waiting_cpu, emm) {
+retry:
 		w = pop_writeback_request(emm, v);
-		if (w) break;
-	}
-
-	if (!w)
-		return 0;
-	else {
-		struct emp_gpa *head = emp_get_block_head(w->gpa);
-		int ret = __clear_writeback_block(emm, w, waiting_cpu,
-								false, true);
+		if (!w)
+			continue;
+		head = emp_get_block_head(w->gpa);
+		ret = __clear_writeback_block(emm, w, waiting_cpu, false, true);
+		if (is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
+			__promote_gpa(emm, waiting_cpu->id, head);
+			emp_unlock_block(head);
+			goto retry; // retry the same cpu
+		}
 		emp_unlock_block(head);
 		return ret;
 	}
+	return 0;
 }
 
 static inline void
