@@ -337,6 +337,8 @@ struct emp_vm_ops {
 				pmd_t *pmd, bool, bool);
 	void (*sync_hpt_map_in_block)(struct emp_mm *emm,
 				struct emp_gpa *head, const bool is_write);
+	void (*clear_gpa_prefetched_hpt)(struct emp_mm *emm, struct emp_vmr *vmr,
+				struct emp_gpa *head, unsigned long head_idx);
 };
 
 // ops to create/distruct a memory region

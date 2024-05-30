@@ -1874,6 +1874,7 @@ int gpa_init(struct emp_mm *emm)
 	emm->vops.free_gpa = free_gpa;
 	emm->vops.set_gpa_remote = set_gpa_remote;
 	emm->vops.sync_hpt_map_in_block = sync_hpt_map_in_block;
+	emm->vops.clear_gpa_prefetched_hpt = clear_gpa_prefetched_hpt;
 
 #ifdef CONFIG_EMP_BLOCK
 	printk("GPA block: %d pages subblock: %d pages\n", 

@@ -1295,24 +1295,6 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 	return ret;
 }
 
-static inline void
-__clear_gpa_prefetched_hpt(struct emp_mm *emm, struct emp_vmr *vmr,
-				struct emp_gpa *head, unsigned long head_idx)
-{
-	unsigned long sb_off = head_idx + (head->local_page->demand_offset
-						>> bvma_subblock_order(emm));
-	struct emp_gpa *demand = get_gpadesc(vmr, sb_off);
-	unsigned long va = GPN_OFFSET_TO_HVA(vmr, sb_off,
-						gpa_subblock_order(demand));
-	struct vm_fault vmf = {
-		.vma = vmr->host_vma,
-		.pgoff = GPN_OFFSET(emm, HVA_TO_GPN(emm, vmr, va)),
-		.address = va,
-		.prealloc_pte = NULL,
-	};
-	emp_page_fault_hptes_map(emm, vmr, head, demand, 0, true, &vmf, true);
-}
-
 /* @retval 1 head gpa has been unlocked and re-locked.
  * @retval 0 head gpa remained locked.
  */
@@ -1332,7 +1314,7 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 		debug_assert(is_gpa_flags_set(head, GPA_EPT_MASK) == false);
 #endif
 		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
-			__clear_gpa_prefetched_hpt(emm, vmr, head, head_idx);
+			clear_gpa_prefetched_hpt(emm, vmr, head, head_idx);
 #ifdef CONFIG_EMP_EXT
 			check_map = true;
 #endif

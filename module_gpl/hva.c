@@ -504,6 +504,23 @@ void sync_hpt_map_in_block(struct emp_mm *emm, struct emp_gpa *head,
 	}
 }
 
+void clear_gpa_prefetched_hpt(struct emp_mm *emm, struct emp_vmr *vmr,
+				struct emp_gpa *head, unsigned long head_idx)
+{
+	unsigned long sb_off = head_idx + (head->local_page->demand_offset
+						>> bvma_subblock_order(emm));
+	struct emp_gpa *demand = get_gpadesc(vmr, sb_off);
+	unsigned long va = GPN_OFFSET_TO_HVA(vmr, sb_off,
+						gpa_subblock_order(demand));
+	struct vm_fault vmf = {
+		.vma = vmr->host_vma,
+		.pgoff = GPN_OFFSET(emm, HVA_TO_GPN(emm, vmr, va)),
+		.address = va,
+		.prealloc_pte = NULL,
+	};
+	emp_page_fault_hptes_map(emm, vmr, head, demand, 0, true, &vmf, true);
+}
+
 /**
  * __emp_page_fault_hva - (*Entry Point*) Host page fault handling function
  * @param vma virtual memory address space structure

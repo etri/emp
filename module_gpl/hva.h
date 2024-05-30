@@ -9,6 +9,8 @@ int emp_page_fault_hptes_map(struct emp_mm *, struct emp_vmr *,
 			struct emp_gpa *, struct emp_gpa *, unsigned long,
 			bool, struct vm_fault *, bool);
 void sync_hpt_map_in_block(struct emp_mm *, struct emp_gpa *, const bool);
+void clear_gpa_prefetched_hpt(struct emp_mm *emm, struct emp_vmr *vmr,
+				struct emp_gpa *head, unsigned long head_idx);
 
 pmd_t *get_pmd(struct mm_struct *, unsigned long, pmd_t **);
 vm_fault_t emp_page_fault_hva(struct vm_fault *);
