@@ -62,6 +62,7 @@ static inline struct list_head *emp_list_head(struct emp_list *list) {
 
 #define emp_list_for_each(cur, emp_list) list_for_each(cur, emp_list_head(emp_list))
 #define emp_list_for_each_safe(cur, n, emp_list) list_for_each_safe(cur, n, emp_list_head(emp_list))
+#define temp_list_for_each(cur, temp_list) list_for_each(cur, temp_list_head(temp_list))
 #define temp_list_for_each_safe(cur, n, temp_list) list_for_each_safe(cur, n, temp_list_head(temp_list))
 
 static inline struct list_head *emp_list_pop_head(struct emp_list *list)
@@ -222,6 +223,10 @@ struct slru {
 		struct emp_list **host_mru;
 	};
 };
+
+#ifndef emp_pc_ptr
+#define emp_pc_ptr(array, cpu) (array[cpu])
+#endif
 
 #ifdef CONFIG_EMP_VM
 #define get_list_ptr_mru(emm, slru, cpu_id) \
