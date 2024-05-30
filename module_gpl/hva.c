@@ -95,7 +95,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 
 #ifdef CONFIG_EMP_BLOCK
 	if (csf && fetch && !prefetched_gpa
-			& !is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK)) {
+			&& !is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK)) {
 		if (cpf) {
 			/* waiting only for demand page */
 			int fallback;
