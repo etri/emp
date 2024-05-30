@@ -814,7 +814,7 @@ struct emp_ext {
 	int (*emp_mmap)(struct emp_vmr *);
 	void (*emp_vma_open)(struct emp_vmr *);
 	void (*emp_vma_close)(struct emp_vmr *);
-	int (*emp_unlocked_ioctl)(struct emp_mm *, unsigned int, unsigned long);
+	long (*emp_unlocked_ioctl)(struct emp_mm *, unsigned int, unsigned long);
 	int (*emp_fsync)(struct emp_mm *, loff_t, loff_t, int);
 	void (*create_mr)(struct memreg *);
 	void (*disconnect_mr)(struct memreg *);
