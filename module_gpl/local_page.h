@@ -66,9 +66,9 @@ struct local_page {
 		long data;
 	} debug_lru_history[DEBUG_LRU_SIZE];
 	unsigned long debug_lru_next;
-	struct emp_gpa *gpa;
 #endif
 #ifdef CONFIG_EMP_DEBUG
+	struct emp_gpa *gpa;
 	struct emp_mm *emm;
 	unsigned long page_pfn;
 #endif

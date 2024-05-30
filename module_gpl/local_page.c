@@ -207,12 +207,12 @@ alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
 	emp_set_pg_mlocked(page, page_order);
 	page->private = (unsigned long) gpa;
 #ifdef CONFIG_EMP_DEBUG_LRU_LIST
-	local_page->gpa = gpa;
 	spin_lock(&bvma->ftm.local_page_list_lock);
 	list_add(&local_page->elem, &bvma->ftm.local_page_list);
 	spin_unlock(&bvma->ftm.local_page_list_lock);
 #endif
 #ifdef CONFIG_EMP_DEBUG
+	local_page->gpa = gpa;
 	local_page->emm = bvma;
 #endif
 
