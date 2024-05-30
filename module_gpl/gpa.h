@@ -35,7 +35,8 @@ enum gpa_flags {
 	GPA_io_write_page = 15,
 	GPA_io_in_progress = 16,
 #endif
-	NUM_GPA_FLAGS = 17,
+	GPA_promote = 17,
+	NUM_GPA_FLAGS = 18,
 };
 
 #define GPA_TOUCHED_MASK    (1 << GPA_touched)
@@ -65,6 +66,7 @@ enum gpa_flags {
 #define GPA_IO_MASK         (GPA_IO_READ_MASK | GPA_IO_WRITE_MASK | \
                                 GPA_IO_IP_MASK)
 #endif
+#define GPA_PROMOTE_MASK      (1 << GPA_promote)
 #ifdef CONFIG_EMP_VM
 #define GPA_LOWMEM_BLOCK_MASK (1 << GPA_lowmemory_block)
 #endif
