@@ -670,21 +670,40 @@ static inline struct emp_vmr *
 emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 {
 	int p, count;
-	if (emm->last_vmr && (VA_IN_VMR(emm->last_vmr, hva)))
-		return emm->last_vmr;
+	struct emp_vmr *vmr = emm->last_vmr;
+#ifdef CONFIG_EMP_USER
+	struct emp_vmr *vmr_diff_mm = NULL;
+	struct mm_struct *mm = current->mm;
+	if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, hva))
+		return vmr;
+#else
+	if (vmr && VA_IN_VMR(vmr, hva))
+		return vmr;
+#endif
 
 	p = 0;
 	count = 0;
 	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
 		if (count++ >= emm->vmrs_len)
 			break;
-		if (VA_IN_VMR(emm->vmrs[p], hva)) {
-			emm->last_vmr = emm->vmrs[p];
-			return emm->vmrs[p];
+		vmr = emm->vmrs[p];
+		if (VA_IN_VMR(vmr, hva)) {
+#ifdef CONFIG_EMP_USER
+			if (vmr->host_mm != mm) {
+				vmr_diff_mm = vmr;
+				continue;
+			}
+#endif
+			emm->last_vmr = vmr;
+			return vmr;
 		}
 	}
 
+#ifdef CONFIG_EMP_USER
+	return vmr_diff_mm;
+#else
 	return NULL;
+#endif
 }
 
 static inline void
