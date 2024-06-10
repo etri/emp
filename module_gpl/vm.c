@@ -1379,7 +1379,12 @@ static const struct file_operations emp_fops = {
 	.fsync		= emp_fsync,
 };
 
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 3)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0))
+static int emp_uevent(const struct device *dev, struct kobj_uevent_env *env)
+#else
 static int emp_uevent(struct device *dev, struct kobj_uevent_env *env)
+#endif
 {
 	add_uevent_var(env, "DEVMODE=%#o", 0666);
 	return 0;
