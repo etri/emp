@@ -527,8 +527,8 @@ static int create_conn(struct emp_mm *emm, struct connection **connection,
 	conn->n_contexts++;
 
 	/* open a block device by path */
-	bdev = blkdev_get_by_path(donor->path, O_RDONLY, NULL);
-	if(IS_ERR(bdev)) {
+	bdev = emp_blkdev_get_by_path(donor->path, O_RDONLY);
+	if(IS_ERR_OR_NULL(bdev)) {
 		printk(KERN_ERR "failed to open block device\n");
 		ret = -EINVAL;
 		goto open_blkdev_error;

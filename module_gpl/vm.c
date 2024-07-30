@@ -1487,7 +1487,7 @@ static int __init emp_init(void)
 		goto err;
 	}
 
-	emp_class = class_create(THIS_MODULE, EMP_DEVICE_NAME);
+	emp_class = emp_class_create(THIS_MODULE, EMP_DEVICE_NAME);
 	emp_class->dev_uevent = emp_uevent;
 
 	err_dev = device_create(emp_class, NULL, MKDEV(emp_major, 0),

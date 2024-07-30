@@ -538,7 +538,7 @@ void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 	for_each_gpas_index(gpa, subidx, head) {
 		idx = head_idx + subidx;
 		____gpa_to_hva_and_len(vmr, gpa, idx, hva, page_len);
-		pte = pte_offset_map(pmd, hva);
+		pte = emp_pte_offset_map(pmd, hva);
 		for (i = 0, _pte = pte, _hva = hva;
 				i < page_len;
 				i++, _pte++, _hva += PAGE_SIZE) {
@@ -570,7 +570,7 @@ __get_pte_val(struct emp_vmr *vmr, pmd_t *pmdp, unsigned long hva)
 	/* NOTE: don't touch *pmdp if vmr->vmr_closing == true. */
 	if (vmr->vmr_closing || pmdp == NULL || pmd_none(*pmdp) || hva == 0UL)
 		return 0;
-	ptep = pte_offset_map(pmdp, hva);
+	ptep = emp_pte_offset_map(pmdp, hva);
 	return ptep ? ((unsigned long) ptep->pte) : 0UL;
 }
 
@@ -2141,7 +2141,7 @@ void debug_handle_active_fault_handled(struct emp_vmr *vmr, struct emp_gpa *head
 		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
 		BUG_ON(pmd == NULL);
 		hva = local_gpa_to_hva(vmr, gpa);
-		ptep = pte_offset_map(pmd, hva);
+		ptep = emp_pte_offset_map(pmd, hva);
 		pfn_pte = pte_pfn(*ptep);
 		BUG_ON(pfn_pte == 0);
 		pfn_page = page_to_pfn(gpa->local_page->page);

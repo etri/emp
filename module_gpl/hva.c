@@ -176,7 +176,7 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 
 	debug_pte_install(page, page_len);
 
-	pte = pte_offset_map(pmd, haddr);
+	pte = emp_pte_offset_map(pmd, haddr);
 	// now, empty pte is guaranteed
 	for (i = 0, _pte = pte, _page = page;
 		i < page_len; i++, _pte++, _page++, haddr += PAGE_SIZE) {

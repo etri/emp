@@ -892,7 +892,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 						DEBUG_RSS_SUB_UNMAP_PTES,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 
-		ptep = pte_offset_map(pmd, hva);
+		ptep = emp_pte_offset_map(pmd, hva);
 		pfn = pte_pfn(*ptep);
 
 		pte_clear_count = 0;
@@ -1179,7 +1179,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	debug_BUG_ON(is_gpa_flags_set(gpa, GPA_LOWMEM_BLOCK_MASK));
 #endif
 
-	ptep = pte_offset_map(pmd, hva);
+	ptep = emp_pte_offset_map(pmd, hva);
 	pfn = pte_pfn(*ptep);
 	page = gpa->local_page->page;
 	for (i = 0; i < page_len; i++, hva += PAGE_SIZE, ptep++, pfn++, page++) {
