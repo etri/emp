@@ -705,7 +705,7 @@ u64 hva_to_gpa(struct emp_mm *bvma, u64 hva, struct kvm_memory_slot **ms)
 		return gpa;
 
 	idx = srcu_read_lock(&bvma->ekvm.kvm->srcu);
-	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+	for (i = 0; i < kvm_nr_memslot(bvma->ekvm.kvm); i++) {
 		slots = __kvm_memslots(bvma->ekvm.kvm, i);
 		emp_kvm_for_each_memslot(memslot, bkt, slots) {
 			if (hva >= (memslot->userspace_addr + 

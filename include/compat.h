@@ -54,6 +54,15 @@
 #define kvm_get_any_vcpu(kvm) (kvm_get_vcpu(kvm, 0))
 #endif
 
+/* After RHEL 9.4 or kernel 6.8.0, KVM_ADDRESS_SPACE_NUM is removed. */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0))
+	// RHEL_RELEASE_VERSION >= 9.4 or KERNEL_VERSION >= 6.8.0
+#define kvm_nr_memslot(kvm) kvm_arch_nr_memslot_as_ids(kvm)
+#else
+#define kvm_nr_memslot(kvm) (KVM_ADDRESS_SPACE_NUM)
+#endif
+
 /* After RHEL 9.4 or kernel 6.2.0, mm->rss_stat is a percpu_counter.
  * After RHEL 9.0 or kernel 5.18.0, we use atomic_long_add() only. */
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \
