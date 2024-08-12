@@ -794,14 +794,18 @@ _emp_page_fault_hva_fetch_posted:
 
 #ifndef CONFIG_EMP_HVA_CLEAN_OPT
 #ifdef CONFIG_EMP_EXT
-	// XXX we must set the block as dirty???
-	if (!set_gpa_flags_if_unset(head, GPA_DIRTY_MASK)) {
-		/* if the previous value is DIRTY, do not notify. */
-		if (emp_ext.emp_set_block_dirty_notifier)
-			emp_ext.emp_set_block_dirty_notifier(head);
+	if (vmf_write_fault(vmf)) {
+		// XXX we must set the block as dirty???
+		if (!set_gpa_flags_if_unset(head, GPA_DIRTY_MASK)) {
+			/* if the previous value is DIRTY, do not notify. */
+			if (emp_ext.emp_set_block_dirty_notifier)
+				emp_ext.emp_set_block_dirty_notifier(head);
+		}
 	}
 #else
-	set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
+	if (vmf_write_fault(vmf)) {
+		set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
+	}
 #endif
 #endif /* !CONFIG_EMP_HVA_CLEAN_OPT */
 
