@@ -488,34 +488,44 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 #endif
 }
 
+static void __prepare_gpadesc_alloc(struct emp_mm *emm, int order)
+{
+	struct kmem_cache *cachep;
+	char name[32];
+	gpadesc_alloc_lock(emm);
+	cachep = __get_gpadesc_alloc(emm, order);
+	gpadesc_alloc_unlock(emm);
+	if (cachep)
+		return;
+	snprintf(name, sizeof(name), "gpadesc_alloc%d-%d", emm->id, order);
+	/* With the align in 3rd parameter, the offset in the block can
+	 * be calculated by the memory address.
+	 */
+	cachep = emp_kmem_cache_create(name,
+					sizeof(struct emp_gpa) << order,
+					sizeof(struct emp_gpa) << order,
+					0, NULL);
+	gpadesc_alloc_lock(emm);
+	if (__get_gpadesc_alloc(emm, order))
+		/* somebody filled it */
+		emp_kmem_cache_destroy(cachep);
+	else
+		set_gpadesc_alloc(emm, order, cachep);
+	gpadesc_alloc_unlock(emm);
+}
+
 static void prepare_gpadesc_alloc(struct emp_mm *emm, struct emp_vmdesc *desc)
 {
 	int r;
 	int order;
-	struct kmem_cache *cachep;
 
 	for (r = 0; r < desc->num_region; r++) {
 		order = desc->regions[r].block_order - bvma_subblock_order(emm);
-		gpadesc_alloc_lock(emm);
-		cachep = __get_gpadesc_alloc(emm, order);
-		gpadesc_alloc_unlock(emm);
-		if (cachep)
-			continue;
-		/* With the align in 3rd parameter, the offset in the block can
-		 * be calculated by the memory address.
-		 */
-		cachep = emp_kmem_cache_create("gpadesc_alloc",
-						sizeof(struct emp_gpa) << order,
-						sizeof(struct emp_gpa) << order,
-						0, NULL);
-		gpadesc_alloc_lock(emm);
-		if (__get_gpadesc_alloc(emm, order))
-			/* somebody filled it */
-			emp_kmem_cache_destroy(cachep);
-		else 
-			set_gpadesc_alloc(emm, order, cachep);
-		gpadesc_alloc_unlock(emm);
+		__prepare_gpadesc_alloc(emm, order);
 	}
+
+	/* __split_vmdesc() may require desc_order==0 */
+	__prepare_gpadesc_alloc(emm, 0);
 }
 
 #define PAGE_ROUND_UP(s) ((s + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
