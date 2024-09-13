@@ -15,6 +15,7 @@
 #define IOCTL_SET_DRAM      0x1000B
 #define IOCTL_FINI_CONN	    0x1000D
 #define IOCTL_EMP_PREFETCH  0x1000E
+#define IOCTL_EMP_PINNING	0x1000F
 
 #ifndef __KERNEL__
 #include <netinet/in.h>
@@ -62,6 +63,11 @@ struct donor_info {
 };
 
 struct emp_prefetch {
+	unsigned long addr;
+	unsigned long size;
+};
+
+struct emp_pinning {
 	unsigned long addr;
 	unsigned long size;
 };

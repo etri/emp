@@ -174,6 +174,20 @@ static long __emp_prefetch(struct emp_mm *emm, unsigned long ioctl_param)
 	return emp_blk_prefetch(emm, pf_info.addr, pf_info.size);
 }
 
+static long __emp_pinning(struct emp_mm *emm, unsigned long ioctl_param)
+{
+	size_t size;
+	struct emp_pinning pf_info;
+	size = copy_from_user(&pf_info,
+			(struct emp_pinning *) ioctl_param,
+			sizeof(struct emp_pinning));
+	if (size) {
+		printk("failed: copy_from_user: pinning_info %ld\n", size);
+		return -EINVAL;
+	}
+	return 1;
+}
+
 /**
  * emp_unlocked_ioctl - Provide a communication channel between QEMU and EMP module
  * @param file device file
@@ -245,6 +259,10 @@ long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
 #endif
 		case IOCTL_EMP_PREFETCH:
 			ret = __emp_prefetch(emm, ioctl_param);
+			break;
+
+		case IOCTL_EMP_PINNING:
+			ret = __emp_pinning(emm, ioctl_param);
 			break;
 
 		default:

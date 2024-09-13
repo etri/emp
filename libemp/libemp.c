@@ -16,6 +16,8 @@
 #include <libemp_cuda.h>
 #include <env.h>
 
+#define MADV_EMP_PINNING 30  //parameters of MADV_* is in linux [0,24]
+
 static int empfd = -1;
 
 int verbose = 0;
@@ -44,8 +46,8 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 
 int madvise(void *addr, size_t length, int advise) {
 	struct emp_prefetch pf_info;
-	print_verbose("[libemp] empfd: %d addr: %lx length: %lx advise: %d\n",
-			empfd, (unsigned long) addr, length, advise);
+	print_verbose("[libemp - madvise] empfd: %d addr: %lx length: %d %x advise: %d\n",
+			empfd, (unsigned long) addr, length, length, advise);
 
 	if (!LIBEMP_READY)
 		goto fallback;
@@ -62,6 +64,12 @@ int madvise(void *addr, size_t length, int advise) {
 				return 0;
 			break;
 	case MADV_DONTNEED:
+			break;
+	case MADV_EMP_PINNING:
+			pf_info.addr = (unsigned long) addr;
+			pf_info.size = length;
+			if (ioctl(empfd, IOCTL_EMP_PINNING, &pf_info) == 0)
+				return 0;
 			break;
 	default:
 			break;
