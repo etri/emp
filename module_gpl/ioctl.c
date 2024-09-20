@@ -4,7 +4,7 @@
 #include "vm.h"
 #include "iov.h"
 #include "donor_mgmt.h"
-#include "blk_prefetch.h"
+#include "emp_madvise.h"
 
 /**
  * realloc_donor_info - Allocate donor's memory info
@@ -160,32 +160,52 @@ static long __reg_mem_region(struct emp_mm *emm, unsigned long ioctl_param)
 }
 #endif
 
-static long __emp_prefetch(struct emp_mm *emm, unsigned long ioctl_param)
+static long __emp_madvise(struct emp_mm *emm, unsigned long ioctl_param)
 {
 	size_t size;
-	struct emp_prefetch pf_info;
-	size = copy_from_user(&pf_info,
-			(struct emp_prefetch *) ioctl_param,
-			sizeof(struct emp_prefetch));
+	struct emp_madv_info info;
+	size = copy_from_user(&info,
+			(struct emp_madv_info *) ioctl_param,
+			sizeof(struct emp_madv_info));
 	if (size) {
-		printk("failed: copy_from_user: prefetch_info %ld\n", size);
+		printk("failed: copy_from_user: madv_info %ld\n", size);
 		return -EINVAL;
 	}
-	return emp_blk_prefetch(emm, pf_info.addr, pf_info.size);
-}
 
-static long __emp_pinning(struct emp_mm *emm, unsigned long ioctl_param)
-{
-	size_t size;
-	struct emp_pinning pf_info;
-	size = copy_from_user(&pf_info,
-			(struct emp_pinning *) ioctl_param,
-			sizeof(struct emp_pinning));
-	if (size) {
-		printk("failed: copy_from_user: pinning_info %ld\n", size);
-		return -EINVAL;
+	switch (info.advice) {
+	// *** codes from posix ***
+	// case MADV_EMP_NORMAL: break;
+	// case MADV_EMP_RANDOM: break;
+	// case MADV_EMP_SEQUENTIAL: break;
+	case MADV_EMP_WILLNEED:
+			return emp_blk_prefetch(emm, info.addr, info.size);
+	// case MADV_EMP_DONTNEED: break;
+
+	// *** codes from linux ***
+	// case MADV_EMP_REMOVE: break;
+	// case MADV_EMP_DONTFORK: break;
+	// case MADV_EMP_DOFORK: break;
+	// case MADV_EMP_HWPOISON: break;
+	// case MADV_EMP_MERGEABLE: break;
+	// case MADV_EMP_UNMERGEABLE: break;
+	// case MADV_EMP_SOFT_OFFLINE: break;
+	// case MADV_EMP_HUGEPAGE: break;
+	// case MADV_EMP_NOHUGEPAGE: break;
+	// case MADV_EMP_DONTDUMP: break;
+	// case MADV_EMP_DODUMP: break;
+	// case MADV_EMP_FREE: break;
+	// case MADV_EMP_WIPEONFORK: break;
+	// case MADV_EMP_KEEPONFORK: break;
+	// case MADV_EMP_COLD: break;
+	// case MADV_EMP_PAGEOUT: break;
+
+	// *** EMP only codes ***
+	// case MADV_EMP_PIN: break;
+	// case MADV_EMP_UNPIN: break;
+
+	default:
+			return -EINVAL;
 	}
-	return 1;
 }
 
 /**
@@ -257,12 +277,8 @@ long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
 			ret = __reg_mem_region(emm, ioctl_param);
 			break;
 #endif
-		case IOCTL_EMP_PREFETCH:
-			ret = __emp_prefetch(emm, ioctl_param);
-			break;
-
-		case IOCTL_EMP_PINNING:
-			ret = __emp_pinning(emm, ioctl_param);
+		case IOCTL_EMP_MADV:
+			ret = __emp_madvise(emm, ioctl_param);
 			break;
 
 		default:

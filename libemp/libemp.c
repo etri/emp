@@ -44,39 +44,23 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 	return real_mmap(addr, length, prot, flags, fd, offset);
 }
 
-int madvise(void *addr, size_t length, int advise) {
-	struct emp_prefetch pf_info;
-	print_verbose("[libemp - madvise] empfd: %d addr: %lx length: %d %x advise: %d\n",
-			empfd, (unsigned long) addr, length, length, advise);
+int madvise(void *addr, size_t length, int advice) {
+	struct emp_madv_info madv_info;
+	print_verbose("[libemp - madvise] empfd: %d addr: %lx length: %d %x advice: %d\n",
+			empfd, (unsigned long) addr, length, length, advice);
 
 	if (!LIBEMP_READY)
 		goto fallback;
 
-	switch (advise) {
-	case MADV_NORMAL:
-	case MADV_RANDOM:
-	case MADV_SEQUENTIAL:
-			break;
-	case MADV_WILLNEED:
-			pf_info.addr = (unsigned long) addr;
-			pf_info.size = length;
-			if (ioctl(empfd, IOCTL_EMP_PREFETCH, &pf_info) == 0)
-				return 0;
-			break;
-	case MADV_DONTNEED:
-			break;
-	case MADV_EMP_PINNING:
-			pf_info.addr = (unsigned long) addr;
-			pf_info.size = length;
-			if (ioctl(empfd, IOCTL_EMP_PINNING, &pf_info) == 0)
-				return 0;
-			break;
-	default:
-			break;
-	}
+	madv_info.addr = (unsigned long) addr;
+	madv_info.size = length;
+	madv_info.advice = advice;
+
+	if (ioctl(empfd, IOCTL_EMP_MADV, &madv_info) == 0)
+		return 0;
 
 fallback:
-	return real_madvise(addr, length, advise);
+	return real_madvise(addr, length, advice);
 }
 
 #define GET_NEXT_SYMBOL(ptr, name) ({ \
