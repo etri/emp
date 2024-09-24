@@ -483,10 +483,10 @@ static void emp_vma_close(struct vm_area_struct *vma)
 						(atomic64_t *) &((gpa_dir)[idx]), \
 						(s64) NULL, (s64) (new)); \
 	if (unlikely(____g != NULL)) \
-		dprintk_ratelimited(KERN_ERR "%s: race at set_gpa_dir_new() " \
+		dprintk_ratelimited(KERN_ERR "%s(%s:%d): race at set_gpa_dir() " \
 				"is detected. vmr: %d index: 0x%lx " \
 				"new: 0x%016lx prev: 0x%016lx\n", \
-				__func__, (vmr)->id, (idx), \
+				__func__, __FILE__, __LINE__,(vmr)->id, (idx), \
 				(unsigned long) (new), (unsigned long) ____g); \
 	____g; \
 })
@@ -499,47 +499,48 @@ static void emp_vma_close(struct vm_area_struct *vma)
 					(atomic64_t *) &((gpa_dir)[idx]), \
 					(s64) (old), (s64) (new)); \
 	if (unlikely(____prev != (old))) \
-		printk_ratelimited(KERN_ERR "%s: race at change_gpa_dir() " \
+		printk_ratelimited(KERN_ERR "%s(%s:%d): race at replace_gpa_dir() " \
 				"is detected. vmr: %d index: 0x%lx " \
 				"old: 0x%016lx new: 0x%016lx prev: 0x%016lx\n", \
-				__func__, (vmr)->id, (idx), \
+				__func__, __FILE__, __LINE__, (vmr)->id, (idx), \
 				(unsigned long) old, (unsigned long) new, \
 				(unsigned long) ____prev); \
 } while (0)
 
 /* TODO: ZERO_BLOCK checking should be located on module_pro */
 #define ZERO_BLOCK (1 << 22)
-int split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_gpa *s, unsigned long index_head, struct emp_gpa *hs[], bool *subblock_locked)
+bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_gpa *s, unsigned long index_head, struct emp_gpa *hs[])
 {
 	struct emp_vmr *vmr;
 	struct emp_gpa *g, *r;
 	bool dirty_block;
 	unsigned int flag, _flag;
-	int sb_index, num_sb, curr_order;
-	int next_order = gpa_subblock_order(s);
-	unsigned int sb_order;
-	int hs_len = 1 << gpa_desc_order(s);
-	struct emp_gpa *gs[hs_len];
-	int block_order = gpa_block_order(s);
-	int desc_order = block_order - bvma_subblock_order(bvma);
-	struct kmem_cache *cachep = get_gpadesc_alloc(prev_vmr->emm, desc_order);
+	int sb_index, num_sb;
 	unsigned long index_gpa_dir;
 	unsigned long block_size;
+	int gs_len = 1 << gpa_desc_order(s);
+	struct emp_gpa *gs[gs_len];
+	int next_order, sb_order, block_order, desc_order;
+	struct kmem_cache *cachep;
 	struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
 
 	dprintk("%s head index = %d, flag = 0x%lx\n", __func__, index_head, get_gpa_flags(s));
 
+	next_order = gpa_subblock_order(s);
+	sb_order = gpa_subblock_order(s);
+	block_order = gpa_block_order(s);
+	desc_order = block_order - bvma_subblock_order(bvma);
+	cachep = get_gpadesc_alloc(prev_vmr->emm, desc_order);
+
 	if (is_gpa_flags_set(s, ZERO_BLOCK)) {
 		hs[0] = s;
-		return 0;
+		return false;
 	}
 
-	curr_order = gpa_block_order(s);
-	sb_order = gpa_subblock_order(s);
-	if (sb_order == curr_order) {
+	if (sb_order == block_order) {
 		// don't need to reduce block
 		hs[0] = s;
-		return 0;
+		return false;
 	}
 
 	if (s->local_page) {
@@ -557,12 +558,12 @@ int split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_
 #endif
 	}
 
+	// lock all subblock
 	for_each_gpas(g, s) {
 		if (g == s) {
 			continue;
 		}
 		__emp_lock_block(g);
-		*subblock_locked = true;
 	}
 
 	flag = get_gpa_flags(s) & ~ZERO_BLOCK;
@@ -588,6 +589,7 @@ int split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_
 	}
 
 	for (sb_index = 0, index_gpa_dir = index_head; sb_index < num_sb; sb_index++, index_gpa_dir++) {
+		/* allocate gpadesc of which desc_order is 0 */
 		r = alloc_gpadesc(prev_vmr->emm, 0);
 		if (unlikely(!r)) {
 			printk(KERN_ERR "ERROR: cannot allocate gpa descriptor. "
@@ -595,34 +597,28 @@ int split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_
 				bvma->id, 0);
 			goto reduce_fail;
 		}
+
 		g = gs[sb_index];
 		memcpy(r, g, sizeof(struct emp_gpa));
+
+		// upate local_page
 #ifdef CONFIG_EMP_DEBUG
 		r->local_page->gpa = r;
 #endif
 		r->local_page->gpa_index = index_gpa_dir;;
+
+		// store r in hs array which is used to unlock
 		hs[sb_index] = r;
-		dprintk("%s index_gpa_dir = %d new gpa = 0x%lx, old gpa = 0x%lx, new_gpa->local_page = 0x%lx old_gpa->local_page = 0x%lx, block_order = %d subblock_order = %d\n", __func__, index_gpa_dir, r, g, r->local_page, g->local_page, gpa_block_order(r), gpa_subblock_order(r));
-		//set_gpa_dir(new_vmr, new_vmr->descs->gpa_dir, index_gpa_dir, r);
-		//set_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, index_gpa_dir, r);
-		// TODO: set with new function
+
+		dprintk("%s BEFORE: index_gpa_dir = %ld new gpa = 0x%lx, old gpa = 0x%lx, new_gpa->local_page = 0x%lx old_gpa->local_page = 0x%lx, block_order = %d subblock_order = %d\n", __func__, index_gpa_dir, r, g, r->local_page, g->local_page, gpa_block_order(r), gpa_subblock_order(r));
+		/* set r to gpa_dir */
 		new_vmr->descs->gpa_dir[index_gpa_dir] = r;
 		prev_vmr->descs->gpa_dir[index_gpa_dir] = r;
+		// TODO: set gpa_dir with macro function
 		//replace_gpa_dir(new_vmr, new_vmr->descs->gpa_dir, index_gpa_dir, g, r);
 		//replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, index_gpa_dir, g, r);
-		//change_gpa_dir(new_vmr, new_vmr->descs->gpa_dir, index_gpa_dir, g, r);
-		//change_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, index_gpa_dir, g, r);
-		dprintk("%s index_gpa_dir = %d new dir = 0x%lx, old dir = 0x%lx\n", __func__, index_gpa_dir, new_vmr->descs->gpa_dir[index_gpa_dir], prev_vmr->descs->gpa_dir[index_gpa_dir]);
+		dprintk("%s  AFTER: index_gpa_dir = %ld new dir = 0x%lx, old dir = 0x%lx\n", __func__, index_gpa_dir, new_vmr->descs->gpa_dir[index_gpa_dir], prev_vmr->descs->gpa_dir[index_gpa_dir]);
 	}
-
-#ifdef CONFIG_EMP_DEBUG
-	// upate local_page's gpa
-	for (sb_index = 0; sb_index < num_sb; sb_index++) {
-		if (hs[sb_index]->local_page) {
-			hs[sb_index]->local_page->gpa = hs[sb_index];
-		}
-	}
-#endif
 
 	// add  all blocks to lru
 	for (sb_index = 0; sb_index < num_sb; sb_index++) {
@@ -642,7 +638,7 @@ int split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_
 	// free the old block
 	emp_kmem_cache_free(cachep, gs[0]);
 
-	return 1;
+	return true;
 
 reduce_fail:
 	{
@@ -650,9 +646,8 @@ reduce_fail:
 		for (g = s + 1; g < e; g++)
 			__emp_unlock_block(g);
 	}
-	*subblock_locked = false;
 
-	return 0;
+	return false;
 }
 
 static inline void split_sort_boundaries(unsigned long *boundary, int num_boundary)
@@ -993,7 +988,7 @@ static inline void split_copy_pages(struct page *dst, struct page *src, int offs
 	void *from, *to;
 	int i;
 
-	printk(KERN_INFO "%s offset=%d len=%d\n", __func__, offset, len);
+	printk(KERN_INFO "%s offset = %d len = %d\n", __func__, offset, len);
 
 	preempt_disable();
 	pagefault_disable();
@@ -1032,7 +1027,6 @@ unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_v
 	// get gpa
 	front_gpa = front_vmr->descs->gpa_dir[split_index];
 	back_gpa = back_desc->gpa_dir[split_index];
-
 
 	va_sb_order = bvma_va_subblock_order(emm);
 	vm_start = VA_ROUND_DOWN_ORDER(back_vmr->vm_start, va_sb_order);
@@ -1099,13 +1093,10 @@ unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_v
 	back_gpa->local_page->gpa = back_gpa;
 #endif
 	back_gpa->local_page->gpa_index = split_index;
+	back_gpa->local_page->vmr_id = back_vmr->id;
 
 	// upadate pmd
-	debug_lru_del_vmr_id_mark(back_gpa->local_page, back_vmr->id);
-	if (back_gpa->local_page->vmr_id == front_vmr->id) {
-		back_gpa->local_page->vmr_id = back_vmr->id;
-		debug_lru_set_vmr_id_mark(back_gpa->local_page, back_vmr->id);
-	}
+	debug_lru_set_vmr_id_mark(back_gpa->local_page, back_vmr->id);
 	emp_lp_insert_pmd(emm, back_gpa->local_page, back_vmr->id, pmd);
 	debug_lru_add_vmr_id_mark(back_gpa->local_page, back_vmr->id);
 	debug_page_ref_dup_end(back_gpa->local_page);
@@ -1124,32 +1115,40 @@ unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_v
 	return offset;
 
 }
+
 void  __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_vmr *front_vmr, struct emp_vmr *back_vmr, unsigned long split_addr, struct emp_gpa *split_head, unsigned long split_head_index, unsigned long split_index, pmd_t *pmd)
 {
 	struct emp_mm *emm = new_vmr->emm;
-	struct emp_gpa *new_head = NULL;
 	struct emp_gpa *front_gpa, *back_gpa;
-	unsigned long offset = 0;
 	int hs_len = 1 << (bvma_block_order(emm) - bvma_subblock_order(emm));
 	struct emp_gpa *hs[hs_len];
 	int num_subblock = num_subblock_in_block(split_head);
 	int sb_index;
-	bool subblock_locked = false;
-	int reduced = 0;
+	unsigned long addr;
+	unsigned long pg_len = 0;
+	unsigned long length = 0;
+	unsigned long offset = 0;
+	bool reduced = false;
 
-	new_head = NULL;
-	subblock_locked = false;
+	dprintk("%s new_vmr = %d prev_vmr = %d, front_vmr = %d, back_vmr = %d, split_head_index = %d, split_index = %d\n", __func__, new_vmr->id, prev_vmr->id, front_vmr->id, back_vmr->id, split_head_index, split_index);
+	// get split gpa's page length
+	____gpa_to_hva_and_len(prev_vmr, prev_vmr->descs->gpa_dir[split_index], split_index, addr, pg_len);
 
 	// reduce block
-	reduced = split_reduce_block(emm, new_vmr, prev_vmr, split_head, split_head_index, hs, &subblock_locked);
+	reduced = split_reduce_block(emm, new_vmr, prev_vmr, split_head, split_head_index, hs);
 
-	// split shared subblock between new_vmr and prev_vmr
-	// split addr == back_vmr->host_vma->vm_start
-	// front_index ==  back_index
+	/* 
+	 * split shared subblock between new_vmr and prev_vmr
+	 * split addr == back_vmr->host_vma->vm_start
+	 */
 	if (split_addr & bvma_va_subblock_mask(emm)) {
-		// alloc new gpa for back_vmr
+		/* 
+		 * allocate new gpa, local_page and pages, and set them for back_vmr
+		 * front_vmr uses the existing gpa, local_page and pages
+		 */
+		// allocate gpadesc of which desc_order is 0 for back_vmr
 		back_gpa = alloc_gpadesc(emm, 0);
-		dprintk("%s back_gpa = %lx split_index = %d\n", __func__, back_gpa, split_index);
+		dprintk("%s alloc_gpadesc: back_gpa = %lx split_index = %d\n", __func__, back_gpa, split_index);
 		if (unlikely(!back_gpa)) {
 			printk(KERN_ERR "ERROR: cannot allocate gpa descriptor. "
 				"emm: %d desc_order: %d\n",
@@ -1159,13 +1158,17 @@ void  __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct 
 
 		// copy old gpa to new gpa
 		memcpy(back_gpa, back_vmr->descs->gpa_dir[split_index], sizeof(struct emp_gpa));
+
+		// set new gpa to back_vmr
 		back_vmr->descs->gpa_dir[split_index] = back_gpa;
 
-		// set back_gpa's local_page
-		//set_gpa_dir(new_vmr, new_vmr->descs->gpa_dir, index_start, new_gpa);
+		// alloc back_gpa's local_page and copy its pages
 		offset = split_local_page(front_vmr, back_vmr, split_index, pmd);
 
-		// update front_gpa
+		// free back_gpa's remote page value
+		set_gpa_remote_page_free(back_gpa);
+
+		/* update front_gpa */
 		front_gpa = front_vmr->descs->gpa_dir[split_index];
 		if (front_gpa->local_page) {
 #ifdef CONFIG_EMP_DEBUG
@@ -1184,15 +1187,31 @@ void  __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct 
 				debug_lru_add_vmr_id_mark(front_gpa->local_page, front_vmr->id);
 				debug_page_ref_dup_end(front_gpa->local_page);
 				debug_page_ref_mark_map(front_vmr->id, front_gpa->local_page);
+			}
+		}
 
-				//TODO
+		// update rss: whole page length is alreay added to new_vmr. 
+		if (offset) {
+			if (front_vmr == prev_vmr) {
 				emp_update_rss_sub_kernel(new_vmr, offset,
 					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
-					new_vmr->descs->gpa_dir[new_gpa_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+					new_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+				emp_update_rss_add_kernel(prev_vmr, offset,
+					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
+					prev_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+			} else {
+				length = pg_len - offset;
+				emp_update_rss_sub_kernel(new_vmr, length,
+					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
+					new_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+				emp_update_rss_add_kernel(prev_vmr, length,
+					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
+					prev_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
 			}
 		}
 
 		// copied back_gpa has locked value
+		debug_assert(back_vmr->id == back_gpa->local_page->vmr_id);
 		emp_unlock_block(back_gpa);
 	}
 
@@ -1241,7 +1260,7 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 		dprintk("%s prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %d, gpa_len = %d, num_region = %d\n",
 				__func__, prev_vmr->id, prev_vmr->vm_start, prev_vmr->vm_end, new_vmr->id, new_vmr->vm_start, new_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
-	} else if (new_vmr->vm_end == prev_vmr->vm_start){
+	} else if (new_vmr->vm_end == prev_vmr->vm_start) {
 		dprintk("%s new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %d, gpa_len = %d, num_region = %d\n",
 				__func__, new_vmr->id, new_vmr->vm_start, new_vmr->vm_end, prev_vmr->id, prev_vmr->vm_start, prev_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
@@ -1270,16 +1289,18 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 	prev_index_end = (prev_vpn_end - prev_vpn_base + bvma_subblock_size(emm) - 1)
 						>> bvma_subblock_order(emm);
 
-	// pre_fetch remote gpa which is shared between new_vmr and prev_vmr to split
+	dprintk("%s new_vmr(%d) index_start = %d index_end = %d prev_vmr(%d) prev_index_start = %d prev_index_end = %d\n",
+			__func__, new_vmr->id, index_start, index_end, prev_vmr->id, prev_index_start, prev_index_end);
+
+	split_head = NULL;
 	if (prev_vmr->vm_end == new_vmr->vm_start) { /* [prev_vmr] + [new_wmr] */
 		// find split block
-		if (((prev_index_end - 1) == index_start)
-				&& (raw_get_gpadesc(prev_vmr, prev_index_end - 1))!= NULL
+		if ((raw_get_gpadesc(prev_vmr, prev_index_end - 1)!= NULL)
 				&& (raw_get_gpadesc(prev_vmr, index_start) != NULL)) {
 
 			front_head = emp_get_block_head(prev_vmr->descs->gpa_dir[prev_index_end - 1]);
 			back_head = emp_get_block_head(prev_vmr->descs->gpa_dir[index_start]);
-			if (front_head ==  back_head) {
+			if (front_head == back_head) {
 				split_head = front_head;
 				split_index = index_start;
 			}
@@ -1287,19 +1308,19 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 	} else { /* [new_vmr] + [prev_wmr] */
 		// find split block
-		if (((index_end - 1) == prev_index_start)
-				&& (raw_get_gpadesc(prev_vmr, index_end - 1) != NULL)
+		if ((raw_get_gpadesc(prev_vmr, index_end - 1) != NULL)
 				&& (raw_get_gpadesc(prev_vmr, prev_index_start) != NULL)) {
 
 			front_head = emp_get_block_head(prev_vmr->descs->gpa_dir[index_end - 1]);
 			back_head = emp_get_block_head(prev_vmr->descs->gpa_dir[prev_index_start]);
-			if (front_head ==  back_head) {
+			if (front_head == back_head) {
 				split_head = front_head;
-				split_index = prev_index_start;
+				split_index = index_end - 1;
 			}
 		}
 	}
 
+	dprintk("%s spllit head = %016lx split index = %ld\n", __func__, split_head, split_index);
 	if (split_head) {
 		switch (split_head->r_state) {
 		case GPA_INIT:
@@ -1307,7 +1328,7 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			int r = 0;
 			struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
 
-			dprintk("%s split head in remote. spllit head = %lx split index = %d\n", __func__, split_head, split_index);
+			dprintk("%s split head in remote. spllit head = %016lx split index = %ld\n", __func__, split_head, split_index);
 			head_idx = emp_get_block_head_index(prev_vmr, split_index);
 			head = emp_lock_block(prev_vmr, NULL, head_idx);
 			debug_assert(head = split_head);
@@ -1321,7 +1342,8 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				set_gpa_flags_if_unset(head, GPA_HPT_MASK);
 				// update LRU lists
 #ifdef CONFIG_EMP_EXT
-				dprintk("%s update lru split_hed = %lx, split_index = %d\n", __func__, split_head, split_index);
+				dprintk("%s update lru split_hed = %016lx, split_index = %d\n",
+						__func__, split_head, split_index);
 				emp_ops.update_lru_lists(emm, cpu, &head, 1, gpa_block_size(head));
 #else
 				update_lru_lists(emm, cpu, &head, 1, gpa_block_size(head));
@@ -1330,19 +1352,20 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			emp_unlock_block(head);
 			break;
 		case GPA_INACTIVE:
+			dprintk("%s split head in inactive. spllit head = %016lx split index = %ld\n", __func__, split_head, split_index);
 			break;
 		case GPA_WB:
+			dprintk("%s split head in wb. spllit head = %016lx split index = %ld\n", __func__, split_head, split_index);
 			break;
 		default:
+			dprintk("%s split head in default(active). spllit head = %016lx split index = %ld\n", __func__, split_head, split_index);
 			break;
 		}
 	}
 
 
-
 	/* gpa_dir is initialized with zeros by emp_vzalloc(). */
 	//raw_for_all_gpa_heads_range(prev_vmr, head_idx, head, index_start, index_end) {
-
 	head_idx = index_start;
 	while(head_idx < index_end) {
 		head = get_next_exist_head_gpadesc(prev_vmr, &head_idx);
@@ -1355,7 +1378,6 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 		if (head == split_head) {
 			/* wait for prefetch completion */
-			//if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
 			if (is_gpa_flags_set(head, GPA_PREFETCHED_BLK_MASK)) {
 				emm->vops.clear_gpa_prefetched_hpt(emm, prev_vmr, head, head_idx);
 				clear_gpa_flags_if_set(head, GPA_PREFETCHED_BLK_MASK);
@@ -1370,20 +1392,6 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			}
 		}
 
-		if ((head == split_head) && INIT_BLOCK(head)) {
-			// wait prefetch
-			emp_unlock_block(head);
-			continue;
-		}
-
-		/* Consideration of elastic block
-		 * 1. If @head has been stretched to the next block,
-		 *    the next iteration moves @pos to the next of
-		 *    stretched block.
-		 * 2. If @head has been stretched to the previous block,
-		 *    the previous block was already handled and we
-		 *    should handle from @pos to the end of the block.
-		 */
 		idx = head_idx;
 		for_each_gpas(gpa, head) {
 #if 0
@@ -1400,6 +1408,8 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			idx++;
 		}
 
+		if (INIT_BLOCK(head))
+			goto next_head;
 
 		if (!ACTIVE_BLOCK(head)) {
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
@@ -1408,8 +1418,7 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			pmd = get_pmd(new_mm, vpn << PAGE_SHIFT, &pmd);
 			debug_check_page_map_status(new_vmr, head, head_idx, pmd, false);
 #endif
-			emp_unlock_block(head);
-			continue;
+			goto next_head;
 		}
 
 		vpn = (vpn_start & ~bvma_subblock_mask(emm))
@@ -1473,15 +1482,15 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				__split_gpadesc(new_vmr, prev_vmr, new_vmr, prev_vmr, new_vmr->vm_end, split_head, head_idx, index_end - 1, pmd);
 			}
 
+			// head is already unlocked in __split_gpadesc()
 			head_idx = next_head_idx;
 			continue;
 		}
 
+next_head:
 		emp_unlock_block(head);
-
 		head_idx = next_head_idx;
 	}
-
 }
 
 int split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
