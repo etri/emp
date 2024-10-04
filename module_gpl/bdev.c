@@ -424,48 +424,38 @@ emp_bdev_post_write(struct connection *conn, struct work_request *w,
 static int test_bdev(struct connection *conn)
 {
 	int ret = 0, i;
-	u64 *write_addr, *read_addr;
-	struct page *write_pg, *read_pg;
+	u64 *test_addr, *backup_addr;
+	struct page *test_pg, *backup_pg;
 	struct work_request w;
 	sector_t base[2];
 
-	write_pg = emp_alloc_page(GFP_KERNEL);
-	if (write_pg == NULL) {
+	test_pg = emp_alloc_page(GFP_KERNEL);
+	if (test_pg == NULL) {
 		ret = -1;
 		goto out;
 	}
 
-	read_pg = emp_alloc_page(GFP_KERNEL);
-	if (read_pg == NULL) {
+	backup_pg = emp_alloc_page(GFP_KERNEL);
+	if (backup_pg == NULL) {
 		ret = -1;
-		goto free_write_pg_out;
+		goto free_test_pg_out;
 	}
 
-	write_addr = page_address(write_pg);
-	read_addr = page_address(read_pg);
+	test_addr = page_address(test_pg);
+	backup_addr = page_address(backup_pg);
 
-	base[0] = PAGE_TO_BLOCK(MB_TO_PAGE(conn->base));
-	base[1] = MB_TO_PAGE(conn->base) + MB_TO_PAGE(conn->size);
-	base[1] = PAGE_TO_BLOCK(base[1] - 1);
+	/* Test the end side first. It's more error prone. */
+	base[0] = MB_TO_PAGE(conn->base) + MB_TO_PAGE(conn->size);
+	base[0] = PAGE_TO_BLOCK(base[0] - 1);
+	base[1] = PAGE_TO_BLOCK(MB_TO_PAGE(conn->base));
 
 	for (i = 0; i < 2; i++) {
-		// initialize the pages
-		write_deadbeef_page((unsigned long)write_addr, 0);
-		memset(read_addr, 0, PAGE_SIZE);
-
+		printk("Try to check the page on block %llx\n", (u64)base[i]);
+		// Backup the original contents
+		memset(backup_addr, 0, PAGE_SIZE);
 		memset(&w, 0, sizeof(w));
 		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, write_pg, &w,
-				WRITE_TO_BLOCK, 0);
-		if (ret)
-			break;
-		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
-		if (ret)
-			break;
-
-		memset(&w, 0, sizeof(w));
-		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, read_pg, &w,
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, &w,
 				READ_FROM_BLOCK, 0);
 		if (ret)
 			break;
@@ -473,16 +463,69 @@ static int test_bdev(struct connection *conn)
 		if (ret)
 			break;
 
-		printk("check the page on block %llx\n", (u64)base[i]);
-		ret = compare_page((unsigned long)page_address(read_pg), 0,
+		// First write test with safe contents
+		memset(&w, 0, sizeof(w));
+		init_completion(&w.wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, &w,
+				WRITE_TO_BLOCK, 0);
+		if (ret)
+			break;
+		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
+		if (ret)
+			break;
+
+		// Sector 0 of block devices has very important data. Never modify it.
+		if (base[i] == 0)
+			goto succeed;
+
+		// Write the test contents
+		write_deadbeef_page((unsigned long)test_addr, 0);
+		memset(&w, 0, sizeof(w));
+		init_completion(&w.wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, test_pg, &w,
+				WRITE_TO_BLOCK, 0);
+		if (ret)
+			break;
+		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
+		if (ret)
+			break;
+
+		// Read the written data
+		memset(test_addr, 0, PAGE_SIZE);
+		memset(&w, 0, sizeof(w));
+		init_completion(&w.wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, test_pg, &w,
+				READ_FROM_BLOCK, 0);
+		if (ret)
+			break;
+		ret = emp_bdev_wait_rw(NULL, &w, 0, false, READ_FROM_BLOCK);
+		if (ret)
+			break;
+
+		// Check the data
+		ret = compare_page((unsigned long)page_address(test_pg), 0,
 				conn->bdev->bd_disk->disk_name);
 		if (ret)
 			break;
+
+		// Restore the original contents
+		memset(&w, 0, sizeof(w));
+		init_completion(&w.wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, &w,
+				WRITE_TO_BLOCK, 0);
+		if (ret)
+			break;
+		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
+		if (ret)
+			break;
+
+succeed:
+		printk("Succeed to check the page on block %llx\n", (u64)base[i]);
 	}
 
-	emp_free_page(read_pg);
-free_write_pg_out:
-	emp_free_page(write_pg);
+	emp_free_page(backup_pg);
+free_test_pg_out:
+	emp_free_page(test_pg);
 out:
 	return ret;
 }
