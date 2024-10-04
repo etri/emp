@@ -602,8 +602,9 @@ static void __promote_gpa(struct emp_mm *emm, int cpu, struct emp_gpa *gpa)
 	emp_list_add_tail(&gpa->local_page->lru_list, list);
 	emp_list_unlock(list);
 	gpa->r_state = GPA_ACTIVE;
-	set_gpa_flags_if_unset(gpa, GPA_PREFETCHED_BLK_MASK);
-	set_gpa_flags_if_unset(gpa, GPA_PREFETCH_ONCE_MASK);
+	set_gpa_flags_if_unset(gpa, GPA_PREFETCHED_BLK_MASK
+					| GPA_PREFETCH_ONCE_MASK
+					| GPA_HPT_MASK);
 	atomic_add(gpa_block_size(gpa), &target->page_len);
 }
 
