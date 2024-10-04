@@ -190,6 +190,9 @@ int register_emp_ext(struct emp_ext *ext) {
 #ifdef CONFIG_EMP_VM
 	APPLY(register_kvm);
 #endif
+#ifdef CONFIG_EMP_DEBUG
+	APPLY(debug_emp_unlock_block);
+#endif
 #undef APPLY
 
 	emp_ext.installed = 1;

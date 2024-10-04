@@ -885,6 +885,10 @@ struct emp_ext {
 #ifdef CONFIG_EMP_VM
 	bool (*register_kvm)(struct emp_mm *, int);
 #endif
+
+#ifdef CONFIG_EMP_DEBUG
+	void (*debug_emp_unlock_block)(struct emp_gpa *);
+#endif
 };
 
 extern struct emp_ops emp_ops;

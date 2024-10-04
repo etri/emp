@@ -1340,6 +1340,12 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		// _emp_lock_block() may unlock non-head gpa
 		return;
 	}
+
+	if (emp_ext.debug_emp_unlock_block) {
+		emp_ext.debug_emp_unlock_block(head);
+		return;
+	}
+
 	if (head->r_state == GPA_ACTIVE
 			|| head->r_state == GPA_INACTIVE) {
 		struct local_page *lp;
