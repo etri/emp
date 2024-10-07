@@ -1469,12 +1469,11 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 		idx = head_idx;
 		for_each_gpas(gpa, head) {
-#if 0
 			if (unlikely(idx < index_start)) {
 				idx++;
 				continue;
 			}
-#endif
+
 			if (unlikely(idx >= index_end))
 				break;
 
@@ -1567,12 +1566,40 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				__split_gpadesc(new_vmr, prev_vmr, new_vmr, prev_vmr, new_vmr->vm_end, split_head, head_idx, index_end - 1, pmd);
 			}
 
+			// clear prev_vmr->desc->gpa_dir
+			idx = head_idx;
+			for_each_gpas(gpa, head) {
+				if (unlikely(idx < index_start)) {
+					idx++;
+					continue;
+				}
+				if (unlikely(idx >= index_end))
+					break;
+                        
+				replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, idx, gpa, NULL);
+				idx++;
+			}
+
 			// head is already unlocked in __split_gpadesc()
 			head_idx = next_head_idx;
 			continue;
 		}
 
 next_head:
+		// clear prev_vmr->desc->gpa_dir
+		idx = head_idx;
+		for_each_gpas(gpa, head) {
+			if (unlikely(idx < index_start)) {
+				idx++;
+				continue;
+			}
+			if (unlikely(idx >= index_end))
+				break;
+
+			replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, idx, gpa, NULL);
+			idx++;
+		}
+
 		emp_unlock_block(head);
 		head_idx = next_head_idx;
 	}
