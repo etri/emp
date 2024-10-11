@@ -239,6 +239,11 @@ static int get_vcpus_var(struct emp_mm *bvma)
 	int i = 0, vcpus_size, vcpus_len = EMP_KVM_VCPU_LEN(bvma);
 	int ret;
 
+	if (vcpus_len == 0) {
+		bvma->vcpus = NULL;
+		return 0;
+	}
+
 	vcpus_size = sizeof(struct vcpu_var) * vcpus_len;
 	bvma->vcpus = emp_kmalloc(vcpus_size, GFP_KERNEL);
 	if (!bvma->vcpus) {

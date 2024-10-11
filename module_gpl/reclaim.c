@@ -1122,6 +1122,13 @@ int reclaim_init(struct emp_mm *bvma)
 	inactive->abuf_len = vcpu_len;
 #endif /* CONFIG_EMP_DEBUG */
 
+	if (vcpu_len == 0) {
+		active->mru_bufs = NULL;
+		active->lru_bufs = NULL;
+		inactive->sync_bufs = NULL;
+		goto skip_alloc_bufs;
+	}
+
 	/* initialize per-vcpu active_list */
 	/* note: mru_bufs[0 ~ (#vcpu)] is initialized.
 	 * mru_bufs[0] will not be used because we do not use cpu_id 0 
@@ -1147,6 +1154,8 @@ int reclaim_init(struct emp_mm *bvma)
 	for (i = 0; i < vcpu_len; i++) {
 		init_emp_list(&inactive->sync_bufs[i]);
 	}
+
+skip_alloc_bufs:
 #endif /* CONFIG_EMP_VM */
 
 
