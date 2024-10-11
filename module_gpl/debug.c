@@ -1103,7 +1103,17 @@ void __debug_alloc(void *__addr, size_t size, const char *file, const int line)
 	unsigned long tid;
 	struct dbg_alloc_table *table;
 
-	if (addr == 0 || size == 0) return;
+	if (size == 0) {
+		printk(KERN_ERR "[EMP_ALLOC] WARN: alloc 0 size at %s:%d\n",
+					file, line);
+		return;
+	}
+
+	if (addr == 0) {
+		printk(KERN_ERR "[EMP_ALLOC] ERROR: NULL pointer will be returned at %s:%d\n",
+					file, line);
+		return;
+	}
 
 	tid = dbg_alloc_get_tid(addr);
 	table = &dbg_alloc_table[tid];
