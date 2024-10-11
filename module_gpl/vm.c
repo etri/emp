@@ -618,10 +618,10 @@ bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp
 
 		dprintk("%s BEFORE: index_gpa_dir = %ld new gpa = %p, old gpa = %p, new_gpa->local_page = %p old_gpa->local_page = %p, block_order = %d subblock_order = %d\n", __func__, index_gpa_dir, r, g, r->local_page, g->local_page, gpa_block_order(r), gpa_subblock_order(r));
 		/* set r to gpa_dir */
-		//new_vmr->descs->gpa_dir[index_gpa_dir] = r;
-		//prev_vmr->descs->gpa_dir[index_gpa_dir] = r;
-		replace_gpa_dir(new_vmr, new_vmr->descs->gpa_dir, index_gpa_dir, g, r);
-		replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, index_gpa_dir, g, r);
+		new_vmr->descs->gpa_dir[index_gpa_dir] = r;
+		prev_vmr->descs->gpa_dir[index_gpa_dir] = r;
+		//replace_gpa_dir(new_vmr, new_vmr->descs->gpa_dir, index_gpa_dir, g, r);
+		//replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, index_gpa_dir, g, r);
 		debug_assert(new_vmr->descs->gpa_dir[index_gpa_dir] == r);
 		debug_assert(prev_vmr->descs->gpa_dir[index_gpa_dir] == r);
 		dprintk("%s  AFTER: index_gpa_dir = %ld new dir = %p, old dir = %p\n", __func__, index_gpa_dir, new_vmr->descs->gpa_dir[index_gpa_dir], prev_vmr->descs->gpa_dir[index_gpa_dir]);
@@ -1157,7 +1157,7 @@ unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_v
 
 }
 
-void  __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_vmr *front_vmr, struct emp_vmr *back_vmr, unsigned long split_addr, struct emp_gpa *split_head, unsigned long split_head_index, unsigned long split_index, pmd_t *pmd)
+struct emp_gpa * __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_vmr *front_vmr, struct emp_vmr *back_vmr, unsigned long split_addr, struct emp_gpa *split_head, unsigned long split_head_index, unsigned long split_index, pmd_t *pmd)
 {
 	struct emp_mm *emm = new_vmr->emm;
 	struct emp_gpa *front_gpa, *back_gpa;
@@ -1264,7 +1264,7 @@ split_fail:
 			emp_unlock_block(hs[sb_index]);
 		}
 	}
-	emp_unlock_block(hs[0]);
+	return (hs[0]);
 }
 
 static int split_handle_remote_prefetch(struct emp_mm *emm, struct emp_vmr *vmr,
@@ -1561,47 +1561,23 @@ void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 		if (head == split_head) {
 			if (prev_vmr->vm_end == new_vmr->vm_start) { /* [prev_vmr] + [new_wmr] */
-				__split_gpadesc(new_vmr, prev_vmr, prev_vmr, new_vmr, new_vmr->vm_start, split_head, head_idx, index_start, pmd);
+				head = __split_gpadesc(new_vmr, prev_vmr, prev_vmr, new_vmr, new_vmr->vm_start, split_head, head_idx, index_start, pmd);
 			} else { /* [new_vmr] + [prev_wmr] */
-				__split_gpadesc(new_vmr, prev_vmr, new_vmr, prev_vmr, new_vmr->vm_end, split_head, head_idx, index_end - 1, pmd);
+				head = __split_gpadesc(new_vmr, prev_vmr, new_vmr, prev_vmr, new_vmr->vm_end, split_head, head_idx, index_end - 1, pmd);
 			}
-
-			// clear prev_vmr->desc->gpa_dir
-			idx = head_idx;
-			for_each_gpas(gpa, head) {
-				if (unlikely(idx < index_start)) {
-					idx++;
-					continue;
-				}
-				if (unlikely(idx >= index_end))
-					break;
-                        
-				replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, idx, gpa, NULL);
-				idx++;
-			}
-
-			// head is already unlocked in __split_gpadesc()
-			head_idx = next_head_idx;
-			continue;
 		}
 
 next_head:
-		// clear prev_vmr->desc->gpa_dir
-		idx = head_idx;
-		for_each_gpas(gpa, head) {
-			if (unlikely(idx < index_start)) {
-				idx++;
-				continue;
-			}
-			if (unlikely(idx >= index_end))
-				break;
-
-			replace_gpa_dir(prev_vmr, prev_vmr->descs->gpa_dir, idx, gpa, NULL);
-			idx++;
-		}
-
 		emp_unlock_block(head);
 		head_idx = next_head_idx;
+	}
+
+	// clear prev_vmr->desc->gpa_dir[] which are not included in prev_vmr
+	for (idx = 0; idx < desc->gpa_len; idx++) {
+		if (unlikely(idx < prev_index_start))
+			prev_vmr->descs->gpa_dir[idx] = NULL;
+		if (unlikely(idx >= prev_index_end))
+			prev_vmr->descs->gpa_dir[idx] = NULL;
 	}
 }
 
