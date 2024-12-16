@@ -1,0 +1,16 @@
+__kern_func_table.h
+tags
+cscope*
+*.swp
+.*.swp
+*.cmd
+*.o
+*.ko
+.tmp_versions
+Module.symvers
+*.mod.c
+modules.order
+*.ur-safe
+.cache.mk
+*.mod
+.*.o.d
