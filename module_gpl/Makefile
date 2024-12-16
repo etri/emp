@@ -7,6 +7,13 @@ emp-y += vm.o mm.o gpa.o hva.o glue.o udma.o
 emp-y += alloc.o reclaim.o remote_page.o page_mgmt.o
 emp-y += local_page.o donor_mem_rw.o donor_mgmt.o
 emp-y += procfs.o
+#ifdef CONFIG_EMP_USER
+# '#ifdef' adove is not for 'make', but for the code management.
+ifeq ($(EMP_USER), yes)
+emp-y += cow.o
+endif
+# '#endif' below is not for 'make', but for the code management.
+#endif
 #ifdef CONFIG_EMP_DEBUG
 # '#ifdef' adove is not for 'make', but for the code management.
 ifeq ($(EMP_DEBUG), yes)

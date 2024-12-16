@@ -95,6 +95,43 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 #endif
 }
 
+#ifdef CONFIG_EMP_USER
+// get hva and number of pages with consideration of partial map
+#define ____partial_gpa_to_page_len(vmr, g, idx, hva) ({ \
+	struct vm_area_struct *____vma = (vmr)->host_vma; \
+	unsigned long ____end = (hva) + ((1 << PAGE_SHIFT) << (g)->sb_order); \
+	unsigned long ____ret = 1 << (g)->sb_order; \
+	debug_assert((g)->sb_order == (g)->block_order); \
+	if ((hva) < ____vma->vm_start) { \
+		____ret -= (____vma->vm_start - (hva)) >> PAGE_SHIFT; \
+		(hva) = ____vma->vm_start; \
+	} \
+	if (____end > ____vma->vm_end) \
+		____ret -= (____end - ____vma->vm_end) >> PAGE_SHIFT; \
+	____ret; \
+})
+
+// get hva and number of pages with consideration of partial map
+#define ____gpa_to_hva_and_len(vmr, g, idx, hva, len) do { \
+	(hva) = GPN_OFFSET_TO_HVA(vmr, idx, (g)->sb_order); \
+	if (likely(!is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) \
+		(len) = 1 << gpa_subblock_order(g); \
+	else \
+		/* (hva) may be updated in ____partial_gpa_to_page_len() */ \
+		(len) = ____partial_gpa_to_page_len(vmr, g, idx, hva); \
+} while (0)
+
+#define ____local_gpa_to_hva_and_len(vmr, g, hva, len) do { \
+	(hva) = GPN_OFFSET_TO_HVA(vmr, (g)->local_page->gpa_index, \
+							(g)->sb_order); \
+	if (likely(!is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) \
+		(len) = 1 << gpa_subblock_order(g); \
+	else \
+		/* (hva) may be updated in ____partial_gpa_to_page_len() */ \
+		(len) = ____partial_gpa_to_page_len(vmr, g, \
+					(g)->local_page->gpa_index, hva); \
+} while (0)
+#else /* !CONFIG_EMP_USER */
 // get hva and number of pages with consideration of partial map
 #define ____gpa_to_hva_and_len(vmr, g, idx, hva, len) do { \
 	(hva) = GPN_OFFSET_TO_HVA(vmr, idx, (g)->sb_order); \
@@ -106,12 +143,26 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 							(g)->sb_order); \
 	(len) = 1 << gpa_subblock_order(g); \
 } while (0)
+#endif /* !CONFIG_EMP_USER */
 
+#ifdef CONFIG_EMP_USER
+static inline int
+__gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
+{
+	if (likely(!is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)))
+		return 1 << gpa_subblock_order(gpa);
+	else {
+		unsigned long hva = GPN_OFFSET_TO_HVA(vmr, idx, gpa->sb_order);
+		return ____partial_gpa_to_page_len(vmr, gpa, idx, hva);
+	}
+}
+#else /* !CONFIG_EMP_USER */
 static inline int
 __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 {
 	return 1 << gpa_subblock_order(gpa);
 }
+#endif /* !CONFIG_EMP_USER */
 
 static inline int
 __local_gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa)
@@ -120,12 +171,27 @@ __local_gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa)
 	return __gpa_to_page_len(vmr, gpa, gpa->local_page->gpa_index);
 }
 
+#ifdef CONFIG_EMP_USER
+static inline int
+__local_block_to_page_len(struct emp_vmr *vmr, struct emp_gpa *head)
+{
+	debug_assert(head->local_page);
+	if (likely(!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)))
+		return gpa_block_size(head);
+	else {
+		unsigned long idx = head->local_page->gpa_index;
+		unsigned long hva = GPN_OFFSET_TO_HVA(vmr, idx, head->sb_order);
+		return ____partial_gpa_to_page_len(vmr, head, idx, hva);
+	}
+}
+#else /* !CONFIG_EMP_USER */
 static inline int
 __local_block_to_page_len(struct emp_vmr *vmr, struct emp_gpa *head)
 {
 	debug_assert(head->local_page);
 	return gpa_block_size(head);
 }
+#endif /* !CONFIG_EMP_USER */
 
 static inline void
 ____emp_get_pages_map(struct emp_gpa *gpa, unsigned long page_len)

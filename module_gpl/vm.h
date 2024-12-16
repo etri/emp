@@ -161,6 +161,9 @@ struct emp_mrs {
 	bool             blockdev_used;
 #endif
 	wait_queue_head_t mrs_ctrl_wq;
+#ifdef CONFIG_EMP_USER
+	struct kmem_cache *cow_remote_pages_cache;
+#endif
 };
 
 #define GPADESC_MAX_REGION (6)
@@ -170,6 +173,9 @@ struct gpadesc_region {
 	u8 block_order;
 #ifdef CONFIG_EMP_VM
 	bool lowmem_block;
+#endif
+#ifdef CONFIG_EMP_USER
+	bool partial_map;
 #endif
 };
 
@@ -227,6 +233,18 @@ struct emp_vmr {
 	/* for unmapping on gpas_close() */
 	struct mmu_gather   close_tlb;
 
+#ifdef CONFIG_EMP_USER
+	unsigned long       split_addr;
+	struct emp_vmr      *new_vmr;
+
+	struct emp_mmu_notifier *mmu_notifier;
+
+	/* The following variables are protected by vmr->emm->dup_list_lock */
+	struct list_head        dup_shared;   /* MAP_SHARED */
+	struct emp_vmr		*dup_parent;  /* MAP_PRIVATE, parent */
+	struct list_head	dup_children; /* MAP_PRIVATE, children */
+	struct list_head	dup_sibling;  /* MAP_PRIVATE, sibling */
+#endif
 };
 
 struct emp_ftm {
@@ -307,6 +325,15 @@ struct emp_mr_ops {
 	void (*disconnect_mr)(struct memreg *);
 };
 
+#ifdef CONFIG_EMP_USER
+// ops to manage Copy-on-Write memory regions.
+struct emp_cow_ops {
+	/* function pointer for Copy-on-Write memory region management */
+	int (*handle_emp_cow_fault_hva)(struct emp_mm *, struct emp_vmr *,
+					struct emp_gpa *, unsigned long,
+					struct vm_fault *);
+};
+#endif
 
 #ifdef CONFIG_EMP_VM
 struct emp_exp_kvm {
@@ -407,6 +434,15 @@ struct emp_gpadesc_alloc {
 	debug_gpa_refcnt_dec_mark(____gpa, (vmr)->id); \
 } while (0)
 
+#ifdef CONFIG_EMP_USER
+struct emp_mmu_notifier {
+	struct mmu_notifier mmu_notifier;
+	struct emp_mm *emm;
+#ifdef CONFIG_EMP_DEBUG
+	atomic_t refcnt;
+#endif
+};
+#endif
 
 struct emp_mm {
 	atomic_t            refcount;
@@ -450,6 +486,12 @@ struct emp_mm {
 	struct emp_lps_ops  lops;
 	struct emp_vm_ops   vops;
 	struct emp_mr_ops   mops;
+#ifdef CONFIG_EMP_USER
+	struct emp_cow_ops  cops;
+
+	/* protect dup_* variables of struct emp_vmr */
+	spinlock_t         dup_list_lock;
+#endif
 };
 
 #ifdef CONFIG_EMP_BLOCK
@@ -510,7 +552,13 @@ struct emp_mm {
 #define KVM_THREAD_MAX	(0)
 #endif
 #ifdef CONFIG_EMP_VM
+#ifdef CONFIG_EMP_USER
+#define EMP_MAIN_CPU_LEN(bvma) ((bvma)->ekvm.emp_vcpus_len > 0 \
+				? (bvma)->ekvm.emp_vcpus_len \
+				: num_possible_cpus())
+#else /* !CONFIG_EMP_USER */
 #define EMP_MAIN_CPU_LEN(bvma) ((bvma)->ekvm.emp_vcpus_len)
+#endif /* !CONFIG_EMP_USER */
 #else /* !CONFIG_EMP_VM */
 #define EMP_MAIN_CPU_LEN(bvma) num_possible_cpus()
 #endif /* !CONFIG_EMP_VM */

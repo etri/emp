@@ -25,6 +25,10 @@ enum gpa_flags {
 	GPA_lowmemory_block = 10,
 #endif
 	GPA_stale_block = 11,
+#ifdef CONFIG_EMP_USER
+	// subblock order and block order of partial mapped block must be same
+	GPA_partial_map = 12,
+#endif
 #ifdef CONFIG_EMP_IO
 	GPA_io_read_page = 13,
 	GPA_io_write_page = 14,
@@ -61,10 +65,18 @@ enum gpa_flags {
 #define GPA_LOWMEM_BLOCK_MASK (1 << GPA_lowmemory_block)
 #endif
 #define GPA_STALE_BLOCK_MASK (1 << GPA_stale_block)
+#ifdef CONFIG_EMP_USER
+#define GPA_PARTIAL_MAP_MASK (1 << GPA_partial_map)
+#endif
 
 #ifdef CONFIG_EMP_VM
+#ifdef CONFIG_EMP_USER
+#define GPA_KEEP_FLAGS_MASK \
+	(GPA_TOUCHED_MASK | GPA_LOWMEM_BLOCK_MASK | GPA_PARTIAL_MAP_MASK)
+#else /* !CONFIG_EMP_USER */
 #define GPA_KEEP_FLAGS_MASK \
 	(GPA_TOUCHED_MASK | GPA_LOWMEM_BLOCK_MASK)
+#endif /* !CONFIG_EMP_USER */
 #else /* !CONFIG_EMP_VM */
 #define GPA_KEEP_FLAGS_MASK \
 	(GPA_TOUCHED_MASK | GPA_PARTIAL_MAP_MASK)

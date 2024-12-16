@@ -7,6 +7,9 @@
 #include "block-flag.h"
 #include "donor_mem_rw.h"
 #include "debug.h"
+#ifdef CONFIG_EMP_USER
+#include "cow.h"
+#endif
 
 DECLARE_WAIT_QUEUE_HEAD(read_wq);
 
@@ -660,6 +663,9 @@ static void clear_fetching_work_request(struct emp_mm *bvma,
 		if (!w->chained_ops || w != head_wr->eh_wr) {
 			gpa = w->gpa;
 			debug_assert(gpa);
+#ifdef CONFIG_EMP_USER
+			if (put_cow_remote_page(bvma, gpa))
+#endif
 				free_remote_page(bvma, gpa, true);
 			free_work_request(bvma, w);
 		}
@@ -671,6 +677,9 @@ static void clear_fetching_work_request(struct emp_mm *bvma,
 	if (head_wr->eh_wr) {
 		gpa = head_wr->eh_wr->gpa;
 		debug_assert(gpa);
+#ifdef CONFIG_EMP_USER
+		if (put_cow_remote_page(bvma, gpa))
+#endif
 			free_remote_page(bvma, gpa, true);
 		free_work_request(bvma, head_wr->eh_wr);
 	}
@@ -678,6 +687,9 @@ static void clear_fetching_work_request(struct emp_mm *bvma,
 	 * In other words, all pages in a block have been fetched successfully. */
 	gpa = head_wr->gpa;
 	debug_assert(gpa);
+#ifdef CONFIG_EMP_USER
+	if (put_cow_remote_page(bvma, gpa))
+#endif
 		free_remote_page(bvma, gpa, true);
 	free_work_request(bvma, head_wr);
 }
@@ -710,6 +722,9 @@ static bool try_clear_fetching_work_request(struct emp_mm *bvma,
 	if (atomic_dec_and_test(&head_wr->wr_refc) == true) {
 		struct emp_gpa *gpa = head_wr->gpa;
 		debug_assert(gpa);
+#ifdef CONFIG_EMP_USER
+		if (put_cow_remote_page(bvma, gpa))
+#endif
 			free_remote_page(bvma, gpa, true);
 		free_work_request(bvma, head_wr);
 	}

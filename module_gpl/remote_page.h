@@ -68,7 +68,13 @@ struct memreg {
 #endif
 
 /* struct remote_page defined in emp_type.h */
+#ifdef CONFIG_EMP_USER
+#define ____get_cow_rp(rp)  (&((struct cow_remote_page *) \
+			((rp)->val & REMOTE_PAGE_NONFLAG_MASK))->remote_page)
+#define ____get_rp_ptr(rp) (is_remote_page_cow(rp) ? ____get_cow_rp(rp) : (rp))
+#else
 #define ____get_rp_ptr(rp) (rp)
+#endif
 
 #define __get_remote_page_val(rp) ((rp)->val)
 #define __get_gpa_remote_page_val(gpa) __get_remote_page_val(&(gpa)->remote_page)
@@ -171,7 +177,14 @@ init_remote_page(struct remote_page *rp, int mrid, unsigned long offset)
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
 static inline int get_gpa_remote_page_refcnt(struct emp_gpa *gpa)
 {
+#ifdef CONFIG_EMP_USER
+	if (is_gpa_remote_page_cow(gpa))
+		return atomic_read(&get_gpa_remote_page_cow(gpa)->refcnt);
+	else
+		return 0;
+#else /* !CONFIG_EMP_USER */
 	return 0;
+#endif /* !CONFIG_EMP_USER */
 }
 #endif /* CONFIG_EMP_DEBUG_SHOW_GPA_STATE */
 

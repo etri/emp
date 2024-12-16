@@ -45,7 +45,35 @@ __pte_install(struct emp_mm *bvma,struct vm_area_struct *vma,
 	haddr = (unsigned long)vmf->address;
 	page_compound_len = (1 << order);
 
+#ifndef CONFIG_EMP_USER
+	debug_assert(partial_map == false);
+#endif
 
+#ifdef CONFIG_EMP_USER
+	if (unlikely(partial_map)) {
+		int not_mapped_pages = 0;
+
+	// partial_map is set only if order > 0
+		haddr = VA_ROUND_DOWN_ORDER(haddr, order + PAGE_SHIFT);
+		if (haddr < vma->vm_start) {
+		// unaligned front of virtual memory area 
+			not_mapped_pages = 
+				((u64)vma->vm_start - haddr) >> PAGE_SHIFT;
+			page_compound_len -= not_mapped_pages;
+			haddr = (unsigned long)vma->vm_start;
+		} 
+		if (haddr + (page_compound_len << PAGE_SHIFT) > vma->vm_end) {
+		// unaligned tail of virtual memory area
+			page_compound_len = 
+				((u64)vma->vm_end - haddr) >> PAGE_SHIFT;
+			not_mapped_pages = (1 << order) - page_compound_len;
+		}
+		
+		debug_BUG_ON(!PageCompound(vmf->page));
+		page_ref_sub(vmf->page, not_mapped_pages);
+		debug_page_ref_mark_page(__get_emp_vmr(vma)->id, vmf->page, -not_mapped_pages);
+	} else
+#endif
 		if (order) {
 			haddr = VA_ROUND_DOWN_ORDER(haddr, order + PAGE_SHIFT);
 	}

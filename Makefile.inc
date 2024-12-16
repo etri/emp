@@ -3,7 +3,7 @@
 LINUX_DISTRO := CentOS
 
 # EMP user-level process support
-EMP_USER := no
+EMP_USER := yes
 # EMP VM support
 EMP_VM := yes
 # EMP extension support

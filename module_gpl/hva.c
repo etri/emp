@@ -12,6 +12,9 @@
 #include "donor_mem_rw.h"
 #include "debug.h"
 #include "stat.h"
+#ifdef CONFIG_EMP_USER
+#include "cow.h"
+#endif
 #include "pcalloc.h"
 
 extern struct emp_mm **emp_mm_arr;
@@ -351,6 +354,31 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	/* Assume that gpa descriptors in a block reside on a contiguous memory */
 	head_idx = demand_sb_off - (demand - head);
 
+#ifdef CONFIG_EMP_USER
+	if (vmf_write_fault(vmf)) {
+		r = emm->cops.handle_emp_cow_fault_hva(emm, vmr, head, head_idx, vmf);
+		debug_progress(head, r);
+		if (r != 0) {
+			/* If CoW fault is detected or error occurs,
+			 * gpa descriptors may be changed. */
+			demand = get_gpadesc(vmr, demand_sb_off);
+			if (unlikely(!demand)) {
+				errcode = -ENOMEM;
+				ret = VM_FAULT_SIGBUS;
+				debug_progress(head, 0);
+				goto _emp_page_fault_hva_out_unlocked;
+			}
+			head = emp_get_block_head(demand);
+			head_idx = demand_sb_off - (demand - head);
+			debug_BUG_ON(!____emp_gpa_is_locked(head));
+		}
+
+		if (unlikely(r < 0)) { // error occurs.
+			ret = VM_FAULT_SIGBUS;
+			goto _emp_page_fault_hva_out;
+		}
+	}
+#endif
 
 	/* specify the range of fetching */
 	fs = head;
@@ -462,7 +490,17 @@ _emp_page_fault_hva_fetch_posted:
 
 	debug___emp_page_fault_hva2(head);
 
+#ifdef CONFIG_EMP_USER
+	if (!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)) {
+		rss_count = gpa_block_size(head);
+	} else {
+		int shm_count = emp_lp_count_pmd(head->local_page);
+		rss_count = page_count(head->local_page->page) - 1;
+		rss_count /= shm_count;
+	}
+#else
 	rss_count = gpa_block_size(head);
+#endif
 
 _emp_page_fault_hva_out:
 	emp_unlock_block(head);

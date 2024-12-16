@@ -16,6 +16,9 @@
 #include "kvm_mmu.h"
 #include "block.h"
 #include "debug.h"
+#ifdef CONFIG_EMP_USER
+#include "cow.h"
+#endif
 #include "pcalloc.h"
 
 #ifdef CONFIG_EMP_BLOCK
@@ -189,6 +192,10 @@ __set_gpadesc(struct emp_mm *emm, unsigned long idx, struct emp_gpa *g,
 	if (region->lowmem_block)
 		set_gpa_flags_if_unset(g, GPA_LOWMEM_BLOCK_MASK);
 #endif
+#ifdef CONFIG_EMP_USER
+	if (region->partial_map)
+		set_gpa_flags_if_unset(g, GPA_PARTIAL_MAP_MASK);
+#endif
 	emp_ext_init_gpa(emm, g, idx);
 }
 
@@ -324,6 +331,9 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 			unsigned long sb_at_head, unsigned long sb_at_tail)
 {
 	struct emp_mm *emm = vmr->emm;
+#ifdef CONFIG_EMP_USER
+	struct vm_area_struct *vma = vmr->host_vma;
+#endif
 	struct emp_vmdesc *desc = vmr->descs;
 	struct gpadesc_region *regions = desc->regions;
 	unsigned long gpa_len = desc->gpa_len;
@@ -331,6 +341,9 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 	int num_boundary, i, num_region;
 	u8 b_order, sb_order;
 	unsigned long block_aligned_start, block_aligned_end;
+#ifdef CONFIG_EMP_USER
+	bool partial_at_head, partial_at_tail;
+#endif
 #ifdef CONFIG_EMP_VM
 	u8 low_order;
 	unsigned long low_memory_end;
@@ -360,6 +373,10 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 #endif
 
 	/* gather information */
+#ifdef CONFIG_EMP_USER
+	partial_at_head = vma->vm_start != vm_start ? true : false;
+	partial_at_tail = vma->vm_end != vm_end ? true : false;
+#endif
 	block_aligned_start = sb_at_head;
 	block_aligned_end = sb_at_tail < gpa_len ? gpa_len - sb_at_tail : 0;
 
@@ -370,6 +387,14 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 		boundary[num_boundary++] = low_memory_end;
 #endif
 
+#ifdef CONFIG_EMP_USER
+	if (partial_at_head && gpa_len > 0)
+		boundary[num_boundary++] = 1;
+
+	// partial_at_tail makes new boundary only if gpa_len > 1
+	if (partial_at_tail && gpa_len > 1)
+		boundary[num_boundary++] = gpa_len - 1;
+#endif
 
 	// if gpa_len < num_subblock_in_block,
 	// sb_at_head and sb_at_tail is larger than gpa_len,
@@ -420,6 +445,14 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 		curr->lowmem_block = curr->end <= low_memory_end
 						? true : false;
 #endif
+#ifdef CONFIG_EMP_USER
+		if (unlikely(partial_at_head && curr->end <= 1))
+			curr->partial_map = true;
+		else if (unlikely(partial_at_tail && curr->start >= gpa_len - 1))
+			curr->partial_map = true;
+		else
+			curr->partial_map = false;
+#endif
 
 		num_region++;
 	}
@@ -443,7 +476,11 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 #else
 					-1,
 #endif
+#ifdef CONFIG_EMP_USER
+					r->partial_map ? 1 : 0
+#else
 					-1
+#endif
 					);
 	}
 #endif
@@ -741,6 +778,19 @@ __get_sb_hva_base(struct vm_area_struct *vma, struct emp_gpa *head,u64 head_hva,
 
 	sb_hva = head_hva + (sb_dist << sb_page_order);
 
+#ifdef CONFIG_EMP_USER
+	if (unlikely(is_gpa_flags_set(sb_head, GPA_PARTIAL_MAP_MASK))) {
+		if (sb_hva < vma->vm_start) {
+			*sb_offset = ((u64)vma->vm_start - sb_hva) >> PAGE_SHIFT;
+			*sb_pages_len = gpa_subblock_size(sb_head) - *sb_offset;
+			sb_hva = (u64)vma->vm_start;
+		}
+		if ((sb_hva + (*sb_pages_len << PAGE_SHIFT)) > vma->vm_end) {
+			u64 hva_dist = (u64)vma->vm_end - sb_hva;
+			*sb_pages_len = (hva_dist >> PAGE_SHIFT);
+		}
+	}
+#endif
 
 	return sb_hva;
 }
@@ -749,7 +799,31 @@ static inline int COMPILER_DEBUG
 __get_sb_pages(struct vm_area_struct *vma, struct emp_gpa *head,
 	       u64 head_hva, struct emp_gpa *sb_head)
 {
+#ifdef CONFIG_EMP_USER
+	u64 sb_hva;
+	int sb_dist, sb_pages_len;
+
+	if (likely(!is_gpa_flags_set(sb_head, GPA_PARTIAL_MAP_MASK)))
+		return (1 << sb_head->sb_order);
+
+	sb_dist = sb_head - head;
+	sb_hva = head_hva + (sb_dist << PAGE_SHIFT);
+
+	sb_pages_len = gpa_subblock_size(sb_head);
+
+	if (sb_hva < (u64)vma->vm_start) {
+		int not_mapped_pages = (((u64)vma->vm_start - sb_hva) >> PAGE_SHIFT);
+                sb_pages_len = gpa_subblock_size(sb_head) - not_mapped_pages;
+		sb_hva = (u64)vma->vm_start;
+        }
+	if ((sb_hva + (sb_pages_len << PAGE_SHIFT)) > vma->vm_end) {
+		sb_pages_len = (vma->vm_end - sb_hva) >> PAGE_SHIFT;
+	}
+
+	return sb_pages_len;
+#else /* !CONFIG_EMP_USER */
 	return (1 << sb_head->sb_order);
+#endif
 }
 
 /**
@@ -1176,6 +1250,19 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 
 		head_idx = max_head_idx + i;
 		head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, head->sb_order);
+#ifdef CONFIG_EMP_USER
+		if (unlikely(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK))) {
+			sb_page_len = ____partial_gpa_to_page_len(vmr, head,
+							head_idx, head_hva);
+			__unmap_subblock_single_vmr(vmr, head, head_hva,
+							sb_page_len, p->pmd);
+			emp_update_rss_sub(vmr, sb_page_len,
+					DEBUG_RSS_SUB_UNMAP_MAX_BLOCK_PARTIAL,
+					head, DEBUG_UPDATE_RSS_BLOCK);
+			spin_unlock(ptl);
+			continue;
+		}
+#endif
 
 		sb_page_len = gpa_subblock_size(head);
 		for_each_gpas(gpa, head) {
@@ -1233,6 +1320,9 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 				- ((vm_refcnt == 0) ? 1 : 0);
 	unsigned long i;
 	struct emp_gpa *head, *gpa;
+#ifdef CONFIG_EMP_USER
+	struct emp_vmr *next_vmr;
+#endif
 
 	for (i = 0, head = max_head; i < size;
 			i += num_subblock_in_block(head),
@@ -1282,6 +1372,55 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		 * are locked. gpa_dir element is stable until unlock the gpa.
 		 */
 
+#ifdef CONFIG_EMP_USER
+		if (next_vmr_shared) {
+			next_vmr = next_vmr_shared;
+			goto next_vmr_found;
+		}
+
+		next_vmr = NULL;
+		if (refcnt > 0) {
+			struct emp_vmr *pos;
+			gpa_idx = max_head_idx + i;
+
+			spin_lock(&emm->dup_list_lock);
+			pos = vmr->dup_parent;
+			while (pos) {
+				if (pos->descs->gpa_dir[gpa_idx] == head) {
+					next_vmr = pos;
+					spin_unlock(&emm->dup_list_lock);
+					goto next_vmr_found;
+				}
+				pos = pos->dup_parent;
+			}
+
+			list_for_each_entry(pos, &vmr->dup_children, dup_sibling) {
+				if (pos->descs->gpa_dir[gpa_idx] == head) {
+					next_vmr = pos;
+					break;
+				}
+			}
+			spin_unlock(&emm->dup_list_lock);
+		}
+
+next_vmr_found:
+		if (next_vmr) {
+			/* We found the owner. But, if it is ACTIVE, move to INACTIVE */
+			for_each_gpas(gpa, head) {
+				gpa->local_page->vmr_id = next_vmr->id;
+				debug_lru_set_vmr_id_mark(gpa->local_page, next_vmr->id);
+			}
+			emp_update_rss_add_force(next_vmr,
+				__local_block_to_page_len(next_vmr, head),
+				DEBUG_RSS_ADD_PUT_MAX_BLOCK,
+				head, DEBUG_UPDATE_RSS_BLOCK);
+			if (head->r_state == GPA_ACTIVE) {
+				remove_gpa_from_lru(emm, head);
+				add_gpas_to_inactive(emm, cpu, &head, 1);
+			}
+			continue;
+		}
+#endif /* CONFIG_EMP_USER */
 
 		debug_lru_progress_mark(head->local_page, head->r_state);
 		debug_lru_progress_mark(head->local_page, head->flags);
@@ -1293,6 +1432,20 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		debug_lru_progress_mark(head->local_page, head->local_page->flags);
 		debug_lru_progress_mark(head->local_page, refcnt);
 		debug_lru_progress_mark(head->local_page, vm_refcnt);
+#ifdef CONFIG_EMP_USER
+		if (refcnt + vm_refcnt == 0)
+			/* This solely belongs to the closing vmr.
+			 * Just clear it. */
+			continue;
+
+		/* @head has some owner but we don't know who is.
+		 * Move it to writeback lists which does not require the owner.
+		 */
+
+		emp_writeback_block(emm, head, cpu);
+		if (head->r_state == GPA_WB)
+			add_inactive_list_page_len(emm, head);
+#endif /* CONFIG_EMP_USER */
 	}
 
 	debug_assert(refcnt >= 0);
@@ -1472,6 +1625,14 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 
 	spin_lock(&desc->lock); // Assure desc->refcnt is stable
 	vm_refcnt = atomic_dec_return(&desc->refcount);
+#ifdef CONFIG_EMP_USER
+	if (vm_refcnt > 0) {
+		spin_lock(&emm->dup_list_lock);
+		next_vmr_shared = list_next_entry(vmr, dup_shared);
+		spin_unlock(&emm->dup_list_lock);
+		debug_assert(next_vmr_shared != vmr);
+	}
+#endif /* CONFIG_EMP_USER */
 
 	if (do_unmap)
 		dprintk("[DEBUG] %s: UNMAP emm: %d vmr: %d mm: %lx vma: %lx "
@@ -1496,6 +1657,9 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	if (do_unmap)
 		kernel_tlb_finish_mmu(&vmr->close_tlb,
 				vmr->host_vma->vm_start, vmr->host_vma->vm_end);
+#ifdef CONFIG_EMP_USER
+	dup_list_del(vmr);
+#endif
 	spin_unlock(&desc->lock);
 
 #ifdef CONFIG_EMP_VM

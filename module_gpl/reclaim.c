@@ -9,6 +9,9 @@
 #include "donor_mem_rw.h"
 #include "debug.h"
 #include "vcpu_var.h"
+#ifdef CONFIG_EMP_USER
+#include "cow.h"
+#endif
 #include "pcalloc.h"
 
 // we assume that TLB valid period without TLB shootdown is 20ms

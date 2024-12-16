@@ -36,6 +36,12 @@ struct remote_page {
 #endif
 };
 
+#ifdef CONFIG_EMP_USER
+struct cow_remote_page {
+	atomic_t refcnt;
+	struct remote_page remote_page;
+};
+#endif
 
 #define WRONG_GPA_IDX ULONG_MAX
 

@@ -27,6 +27,9 @@
 #include "local_page.h"
 #include "block-flag.h"
 #include "debug.h"
+#ifdef CONFIG_EMP_USER
+#include "cow.h"
+#endif
 
 #undef MEASURE_COMPONENTS
 
@@ -216,6 +219,9 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 	struct emp_mm *emm = vmr->emm;
 
 	vmr->magic = 0; // remove the magic value
+#ifdef CONFIG_EMP_USER
+	debug_assert(vmr->mmu_notifier == NULL);
+#endif
 
 	if (emm->last_vmr == vmr)
 		emm->last_vmr = NULL;
@@ -242,8 +248,20 @@ static void emp_vma_close(struct vm_area_struct *vma)
 		vmr->vmr_closing = true;
 		smp_mb();
 		debug_show_gpa_state(vmr, __func__);
+#ifdef CONFIG_EMP_USER
+#ifdef CONFIG_EMP_DEBUG
+		if (vmr->dup_parent)
+			debug_show_gpa_state(vmr->dup_parent, "emp_vma_close(parent)");
+#endif
+#endif /* CONFIG_EMP_USER */
 	}
 
+#ifdef CONFIG_EMP_USER
+#ifdef CONFIG_EMP_VM
+	if (!vmr->emm->ekvm.kvm)
+#endif /* CONFIG_EMP_VM */
+		emp_put_mmu_notifier(vmr);
+#endif /* CONFIG_EMP_USER */
 
 
 	/* gpas_close() may have been called by mmu notifier.
@@ -257,6 +275,17 @@ static void emp_vma_close(struct vm_area_struct *vma)
 
 	emp_vmr_release(vmr);
 
+#ifdef CONFIG_EMP_USER
+	if (vmr->new_vmr) {
+		dprintk("[WARN] vmr->new_vmr is not NULL. emm: %d vmr: %d "
+			"vma: %016lx range: %016lx ~ %016lx new_vmr: %d\n",
+			vmr->emm->id, vmr->id,
+			(unsigned long) vma, vma->vm_start, vma->vm_end,
+			vmr->new_vmr->id);
+		emp_vmr_release(vmr->new_vmr);
+		emp_kfree(vmr->new_vmr);
+	}
+#endif
 
 	vmr->emm->last_mm = vma->vm_mm;
 	vmr->host_vma = NULL;
@@ -264,6 +293,46 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	emp_kfree(vmr);
 }
 
+#ifdef CONFIG_EMP_USER
+static void emp_update_descs_vmr_id(struct emp_vmr *vmr)
+{
+	unsigned long start, end, i, j;
+	struct emp_gpa *g, *head;
+	struct emp_vmdesc *d;
+	struct vm_area_struct *vma;
+
+	d = vmr->descs;
+	vma = vmr->host_vma;
+
+	start = (vma->vm_start - d->vm_base)
+			>> (PAGE_SHIFT + vmdesc_subblock_order(d));
+	end = (((vma->vm_end - d->vm_base) >> PAGE_SHIFT)
+			+ vmdesc_subblock_size(d) - 1)
+					>> vmdesc_subblock_order(d);
+
+	raw_for_all_gpa_heads_range(vmr, i, head, start, end + 1) {
+		head = emp_lock_block(vmr, NULL, i);
+
+		if (INIT_BLOCK(head)) {
+			emp_unlock_block(head);
+			continue;
+		}
+
+		for_each_gpas_index(g, j, head) {
+			if (unlikely(i + j < start))
+				continue;
+			if (unlikely(i + j > end))
+				break;
+
+			debug_BUG_ON(g->local_page == NULL);
+			debug_BUG_ON(g->local_page->vmr_id != vmr->pvid);
+			g->local_page->vmr_id = vmr->id;
+			debug_lru_set_vmr_id_mark(g->local_page, vmr->id);
+		}
+		emp_unlock_block(head);
+	}
+}
+#endif /* CONFIG_EMP_USER */
 
 static struct emp_vmr *create_vmr(struct emp_mm *emm)
 {
@@ -289,13 +358,169 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm)
 
 	spin_lock_init(&new_vmr->gpas_close_lock);
 
+#ifdef CONFIG_EMP_USER
+	INIT_LIST_HEAD(&new_vmr->dup_shared);
+	// new_vmr->dup_parent = NULL due to kzalloc()
+	INIT_LIST_HEAD(&new_vmr->dup_children);
+	INIT_LIST_HEAD(&new_vmr->dup_sibling);
+#endif
 
 	return new_vmr;
 }
 
+#ifdef CONFIG_EMP_USER
+static struct emp_vmr * COMPILER_DEBUG
+__emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
+{
+	struct emp_mm *emm = prev_vmr->emm;
+	struct emp_vmr *new_vmr;
+	bool vm_shared = new_vma->vm_flags & VM_SHARED ? true : false;
+	bool vm_wipeonfork = new_vma->vm_flags & VM_WIPEONFORK ? true : false;
+	bool new_vmdesc, dup_dir; // options of dup_vmdesc
+
+	new_vmr = create_vmr(emm);
+	if (new_vmr == NULL)
+		return NULL;
+
+	new_vmr->host_vma = new_vma;
+	new_vmr->host_mm = new_vma->vm_mm;
+	new_vmr->pvid = prev_vmr->id;
+
+	if (!is_emm_with_kvm(emm)) {
+		if (emp_get_mmu_notifier(new_vmr))
+			return NULL;
+	}
+
+	new_vma->vm_private_data = (void *)new_vmr;
+
+	if (vm_shared) {
+		spin_lock(&prev_vmr->descs->lock);
+		new_vmr->descs = prev_vmr->descs;
+		atomic_inc(&prev_vmr->descs->refcount);
+		dup_list_add(new_vmr, prev_vmr, vm_shared);
+		spin_unlock(&prev_vmr->descs->lock);
+		new_vmdesc = false;
+		dup_dir = false;
+	} else if (vm_wipeonfork) {
+		new_vmdesc = true;
+		dup_dir = false;
+	} else { // map private
+		dup_list_add(new_vmr, prev_vmr, vm_shared);
+		new_vmdesc = true;
+		dup_dir = true;
+	}
+
+	if (dup_vmdesc(new_vmr, prev_vmr, new_vmdesc, dup_dir)) {
+		new_vma->vm_private_data = NULL;
+		emp_vmr_release(new_vmr);
+		new_vmr->host_vma = NULL;
+		new_vmr->host_mm = NULL;
+		emp_kfree(new_vmr);
+		return NULL;
+	}
+
+	return new_vmr;
+}
+
+// consider only the vma_open right after vma_ops->split
+// argument vma is newly created vma and vma stored in vmr is prevous one
+static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
+{
+	struct emp_vmr *prev_vmr = (struct emp_vmr *)new_vma->vm_private_data;
+	struct emp_vmr *new_vmr;
+
+	new_vmr = prev_vmr->new_vmr;
+	if (new_vmr) {
+		// emp_vma_split allocated new_vmr pointed by new_vmr of prev_vmr
+		prev_vmr->split_addr = 0;
+		prev_vmr->new_vmr = NULL;
+
+		new_vmr->pvid = prev_vmr->id;
+		new_vmr->host_vma = new_vma;
+		new_vmr->host_mm = new_vma->vm_mm;
+
+		spin_lock(&prev_vmr->descs->lock);
+		new_vmr->descs = prev_vmr->descs;
+		atomic_inc(&prev_vmr->descs->refcount);
+		dup_list_add(new_vmr, prev_vmr, true);
+		spin_unlock(&prev_vmr->descs->lock);
+
+		new_vmr->vmr_closing = false;
+
+		new_vmr->split_addr = 0;
+		new_vmr->new_vmr = NULL;
+
+		new_vma->vm_private_data = (void *)new_vmr;
+
+		emp_update_descs_vmr_id(new_vmr);
+
+	} else {
+		// open of dup_mmap reaches here
+		new_vmr = __emp_vma_open(prev_vmr, new_vma);
+		debug_BUG_ON(!new_vmr);
+	}
+
+	new_vma->vm_flags |= VM_MIXEDMAP;
+	new_vma->vm_flags |= VM_NOHUGEPAGE;
+	new_vma->vm_flags |= VM_DONTEXPAND;
+
+
+	/* Actually, after duplication, gpa states of two vmrs are identical.
+	 * Thus, we only print out new's. */
+	debug_show_gpa_state(new_vmr, "emp_vma_open(new)");
+
+	printk(KERN_NOTICE "%s mm:%016lx vma:%016lx vm_flags: 0x%016lx anon_vma: %016lx "
+			"vm_start: 0x%lx vm_end: 0x%lx vm_pgoff: 0x%lx\n",
+			__func__,
+			(unsigned long) new_vma->vm_mm, (unsigned long) new_vma,
+			new_vma->vm_flags, (unsigned long) new_vma->anon_vma, new_vma->vm_start,
+			new_vma->vm_end, new_vma->vm_pgoff);
+
+	emp_update_rss_show(new_vmr);
+}
+
+static int emp_vma_split(struct vm_area_struct *vma, unsigned long addr)
+{
+	struct emp_vmr *vmr = vma->vm_private_data;
+	struct emp_vmr *new_vmr;
+
+	if (addr & bvma_va_subblock_mask(vmr->emm)) {
+		printk(KERN_NOTICE "%s vma split. vma %llx addr %lx\n",
+				__func__, (u64)vma, addr);
+	}
+
+	new_vmr = create_vmr(vmr->emm);
+	if (new_vmr == NULL) {
+		printk("%s cannot allocate memory for new_vmr.\n", __func__);
+		return -ENOMEM;
+	}
+
+	vmr->new_vmr = new_vmr;
+	vmr->split_addr = addr;
+	/* NOTE: we don't call emp_get_mmu_notifier() here.
+	 * Since this is split of previous emp_vmr, which already registered
+	 * emp's mmu notifier to its mm.
+	 * In addition, new_vmr is created but has no host_vma. This causes
+	 * errors in emp_get_mmu_notifier().
+	 */
+
+	return 0;
+}
+#endif /* CONFIG_EMP_USER */
 
 static struct vm_operations_struct emp_vma_ops = {
+#ifdef CONFIG_EMP_USER
+	.open = emp_vma_open,
+#endif
 	.close = emp_vma_close,
+#ifdef CONFIG_EMP_USER
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
+	.split = emp_vma_split,
+#else
+	.may_split = emp_vma_split,
+#endif
+#endif
 	.fault = emp_page_fault_hva,
 };
 
@@ -374,6 +599,12 @@ vm_start_aligned:
 	}
 #endif /* CONFIG_EMP_VM */
 
+#ifndef CONFIG_EMP_USER
+	if (unlikely(!is_emm_with_kvm(bvma))) {
+		printk(KERN_ERR "[ERROR] the current version of EMP does not support user-level processes.\n");
+		return -ENODEV;
+	}
+#endif
 
 	might_sleep();
 
@@ -398,6 +629,13 @@ vm_start_aligned:
 	vmr->host_vma = vma;
 	vmr->host_mm = vma->vm_mm;
 
+#ifdef CONFIG_EMP_USER
+	if (!is_emm_with_kvm(bvma)) {
+		long ret = emp_get_mmu_notifier(vmr);
+		if (unlikely(ret))
+			return (int) ret;
+	}
+#endif /* CONFIG_EMP_USER */
 
 	if (gpas_open(vmr))
 		goto mmap_fail;
@@ -917,6 +1155,9 @@ static int emp_open(struct inode *inode, struct file *filp)
 		goto open_new_bvma_err;
 	}
 
+#ifdef CONFIG_EMP_USER
+	cow_init(bvma);
+#endif
 	donor_mem_rw_init(bvma);
 	dma_open(bvma);
 	filp->private_data = bvma;
@@ -1020,6 +1261,9 @@ static int emp_release(struct inode *inode, struct file *filp)
 	remote_page_exit(bvma);
 	local_page_exit(bvma);
 	alloc_exit(bvma);
+#ifdef CONFIG_EMP_USER
+	cow_exit(bvma);
+#endif
 
 	unregister_bvma(bvma);
 

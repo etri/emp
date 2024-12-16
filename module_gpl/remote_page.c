@@ -4,6 +4,9 @@
 #include "remote_page.h"
 #include "block.h"
 #include "debug.h"
+#ifdef CONFIG_EMP_USER
+#include "cow.h"
+#endif
 #include "udma.h"
 
 /**
@@ -356,6 +359,11 @@ remote_page_release(struct emp_mm *emm, struct emp_gpa *head, int num)
 	for (i = 0, g = head; i < num; i++, g++) {
 		if (is_gpa_remote_page_free(g))
 			continue;
+#ifdef CONFIG_EMP_USER
+		/* we do not use the remote page anymore */
+		if (put_cow_remote_page(emm, g) == false)
+			continue;
+#endif
 		__remote_page_release(emm, &g->remote_page);
 	}
 }

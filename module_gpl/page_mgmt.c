@@ -1594,6 +1594,9 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 
 	debug_emp_install_sptes2(bvma, head, demand);
 
+#ifdef CONFIG_EMP_USER
+	debug_BUG_ON(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK));
+#endif
 	if (!is_gpa_flags_set(head, GPA_HPT_MASK)
 			&& head->local_page->vmr_id != vmr->id)
 		emp_update_rss_add_force(vmr, gpa_block_size(head),
