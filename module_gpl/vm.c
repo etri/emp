@@ -42,6 +42,9 @@ int     initial_mark_empty_page;
 int     initial_mem_poll;
 int     initial_enable_transition_csf;
 #endif
+#ifdef CONFIG_EMP_OPT
+int     initial_eval_media;
+#endif
 int     initial_remote_reuse;
 int     initial_remote_policy_subblock;
 int     initial_remote_policy_block;
@@ -840,6 +843,10 @@ static struct emp_mm *create_emm(void)
 	bvma->config.mark_empty_page = initial_mark_empty_page;
 	bvma->config.mem_poll = initial_mem_poll;
 #endif
+#ifdef CONFIG_EMP_OPT
+	bvma->config.next_pt_premapping = 0; /* TODO: test this feature */
+	bvma->config.eval_media = initial_eval_media;
+#endif
 	bvma->config.remote_reuse = initial_remote_reuse;
 	bvma->config.remote_policy_subblock = initial_remote_policy_subblock;
 	bvma->config.remote_policy_block = initial_remote_policy_block;
@@ -1094,7 +1101,11 @@ static int __init emp_init(void)
 #ifdef CONFIG_EMP_VM
 	struct emp_mod emp_mod = {
 		.page_fault = emp_page_fault_gpa,
+#ifdef CONFIG_EMP_OPT
+		.mark_free_pages = emp_mark_free_pages,
+#else
 		.mark_free_pages = NULL,
+#endif
 		.lock_range_pmd = emp_lock_range_pmd,
 		.unlock_range_pmd = emp_unlock_range_pmd,
 	};

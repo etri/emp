@@ -392,6 +392,9 @@ static ssize_t initial_enable_transition_csf_write(struct file *file, const char
 EMP_PROC_INITIAL_BOOLEAN(mark_empty_page)
 EMP_PROC_INITIAL_BOOLEAN(mem_poll)
 #endif
+#ifdef CONFIG_EMP_OPT
+EMP_PROC_INITIAL_BOOLEAN(eval_media)
+#endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_aggr);
 EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_max);
@@ -529,6 +532,120 @@ EMP_PROC_VM_CONFIG_BOOLEAN(mark_empty_page);
 EMP_PROC_VM_CONFIG_BOOLEAN(mem_poll);
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(use_compound_page);
 #endif
+#ifdef CONFIG_EMP_OPT
+EMP_PROC_VM_CONFIG_BOOLEAN(next_pt_premapping)
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(eval_media);
+#endif
+#ifdef CONFIG_EMP_OPT
+#ifdef CONFIG_EMP_BLOCKDEV
+static inline ssize_t __read_poll_read(struct file *file, char __user *buf,
+								size_t count, loff_t *ppos, struct emp_mm *bvma)
+{
+	size_t buf_size = PROC_BUF_SIZE * bvma->mrs.memregs_len;	
+	char buffer[buf_size];
+	ssize_t len = 0;
+	int i, rcu_index;
+	struct memreg *m;
+
+	rcu_read_lock();
+	if (bvma->close) {
+		rcu_read_unlock();
+		return 0;
+	}
+	rcu_index = srcu_read_lock(&bvma->srcu);
+	rcu_read_unlock();
+	for (i = 0; i < bvma->mrs.memregs_len; i++) {
+		m = bvma->mrs.memregs[i];
+		if (m == NULL)
+			continue;
+
+		len += snprintf(buffer + len, buf_size - len,
+					"donor[%d] %s\n", i,
+					m->conn->read_command_flag ? "enable" : "disable");
+	}
+	srcu_read_unlock(&bvma->srcu, rcu_index);
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+#endif /* CONFIG_EMP_BLOCKDEV */
+
+static ssize_t read_poll_read(struct file *file, char __user *buf,
+								size_t count, loff_t *ppos)
+{
+#ifdef CONFIG_EMP_BLOCKDEV
+	ssize_t len;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	spin_lock(&bvma->mrs.memregs_lock);
+	len = __read_poll_read(file, buf, count, ppos, bvma);
+	spin_unlock(&bvma->mrs.memregs_lock);
+
+	return len;
+#else /* !CONFIG_EMP_BLOCKDEV */
+	return 0;
+#endif /* !CONFIG_EMP_BLOCKDEV */
+}
+
+static ssize_t read_poll_write(struct file *file, const char __user *buf,
+								size_t count, loff_t *ppos)
+{
+#ifdef CONFIG_EMP_BLOCKDEV
+	char buffer[PROC_BUF_SIZE * 2];
+	unsigned int mrid, flag;
+	struct memreg *m;
+	struct request_queue *q;
+	struct connection *conn;
+	ssize_t ret = count;
+	
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	EMP_PROC_COPY_FROM(buffer, 3, PROC_BUF_SIZE * 2, buf, count);
+
+	if (sscanf(buffer, "%d %d\n", &mrid, &flag) != 2)
+		return -EINVAL;
+
+	spin_lock(&bvma->mrs.memregs_lock);
+	if (mrid >= bvma->mrs.memregs_len) {
+		ret = -ERANGE;
+		goto out;
+	}
+
+	m = bvma->mrs.memregs[mrid];
+	if (!m || !m->conn) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	conn = m->conn;
+	if (!conn->bdev || atomic_read(&conn->refcount) == 0) {
+		ret = -EIO;
+		goto out;
+	}
+
+	q = conn->bdev->bd_disk->queue;
+	if (flag && test_bit(QUEUE_FLAG_POLL, &q->queue_flags)) {
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
+		m->conn->read_command_flag = REQ_HIPRI;
+#else
+		m->conn->read_command_flag = REQ_POLLED;
+#endif
+	} else {
+		m->conn->read_command_flag = 0;
+	}
+	printk(KERN_INFO "read_poll: emp_id: %d mrid: %d value: %s\n",
+			bvma->id, mrid,
+			m->conn->read_command_flag ? "enable" : "disable");
+out:
+	spin_unlock(&bvma->mrs.memregs_lock);
+	return ret;
+#else /* !CONFIG_EMP_BLOCKDEV */
+	return 0;
+#endif /* !CONFIG_EMP_BLOCKDEV */
+}
+#endif /* CONFIG_EMP_OPT */
 static ssize_t local_cache_size_read(struct file *file, char __user *buf,
 							size_t count, loff_t *ppos)
 {
@@ -652,6 +769,9 @@ static struct emp_proc_entry emp_proc_global[] = {
 	emp_proc_entry_initial_rw(mark_empty_page),
 	emp_proc_entry_initial_rw(mem_poll),
 #endif
+#ifdef CONFIG_EMP_OPT
+	emp_proc_entry_initial_rw(eval_media),
+#endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 	emp_proc_entry_ro(emp_debug_alloc_size_aggr),
 	emp_proc_entry_ro(emp_debug_alloc_size_max),
@@ -672,6 +792,11 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_rw(mark_empty_page),
 	emp_proc_entry_rw(mem_poll),
 	emp_proc_entry_ro(use_compound_page),
+#endif
+#ifdef CONFIG_EMP_OPT
+	emp_proc_entry_rw(next_pt_premapping),
+	emp_proc_entry_ro(eval_media),
+	emp_proc_entry_rw(read_poll),
 #endif
 	emp_proc_entry_ro(local_cache_size),
 	emp_proc_entry_END,

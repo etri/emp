@@ -377,6 +377,12 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 		io_read_mask = true;
 	}
 #endif
+#ifdef CONFIG_EMP_OPT
+	if (clear_gpa_flags_if_set(*head, GPA_STALE_BLOCK_MASK)) {
+		no_fetch = true;
+		is_stale = true;
+	}
+#endif
 
 	// fetching a page on demand
 	fip = fetch_block(bvma, vmr, *head, head_idx, demand_offset, cpu, no_fetch,
@@ -404,6 +410,103 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 }
 
 #ifdef CONFIG_EMP_VM
+#ifdef CONFIG_EMP_OPT
+int emp_mark_free_pages(struct kvm *kvm, gfn_t gfn, long num_pages)
+{
+	struct kvm_memory_slot *s;
+	unsigned long hva, req_offset;
+	long reclaimed = 0;
+	struct emp_vmr *vmr;
+	struct emp_gpa *head, *req;
+	gfn_t gfn_end = gfn + num_pages;
+	struct emp_mm *emm = get_kvm_emp_mm(kvm);
+
+	while (gfn < gfn_end) {
+		s = gfn_to_memslot(kvm, gfn);
+		if (!s || s->flags & KVM_MEMSLOT_INVALID) {
+			printk(KERN_ERR "[%s] Failed to get memslot. "
+					"gfn: %llx num_pages: %ld "
+					"reclaimed: %ld memslot: %p\n",
+					__func__, gfn, num_pages, reclaimed, s);
+			break; /* failed */
+		}
+
+		hva = __gfn_to_hva_memslot(s, gfn);
+		if ((vmr = emp_vmr_lookup_hva(emm, hva)) == NULL) {
+			printk(KERN_ERR "[%s] Failed to get hva. "
+					"gfn: %llx num_pages: %ld "
+					"reclaimed: %ld memslot: %p\n",
+					__func__, gfn, num_pages, reclaimed, s);
+			break; /* failed */
+		}
+
+		req_offset = GPN_OFFSET(emm, HVA_TO_GPN(emm, vmr, hva)) 
+						>> bvma_subblock_order(emm);
+		if (req_offset >= vmr->descs->gpa_len) {
+			printk(KERN_ERR "[%s] Failed to get bgpa. "
+					"gfn: %llx num_pages: %ld reclaimed: %ld "
+					"memslot: %p hva: 0x%lx req_offset: 0x%lx "
+					"gpas_len: 0x%lx\n",
+					__func__, gfn, num_pages, reclaimed, s,
+					hva, req_offset, vmr->descs->gpa_len);
+			break; /* failed */
+		}
+
+		req = raw_get_gpadesc(vmr, req_offset);
+		if (!req) {
+			/* nothing to do with untouched subblock */
+			struct gpadesc_region *region;
+			region = get_gpadesc_region(vmr->descs, req_offset);
+			gfn = gfn - (gfn & ((1UL << region->block_order) - 1))
+					+ (1UL << region->block_order);
+			continue;
+		}
+		head = emp_lock_block(vmr, &req, req_offset);
+		debug_BUG_ON(!head); // we already have @req
+
+		if (gfn + gpa_block_size(head) > gfn_end) {
+			printk(KERN_ERR "[%s] Failed to reclaim the last block. "
+					"gfn: %llx num_pages: %ld reclaimed: %ld "
+					"memslot: %p hva: 0x%lx gpa_block_size: %ld\n",
+					__func__, gfn, num_pages, reclaimed, s,
+					hva, gpa_block_size(head));
+			emp_unlock_block(head);
+			break;
+		}
+
+		if (INIT_BLOCK(head)) {
+			set_gpa_flags_if_unset(head, GPA_STALE_BLOCK_MASK);
+			
+			reclaimed += gpa_block_size(head);
+		} else if (INACTIVE_BLOCK(head)) {
+			set_gpa_flags_if_unset(head, GPA_STALE_BLOCK_MASK);
+			clear_gpa_flags_if_set(head, GPA_DIRTY_MASK);
+
+			reclaimed += gpa_block_size(head);
+		} else if (ACTIVE_BLOCK(head)) {
+			bool tlb_flush_force = false;
+
+			set_gpa_flags_if_unset(head, GPA_STALE_BLOCK_MASK);
+			clear_gpa_flags_if_set(head, GPA_DIRTY_MASK);
+			
+			emm->vops.unmap_gpas(emm, head, &tlb_flush_force);
+
+			reclaimed += gpa_block_size(head);
+		} else if (WB_BLOCK(head)) { 
+			set_gpa_flags_if_unset(head, GPA_STALE_BLOCK_MASK);
+
+			reclaimed += gpa_block_size(head);
+		} else { // FETCHING
+			/* cannot reclaim the pages in the fetching state. */
+		}
+
+		gfn += gpa_block_size(head);
+		emp_unlock_block(head);
+	}
+
+	return reclaimed;
+}
+#endif /* CONFIG_EMP_OPT */
 
 static inline void shadow_page_walk_begin(struct kvm_vcpu *vcpu)
 	__attribute__((optimize("-O2")));
@@ -774,6 +877,40 @@ static inline int __mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep,
 	return ret;
 }
 
+#ifdef CONFIG_EMP_OPT
+/**
+ * get_next_pt_premapping - Prepare next page mapping
+ * @param vcpu working vcpu info
+ * @param slot memory slot
+ * @param gpa guest physical address
+ * @param level page table level
+ * @param min preparing number
+ */
+static void get_next_pt_premapping(struct kvm_vcpu *vcpu,
+		struct kvm_memory_slot *slot, gva_t gpa, int level, int min)
+{
+	int i, ret;
+	kvm_pfn_t target_gfn = GPA_TO_GFN(gpa + HPAGE_SIZE);
+
+	for (i = 0; i < min; i++) {
+		kvm_emp_make_mmu_pages_available(vcpu);
+		ret = kvm_emp___prepare_map(vcpu, &level, gpa + HPAGE_SIZE,
+				&target_gfn, true, NULL, NULL);
+		if (ret == EMP_PF_RETRY)
+			break;
+		else if (ret == EMP_PF_RETURN_ESC_LEVEL) {
+			printk(KERN_WARNING "__prepare_map does not reach the target level");
+			continue;
+		}
+
+		kvm_emp_mmu_topup_memory_caches(vcpu);
+		target_gfn += (1 << (HPAGE_SHIFT - PAGE_SHIFT));
+		if (target_gfn < slot->base_gfn ||
+				target_gfn >= (slot->base_gfn + slot->npages))
+			break;
+	}
+}
+#endif /* CONFIG_EMP_OPT */
 /**
  * fast_install_spte - Mapping demand shadow page table entry
  * @param kvm_vcpu working vcpu info
@@ -874,6 +1011,10 @@ slow_path:
 	kvm_emp_make_mmu_pages_available(vcpu);
 	ret = kvm_emp___direct_map(vcpu, gpa, write_fault, writable, level,
 			pfn, prefault, slot);
+#ifdef CONFIG_EMP_OPT
+	if (bvma->config.next_pt_premapping)
+		get_next_pt_premapping(vcpu, slot, gpa, level, 3);
+#endif
 	unlock_kvm_mmu_lock(vcpu->kvm);
 	emp_release_page_clean(pfn_to_page(pfn));
 

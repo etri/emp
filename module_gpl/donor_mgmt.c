@@ -159,6 +159,9 @@ int check_creation_mrs(struct emp_mm* bvma)
 	struct memreg *mr;
 	struct dma_ops *ops;
 	int i, ret = 0, failed = 0;
+#ifdef CONFIG_EMP_OPT
+	int l;
+#endif
 
 	for (i = 0; i < MAX_MRID; i++) {
 		spin_lock(&bvma->mrs.memregs_lock);
@@ -175,6 +178,16 @@ int check_creation_mrs(struct emp_mm* bvma)
 			continue;
 		}
 
+#ifdef CONFIG_EMP_OPT
+		if (!bvma->config.eval_media || c->latency)
+			continue;
+
+		if ((l = ops->test_conn(c)) < 0)
+			pr_info("conn%d test_conn failed ret: %d state: %d ",
+					conn_get_mr_id(c), l,
+					conn_get_ctrl_state(c));
+		c->latency = l;
+#endif
 	}
 
 	return failed;

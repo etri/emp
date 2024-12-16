@@ -11,7 +11,7 @@ EMP_EXT := no
 # block and subblock support
 EMP_BLOCK := yes
 # add optimizations
-EMP_OPT := no
+EMP_OPT := yes
 # io optimization for VM
 EMP_IO := yes
 # EMP statistics support

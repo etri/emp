@@ -91,6 +91,9 @@ extern int    initial_mark_empty_page;
 extern int    initial_mem_poll;
 extern int    initial_enable_transition_csf;
 #endif
+#ifdef CONFIG_EMP_OPT
+extern int    initial_eval_media;
+#endif
 extern int    initial_remote_reuse;
 extern int    initial_remote_policy_subblock;
 extern int    initial_remote_policy_block;
@@ -105,6 +108,10 @@ struct emp_config {
 	int     mark_empty_page;
 	int     mem_poll;
 	int     use_compound_page;
+#endif
+#ifdef CONFIG_EMP_OPT
+	int     next_pt_premapping;
+	int     eval_media;
 #endif
 	int     remote_reuse; /* reuse remote page: remote inclusive policy */
 	int     remote_policy_subblock;
