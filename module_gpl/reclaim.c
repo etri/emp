@@ -696,12 +696,20 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 		emp_unlock_block(head);
 	}
 
+#ifdef CONFIG_EMP_BLOCKDEV
+	if (bvma->mrs.blockdev_used)
+		io_schedule();
+#endif
 
 	return n_victim_pages;
 
 error:
 	for ( ; i < n_victims; i++)
 		emp_unlock_block(victims[i]);
+#ifdef CONFIG_EMP_BLOCKDEV
+	if (bvma->mrs.blockdev_used)
+		io_schedule();
+#endif
 	return n_victim_pages;
 }
 

@@ -1439,6 +1439,16 @@ void debug__alloc_pages(struct page *page, int page_order)
 	}
 }
 
+#ifdef CONFIG_EMP_BLOCKDEV
+#define READ_FROM_BLOCK 0
+#define WRITE_TO_BLOCK  1
+void debug_emp_bdev_wait_rw(struct work_request *w, int rw)
+{
+	BUG_ON(!w);
+	BUG_ON((rw == READ_FROM_BLOCK) && (w->type == TYPE_WB));
+	BUG_ON((rw == WRITE_TO_BLOCK) && (w->type == TYPE_FETCHING));
+}
+#endif /* CONFIG_EMP_BLOCKDEV */
 
 void debug_alloc_and_fetch_pages(struct emp_mm *bvma, struct emp_gpa *gpa,
 		struct page *free_page, int page_order, int avail_dma_order)

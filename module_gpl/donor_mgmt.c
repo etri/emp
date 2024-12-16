@@ -39,6 +39,11 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 	 *       DONOR_DEV_PMEM: handled as DONOR_DEV_NVME
 	 */
 	switch (donor->dev_type) {
+#ifdef CONFIG_EMP_BLOCKDEV
+	case DONOR_DEV_NVME:
+		dma_ops = &nvme_dma_ops;
+		break;
+#endif
 	default:
 		printk(KERN_ERR "donor type %d requested\n",  donor->dev_type);
 		ret = -EINVAL;
@@ -82,6 +87,11 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 	mr->conn = conn;
 	mr->ops = dma_ops;
 	switch (donor->dev_type) {
+#ifdef CONFIG_EMP_BLOCKDEV
+	case DONOR_DEV_NVME:
+		mr->type = MR_NVME;
+		break;
+#endif
 	}
 
 	conn->memreg = mr;
@@ -114,6 +124,10 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 		bvma->config.critical_page_first = 0;
 	}
 
+#ifdef CONFIG_EMP_BLOCKDEV
+	if (mr->type == MR_NVME)
+		bvma->mrs.blockdev_used = true;
+#endif
 
 	return 0;
 err_alloc_wr_cache:

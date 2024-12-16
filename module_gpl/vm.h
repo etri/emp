@@ -127,6 +127,9 @@ struct emp_mrs {
 	u8               memregs_last; // the last mrid added by 1
 	struct memreg    **memregs;
 	spinlock_t       memregs_lock;
+#ifdef CONFIG_EMP_BLOCKDEV
+	bool             blockdev_used;
+#endif
 	wait_queue_head_t mrs_ctrl_wq;
 };
 

@@ -1600,6 +1600,11 @@ void COMPILER_DEBUG gpas_close(struct emp_vmr *vmr, bool do_unmap)
 	vmr->descs = NULL;
 
 	spin_unlock(&vmr->gpas_close_lock);
+#ifdef CONFIG_EMP_BLOCKDEV
+	/* NOTE: io_schedule() should be called after all locks have been released. */
+	if (vmr->emm->mrs.blockdev_used)
+		io_schedule();
+#endif
 }
 
 /**

@@ -66,6 +66,16 @@ struct work_request {
 	void                        *context;
 
 	union {
+#ifdef CONFIG_EMP_BLOCKDEV
+		struct {
+			struct completion       wait;
+			struct bio      *bio;
+			int             command;
+			blk_qc_t        cookie;
+			struct request_queue    *q;
+			int                     errors;
+		};
+#endif
 	};
 
 	struct work_request         *head_wr;
@@ -92,6 +102,12 @@ struct context {
 	wait_queue_head_t   ctrl_wq;
 
 	union {
+#ifdef CONFIG_EMP_BLOCKDEV
+		/* Block Device */
+		struct {
+			u64                 base;
+		};
+#endif
 	};
 
 	atomic_t          wr_len; /* # related work requests */
@@ -104,6 +120,14 @@ struct connection {
 	atomic_t        refcount;
 	wait_queue_head_t ctrl_wq;
 	union {
+#ifdef CONFIG_EMP_BLOCKDEV
+		/* Block Device */
+		struct {
+			struct block_device *bdev;
+			unsigned int         base;
+			size_t               size;
+		};
+#endif
 	};
 
 	void    *emm;
@@ -172,6 +196,9 @@ void dma_exit(void);
 
 #define WR_SGE_LEN(w) (0)
 
+#ifdef CONFIG_EMP_BLOCKDEV
+extern struct dma_ops nvme_dma_ops;
+#endif
 
 static inline int get_wr_remote_page_mrid(struct work_request *w) {
 	debug_assert(is_remote_page_cow(&w->remote_page) == false);

@@ -18,6 +18,14 @@ ifeq ($(EMP_IO), yes)
  emp-y += iov.o
 endif
 
+#ifdef CONFIG_EMP_BLOCKDEV
+# '#ifdef' adove is not for 'make', but for the code management.
+# for nvme access
+ifeq ($(BLOCKDEV_SUPPORT), yes)
+emp-y += bdev.o
+endif
+# '#endif' below is not for 'make', but for the code management.
+#endif
 
 
 

@@ -334,6 +334,10 @@ static int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 
 	emp_update_rss_cached(vmr);
 
+#ifdef CONFIG_EMP_BLOCKDEV
+	if (bvma->mrs.blockdev_used && fip > 0)
+		io_schedule();
+#endif
 
 	return fip;
 }

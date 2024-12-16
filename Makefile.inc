@@ -21,7 +21,7 @@ EMP_DEBUG := no
 # Include instruction emulation
 EMP_INSN_EMUL := no
 # remote memory using block device support (e.g. NVMe SSD)
-BLOCKDEV_SUPPORT := no
+BLOCKDEV_SUPPORT := yes
 # remote memory using memory-like device support (EXPERIMENTAL)
 MEMDEV_SUPPORT := no
 # remote memory using rdma support

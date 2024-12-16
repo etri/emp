@@ -39,6 +39,9 @@ struct memreg {
 
 	void                    *ops; // struct dma_ops
 	enum {
+#ifdef CONFIG_EMP_BLOCKDEV
+		MR_NVME,
+#endif
 	} type;
 	int                     dma_order;
 	bool                    inorder;

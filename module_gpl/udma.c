@@ -2,6 +2,9 @@
 #include <linux/nvme_ioctl.h>
 #include <linux/uio.h>
 #include <linux/sched/sysctl.h>
+#ifdef CONFIG_EMP_BLOCKDEV
+#include "nvme.h"
+#endif
 #include "vm.h"
 #include "subblock.h"
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
@@ -18,6 +21,9 @@
  */
 int dma_open(void *opaque)
 {
+#ifdef CONFIG_EMP_BLOCKDEV
+	nvme_open(opaque);
+#endif
 	return 0;
 }
 
@@ -27,14 +33,23 @@ int dma_open(void *opaque)
  */
 void dma_release(void *opaque)
 {
+#ifdef CONFIG_EMP_BLOCKDEV
+	nvme_release(opaque);
+#endif
 }
 
 int dma_init(void)
 {
+#ifdef CONFIG_EMP_BLOCKDEV
+	nvme_init();
+#endif
 	return 0;
 }
 
 void dma_exit(void)
 {
+#ifdef CONFIG_EMP_BLOCKDEV
+	nvme_exit();
+#endif
 	return;
 }
