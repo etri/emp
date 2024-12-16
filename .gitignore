@@ -1,0 +1,4 @@
+*.patch
+*.log
+*.diff
+*.bak
