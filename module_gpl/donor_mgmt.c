@@ -47,6 +47,11 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 		dma_ops = &nvme_dma_ops;
 		break;
 #endif
+#ifdef CONFIG_EMP_RDMA
+	case DONOR_DEV_RDMA:
+		dma_ops = &rdma_dma_ops;
+		break;
+#endif
 	default:
 		printk(KERN_ERR "donor type %d requested\n",  donor->dev_type);
 		ret = -EINVAL;
@@ -93,6 +98,13 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 #ifdef CONFIG_EMP_BLOCKDEV
 	case DONOR_DEV_NVME:
 		mr->type = MR_NVME;
+		break;
+#endif
+#ifdef CONFIG_EMP_RDMA
+	case DONOR_DEV_RDMA:
+		mr->addr = donor->addr;
+		mr->port = donor->port;
+		mr->type = MR_RDMA;
 		break;
 #endif
 	}

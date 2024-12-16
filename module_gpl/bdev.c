@@ -744,6 +744,9 @@ static void nvme_init_wr(struct work_request *w)
 static void nvme_wr_ctor(void *opaque)
 {
 	struct work_request *w = (struct work_request *)opaque;
+#ifdef CONFIG_EMP_RDMA
+	init_waitqueue_head(&(w->wq));
+#endif
 	w->state = STATE_INIT;
 	w->gpa = NULL;
 	INIT_LIST_HEAD(&w->sibling);

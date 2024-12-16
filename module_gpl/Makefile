@@ -27,6 +27,13 @@ endif
 # '#endif' below is not for 'make', but for the code management.
 #endif
 
+#ifdef CONFIG_EMP_RDMA
+# '#ifdef' adove is not for 'make', but for the code management.
+ifeq ($(RDMA_SUPPORT), yes)
+ emp-y += rdma.o
+endif
+# '#endif' below is not for 'make', but for the code management.
+#endif
 
 
 default: modules

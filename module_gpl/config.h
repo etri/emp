@@ -86,6 +86,11 @@
 #define PER_VCPU_FREE_LPAGES_LEN(b, c) (1 << (c))
 #endif
 
+#ifdef CONFIG_EMP_RDMA
+#define RDMA_TIMEOUT_MS (2000)
+#define RDMA_CONN_RETRY_COUNT (10)
+#define DONOR_PORT            (19675)
+#endif
 
 #define LOCAL_CACHE_SIZE      (4 * SIZE_GIGA)
 #define LOCAL_CACHE_PAGES     (LOCAL_CACHE_SIZE >> PAGE_SHIFT)

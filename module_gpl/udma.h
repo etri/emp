@@ -76,6 +76,15 @@ struct work_request {
 			int                     errors;
 		};
 #endif
+#ifdef CONFIG_EMP_RDMA
+		struct {
+			wait_queue_head_t       wq;
+			struct ib_rdma_wr       wr;
+			struct ib_send_wr       *bad_wr;
+			struct ib_sge           sge;
+			struct ib_cqe           cqe;
+		};
+#endif
 	};
 
 	struct work_request         *head_wr;
@@ -95,8 +104,16 @@ struct context {
 	atomic_t            is_connected;
 	enum {
 		CONTEXT_CONNECTING,
+#ifdef CONFIG_EMP_RDMA
+		CONTEXT_SEND,
+		CONTEXT_SEND_COMPLETE,
+#endif
 		CONTEXT_READY,
 		CONTEXT_INVL_SIZE,
+#ifdef CONFIG_EMP_RDMA
+		CONTEXT_ADDR_ERROR,
+		CONTEXT_REJECTED,
+#endif
 		CONTEXT_DESTROYING,
 	} ctrl_state;
 	wait_queue_head_t   ctrl_wq;
@@ -108,12 +125,58 @@ struct context {
 			u64                 base;
 		};
 #endif
+#ifdef CONFIG_EMP_RDMA
+		/* RDMA Device */
+		struct {
+			struct ib_qp_init_attr qp_attr;
+			struct ib_mr        *mr;
+			struct ib_pd        *pd;
+
+			u64                 rdma_addr;
+			u64                 rdma_size;
+			u32                 rdma_rkey;
+
+			enum {
+				POLL_CONTEXT_DIRECT,
+				POLL_CONTEXT_SOFTIRQ,
+				POLL_CONTEXT_MEMPOLL,
+			} poll_context;
+
+			struct rdma_cm_id   *cm_id;
+			struct ib_cq        *rcq;
+			struct ib_cq        *scq;
+			int                 nr_cq; 
+			atomic_t            pending;
+			int                 pending_thres;
+			atomic_t            pending_signaled;
+
+			bool                chained_ops;
+		};
+#endif
 	};
 
 	atomic_t          wr_len; /* # related work requests */
 	wait_queue_head_t wr_wq;
 	int               id;
 
+#ifdef CONFIG_EMP_RDMA
+	/* rarely used data */
+	atomic_t          disconnected; /* 1 if UNEXPECTEDLY disconnected */
+	struct {
+		struct message      *send_msg;
+		struct message      *recv_msg;
+
+		u64                 send_dma_addr;
+		struct ib_sge       send_msg_sge;
+		struct ib_cqe       send_msg_cqe;
+		struct ib_send_wr   send_msg_wr;
+
+		u64                 recv_dma_addr;
+		struct ib_sge       recv_msg_sge;
+		struct ib_cqe       recv_msg_cqe;
+		struct ib_recv_wr   recv_msg_wr;
+	};
+#endif
 };
 
 struct connection {
@@ -126,6 +189,18 @@ struct connection {
 			struct block_device *bdev;
 			unsigned int         base;
 			size_t               size;
+		};
+#endif
+#ifdef CONFIG_EMP_RDMA
+		/* RDMA Device */
+		struct {
+			u32			ip;
+			u16			port;
+			u32			dpid;
+			u32			max_conns;
+
+			struct sockaddr_in	local;
+			struct sockaddr_in	remote;
 		};
 #endif
 	};
@@ -194,10 +269,20 @@ void dma_exit(void);
 	(((criticality) < (conn)->n_contexts) ? ((conn)->contexts[criticality]) \
 					      : ((conn)->contexts[0]))
 
+#ifdef CONFIG_EMP_RDMA
+#define WR_SGE_LEN(w) ((w)->sge.length)
+#else
 #define WR_SGE_LEN(w) (0)
+#endif
 
 #ifdef CONFIG_EMP_BLOCKDEV
 extern struct dma_ops nvme_dma_ops;
+#endif
+#ifdef CONFIG_EMP_RDMA
+extern struct dma_ops rdma_dma_ops;
+
+// direct queue: 0, softirq queue: >0
+#define N_RDMA_QUEUES (3)
 #endif
 
 static inline int get_wr_remote_page_mrid(struct work_request *w) {
@@ -226,9 +311,27 @@ static inline int conn_get_mr_id(struct connection *conn) {
 }
 
 static inline int conn_get_ctrl_state(struct connection *conn) {
+#ifdef CONFIG_EMP_RDMA
+	return CONN_GET_CONTEXT(conn, 0)->ctrl_state;
+#else
 	return 0;
+#endif
 }
 
+#ifdef CONFIG_EMP_RDMA
+static inline unsigned int inet_addr(char *addr) {
+	int a, b, c, d;
+	char inet[4];
+
+	sscanf(addr, "%d.%d.%d.%d", &a, &b, &c, &d);
+	inet[0] = a;
+	inet[1] = b;
+	inet[2] = c;
+	inet[3] = d;
+
+	return *(unsigned int *)inet;
+}
+#endif
 /**
  * alloc_work_request - Allocate a work request to DMA
  * @param b bvma data structure

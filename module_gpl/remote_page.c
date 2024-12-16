@@ -362,6 +362,24 @@ remote_page_release(struct emp_mm *emm, struct emp_gpa *head, int num)
 
 void adjust_remote_page_policy(struct emp_mm *emm, struct memreg *mr)
 {
+#ifdef CONFIG_EMP_RDMA
+	if (mr->type == MR_RDMA && emm->config.remote_policy_subblock
+					!= REMOTE_POLICY_SUBBLOCK_SAME_MR) {
+		int i;
+		for (i = 0; i < N_RDMA_QUEUES; i++) {
+			if (mr->conn->contexts[i] == NULL)
+				continue;
+			if (mr->conn->contexts[i]->chained_ops) {
+				printk(KERN_INFO "%s: SUBBLOCK_SAME_MR policy "
+					"is enabled since chainged operations "
+					"is used\n", __func__);
+				emm->config.remote_policy_subblock =
+						REMOTE_POLICY_SUBBLOCK_SAME_MR;
+				break;
+			}
+		}
+	}
+#endif
 }
 
 /**

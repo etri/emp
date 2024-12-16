@@ -39,6 +39,9 @@ struct memreg {
 
 	void                    *ops; // struct dma_ops
 	enum {
+#ifdef CONFIG_EMP_RDMA
+		MR_RDMA,
+#endif
 #ifdef CONFIG_EMP_BLOCKDEV
 		MR_NVME,
 #endif
@@ -55,7 +58,11 @@ struct memreg {
 	wait_queue_head_t       wr_wq;
 }; // struct memreg indicates a memory donor.
 
+#ifdef CONFIG_EMP_RDMA
+#define IS_MR_TYPE_RDMA(mr) ((mr)->type == (MR_RDMA))
+#else
 #define IS_MR_TYPE_RDMA(mr) (false)
+#endif
 
 /* struct remote_page defined in emp_type.h */
 #define ____get_rp_ptr(rp) (rp)

@@ -350,14 +350,25 @@ static ssize_t initial_critical_page_first_write(struct file *file, const char _
 											size_t count, loff_t *ppos) {
 	extern int initial_critical_page_first;
 	extern int initial_critical_subblock_first;
+#ifdef CONFIG_EMP_RDMA
+	extern int initial_mark_empty_page;
+#endif
 	int critical_page_first = initial_critical_page_first;
 	ssize_t ret = __integer_write(file, buf, count, ppos,
 							&critical_page_first, 0, 1);
 
 	if (ret < 0) return ret;
 
+#ifdef CONFIG_EMP_RDMA
+	if ((critical_page_first == 1) &&
+			(initial_critical_subblock_first == 0 || initial_mark_empty_page == 0)) {
+		printk(KERN_ERR "critical_subblock_first and mark_empty_page must be enabled for critical_page_first\n");
+		return -EINVAL;
+	}
+#else
 	printk(KERN_ERR "critical_page_first is currently supported only on RDMA\n");
 	return -EINVAL;
+#endif
 
 	initial_critical_page_first = critical_page_first;
 	printk(KERN_INFO "initial_critical_page_first: %d\n", initial_critical_page_first);
@@ -491,9 +502,20 @@ static ssize_t critical_page_first_write(struct file *file, const char __user *b
 						&critical_page_first, 0, 1);
 	if (ret < 0) return ret;
 
+#ifdef CONFIG_EMP_RDMA
+	if ((critical_page_first == 1) &&
+			(bvma->config.critical_subblock_first == 0 ||
+			 bvma->config.mark_empty_page == 0)) {
+		printk(KERN_ERR "ERROR: [emp_id: %d] critical_subblock_first and "
+				"mark_empty_page must be enabled for critical_page_first\n",
+						bvma->id);
+		return -EINVAL;
+	}
+#else
 	printk(KERN_ERR "ERROR: [emp_id: %d] critical_page_first is currently supported only on RDMA\n",
 			bvma->id);
 	return -EINVAL;
+#endif
 
 	bvma->config.critical_page_first = critical_page_first;
 	printk(KERN_INFO "critical_page_first: emp_id: %d value: %d\n", bvma->id, critical_page_first);
@@ -665,6 +687,57 @@ static ssize_t local_cache_size_read(struct file *file, char __user *buf,
 	return ret;
 }
 
+#ifdef CONFIG_EMP_RDMA
+static inline ssize_t __donor_info_show(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos, struct emp_mm *bvma)
+{
+	size_t buf_size = PROC_BUF_SIZE * bvma->mrs.memregs_len * 4;
+	char buffer[buf_size];
+	ssize_t len = 0;
+	int j;
+	struct memreg *m;
+	size_t free;
+	
+	rcu_read_lock();
+	if (bvma->close)
+		goto out;
+	for (j = 0; j < bvma->mrs.memregs_len; j++) {
+		m = bvma->mrs.memregs[j];
+		if (m == NULL)
+			continue;
+
+		free = m->size - atomic64_read(&m->alloc_len);
+		len += snprintf(buffer + len, buf_size - len,
+				"donor[%d] %pI4 "
+				"port:%d pid:%d "
+				"size: %lld MiB "
+				"free: %ld MiB\n",
+				j, &m->addr, m->port,
+				m->conn->dpid,
+				PAGE_TO_MB(m->size), 
+				PAGE_TO_MB(free));
+	}
+out:
+	rcu_read_unlock();
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t donor_info_read(struct file *file, char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	ssize_t len;
+	struct emp_mm *bvma;
+
+	bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	spin_lock(&bvma->mrs.memregs_lock);
+	len = __donor_info_show(file, buf, count, ppos, bvma);
+	spin_unlock(&bvma->mrs.memregs_lock);
+
+	return len;
+}
+#endif /* CONFIG_EMP_RDMA */
 
 #ifdef CONFIG_EMP_STAT
 /**************************************************/
@@ -977,6 +1050,9 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_rw(reset_after_read),
 #endif
 	emp_proc_entry_ro(local_cache_size),
+#ifdef CONFIG_EMP_RDMA
+	emp_proc_entry_ro(donor_info),
+#endif
 	emp_proc_entry_END,
 };
 
