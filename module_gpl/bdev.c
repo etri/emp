@@ -160,6 +160,14 @@ static int emp_bdev_wait_rw(struct emp_mm *bvma, struct work_request *w,
 		return -1;
 
 	w->state = STATE_READY;
+#ifdef CONFIG_EMP_STAT
+	if (likely(bvma)) {
+		atomic_t *counter;
+		counter = (rw == READ_FROM_BLOCK)?&bvma->stat.read_comp:
+			&bvma->stat.write_comp;
+		atomic_inc(counter);
+	}
+#endif
 	return w->errors;
 }
 
@@ -179,6 +187,15 @@ static int emp_bdev_try_wait_rw(struct emp_mm *bvma, struct work_request *w, int
 		return -1;
 
 	w->state = STATE_READY;
+#ifdef CONFIG_EMP_STAT
+	if (likely(bvma)) {
+		atomic_t *counter;
+
+		counter = (rw == READ_FROM_BLOCK)?&bvma->stat.read_comp:
+			&bvma->stat.write_comp;
+		atomic_inc(counter);
+	}
+#endif
 	return w->errors;
 }
 

@@ -138,6 +138,9 @@ static bool flush_remote_tlbs(struct emp_mm *bvma, bool need_tlb_flush_ipi)
 
 	if (need_tlb_flush_ipi) {
 		make_all_cpus_req(kvm, KVM_REQ_TLB_FLUSH);
+#ifdef CONFIG_EMP_STAT
+		++bvma->stat.remote_tlb_flush;
+#endif
 
 		/* checks whether there was tlb invalidation by other threads
 		 * while executing this function. */
@@ -147,6 +150,9 @@ static bool flush_remote_tlbs(struct emp_mm *bvma, bool need_tlb_flush_ipi)
 	}
 
 	make_all_cpus_req_no_IPI(kvm, KVM_REQ_TLB_FLUSH);
+#ifdef CONFIG_EMP_STAT
+	++bvma->stat.remote_tlb_flush_no_ipi;
+#endif
 	return false;
 }
 

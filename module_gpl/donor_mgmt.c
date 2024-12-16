@@ -10,6 +10,9 @@
 #include "page_mgmt.h"
 #include "udma.h"
 #include "remote_page.h"
+#ifdef CONFIG_EMP_STAT
+#include "stat.h"
+#endif
 #include "donor_mgmt.h"
 
 #define MEMREG_SIZE (sizeof(struct memreg))

@@ -15,7 +15,7 @@ EMP_OPT := yes
 # io optimization for VM
 EMP_IO := yes
 # EMP statistics support
-EMP_STAT := no
+EMP_STAT := yes
 # Include debug codes
 EMP_DEBUG := no
 # Include instruction emulation

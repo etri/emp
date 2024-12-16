@@ -843,6 +843,9 @@ static struct emp_mm *create_emm(void)
 	bvma->config.mark_empty_page = initial_mark_empty_page;
 	bvma->config.mem_poll = initial_mem_poll;
 #endif
+#ifdef CONFIG_EMP_STAT
+	bvma->config.reset_after_read = 0;
+#endif
 #ifdef CONFIG_EMP_OPT
 	bvma->config.next_pt_premapping = 0; /* TODO: test this feature */
 	bvma->config.eval_media = initial_eval_media;
@@ -852,6 +855,12 @@ static struct emp_mm *create_emm(void)
 	bvma->config.remote_policy_block = initial_remote_policy_block;
 	atomic_set(&bvma->ftm.local_cache_pages, initial_local_cache_pages);
 
+#ifdef CONFIG_EMP_STAT
+	atomic_set(&bvma->stat.read_reqs, 0);
+	atomic_set(&bvma->stat.read_comp, 0);
+	atomic_set(&bvma->stat.write_reqs, 0);
+	atomic_set(&bvma->stat.write_comp, 0);
+#endif
 	bvma->ftm.local_cache_pages_headroom = 0;
 
 	return bvma;
@@ -1055,6 +1064,9 @@ int emp_fsync(struct file *filp, loff_t s, loff_t e, int datasync)
 	if (!bvma)
 		return -EINVAL;
 
+#ifdef CONFIG_EMP_STAT
+	bvma->stat.fsync_count++;
+#endif
 	return 0;
 }
 

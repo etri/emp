@@ -536,6 +536,9 @@ EMP_PROC_VM_CONFIG_BOOLEAN_READ(use_compound_page);
 EMP_PROC_VM_CONFIG_BOOLEAN(next_pt_premapping)
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(eval_media);
 #endif
+#ifdef CONFIG_EMP_STAT
+EMP_PROC_VM_CONFIG_BOOLEAN(reset_after_read)
+#endif
 #ifdef CONFIG_EMP_OPT
 #ifdef CONFIG_EMP_BLOCKDEV
 static inline ssize_t __read_poll_read(struct file *file, char __user *buf,
@@ -663,6 +666,178 @@ static ssize_t local_cache_size_read(struct file *file, char __user *buf,
 }
 
 
+#ifdef CONFIG_EMP_STAT
+/**************************************************/
+/* per-VM files - stat                            */
+/**************************************************/
+
+#define __EMP_PROC_STAT_READ_PER(type, name, var) \
+	static inline ssize_t ____concat3(__, name, _read) \
+						(struct file *file, char __user *buf, \
+							size_t count, loff_t *ppos, struct emp_mm *bvma) \
+	{ \
+		size_t buf_size = PROC_BUF_SIZE * (IO_THREAD_MAX + KVM_THREAD_MAX + 4); \
+		char *buffer = NULL; \
+		ssize_t len = 0; \
+		u64 val, sum = 0; \
+		int j, srcu_index; \
+		ssize_t ret; \
+	\
+		buffer = emp_kmalloc(buf_size, GFP_KERNEL); \
+                if(buffer == NULL) return 0; \
+        \
+		rcu_read_lock(); \
+		if (bvma->close) { \
+			rcu_read_unlock(); \
+			return 0; \
+		} \
+		srcu_index = srcu_read_lock(&bvma->srcu); \
+		rcu_read_unlock(); \
+		FOR_EACH_##type(bvma, j) { \
+			val = (emp_get_vcpu_from_id(bvma, j))->stat.var; \
+			len += snprintf(buffer+len, buf_size-len, "%lld\t", val); \
+			sum += val; \
+			if (bvma->config.reset_after_read) \
+				(emp_get_vcpu_from_id(bvma, j))->stat.var = 0; \
+		} \
+		len += snprintf(buffer+len, buf_size-len, "sum: %lld\n", sum); \
+		ret = simple_read_from_buffer(buf, count, ppos, buffer, len); \
+	\
+		srcu_read_unlock(&bvma->srcu, srcu_index); \
+		emp_kfree(buffer); \
+		return ret; \
+	} \
+	\
+	static ssize_t ____concat2(name, _read) \
+			(struct file *file, char __user *buf, size_t count, loff_t *ppos) \
+	{ \
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+		return ____concat3(__, name, _read)(file, buf, count, ppos, bvma); \
+	}
+
+#define __EMP_PROC_STAT_WRITE_PER(type, name, var) \
+	static ssize_t ____concat2(name, _write) \
+				(struct file *file, const char __user *buf, size_t count, loff_t *ppos) \
+	{ \
+		int j, srcu_index; \
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+	\
+		rcu_read_lock(); \
+		if (bvma->close) { \
+			rcu_read_unlock(); \
+			return 0; \
+		} \
+		srcu_index = srcu_read_lock(&bvma->srcu); \
+		rcu_read_unlock(); \
+		FOR_EACH_##type(bvma, j) \
+			(emp_get_vcpu_from_id(bvma, j))->stat.var = 0; \
+		srcu_read_unlock(&bvma->srcu, srcu_index); \
+	\
+		return count; \
+	}
+
+#define __EMP_PROC_STAT_READ_VM(name, var) \
+	static ssize_t ____concat2(name, _read) \
+		(struct file *file, char __user *buf, size_t count, loff_t *ppos) \
+	{ \
+		char buffer[PROC_BUF_SIZE]; \
+		ssize_t len = 0; \
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+		rcu_read_lock(); \
+		if (bvma->close == 0) { \
+		len = snprintf(buffer, PROC_BUF_SIZE, "%lld\n", bvma->stat.var); \
+		if (bvma->config.reset_after_read) \
+			bvma->stat.var = 0; \
+		} \
+		rcu_read_unlock(); \
+	\
+		return simple_read_from_buffer(buf, count, ppos, buffer, len); \
+	}
+
+#define __EMP_PROC_STAT_WRITE_VM(name, var) \
+	static ssize_t ____concat2(name, _write) \
+		(struct file *file, const char __user *buf, size_t count, loff_t *ppos) \
+	{ \
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+		rcu_read_lock(); \
+		if (bvma->close == 0) { \
+			bvma->stat.var = 0; \
+		} \
+		rcu_read_unlock(); \
+		return count; \
+	}
+
+#define __EMP_PROC_STAT_PER_VCPU(name, var) \
+		__EMP_PROC_STAT_READ_PER(VCPU, name, var) \
+		__EMP_PROC_STAT_WRITE_PER(VCPU, name, var) \
+
+#define __EMP_PROC_STAT_PER_IOTHREAD(name, var) \
+		__EMP_PROC_STAT_READ_PER(IOTHREAD, name, var) \
+		__EMP_PROC_STAT_WRITE_PER(IOTHREAD, name, var) \
+
+#define __EMP_PROC_STAT_PER_KVM_THREAD(name, var) \
+		__EMP_PROC_STAT_READ_PER(KVM_THREAD, name, var) \
+		__EMP_PROC_STAT_WRITE_PER(KVM_THREAD, name, var) \
+
+#define __EMP_PROC_STAT_VM(name, var) \
+		__EMP_PROC_STAT_READ_VM(name, var) \
+		__EMP_PROC_STAT_WRITE_VM(name, var) \
+
+#define EMP_PROC_STAT_PER_VCPU(x) __EMP_PROC_STAT_PER_VCPU(x, x)
+#define EMP_PROC_STAT_VM(x) __EMP_PROC_STAT_VM(x, x)
+
+/* for all vcpus (io threads + pure vcpu threads) */
+EMP_PROC_STAT_PER_VCPU(vma_fault)
+/* for io threads (qemu) */
+__EMP_PROC_STAT_PER_IOTHREAD(hva_local_fault, local_fault)
+__EMP_PROC_STAT_PER_IOTHREAD(hva_remote_fault, remote_fault)
+/* for pure vcpu threads */
+__EMP_PROC_STAT_PER_KVM_THREAD(gpa_local_fault, local_fault)
+__EMP_PROC_STAT_PER_KVM_THREAD(gpa_remote_fault, remote_fault)
+
+static ssize_t donor_reqs_read(struct file *file, char __user *buf,
+									size_t count, loff_t *ppos)
+{
+	char buffer[PROC_BUF_SIZE * 4];
+	ssize_t len = 0;
+	struct emp_mm *bvma;
+
+	bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	if (bvma->vmrs_len == 0) return 0;
+
+	rcu_read_lock();
+	if (bvma->close == 0) {
+		len = snprintf(buffer, PROC_BUF_SIZE * 4, 
+				"%d %d %d %d\n",
+				atomic_read(&bvma->stat.read_reqs),
+				atomic_read(&bvma->stat.read_comp),
+				atomic_read(&bvma->stat.write_reqs),
+				atomic_read(&bvma->stat.write_comp));
+	}
+	rcu_read_unlock();
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+__EMP_PROC_STAT_VM(reclaim, recl_count)
+__EMP_PROC_STAT_VM(post_write, post_write_count)
+__EMP_PROC_STAT_VM(post_read, post_read_count)
+__EMP_PROC_STAT_VM(stale_page, stale_page_count)
+EMP_PROC_STAT_VM(remote_tlb_flush)
+EMP_PROC_STAT_VM(remote_tlb_flush_no_ipi)
+EMP_PROC_STAT_VM(remote_tlb_flush_force)
+EMP_PROC_STAT_VM(io_read_pages)
+EMP_PROC_STAT_VM(csf_fault)
+EMP_PROC_STAT_VM(csf_useful)
+EMP_PROC_STAT_VM(cpf_to_csf_transition)
+EMP_PROC_STAT_VM(post_read_mempoll)
+__EMP_PROC_STAT_VM(fsync, fsync_count)
+#endif /* CONFIG_EMP_STAT */
 
 /**************************************************/
 /* proc entries                                   */
@@ -798,10 +973,37 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_ro(eval_media),
 	emp_proc_entry_rw(read_poll),
 #endif
+#ifdef CONFIG_EMP_STAT
+	emp_proc_entry_rw(reset_after_read),
+#endif
 	emp_proc_entry_ro(local_cache_size),
 	emp_proc_entry_END,
 };
 
+#ifdef CONFIG_EMP_STAT
+static struct emp_proc_entry emp_proc_stat[] = {
+	emp_proc_entry_rw(vma_fault),
+	emp_proc_entry_rw(hva_local_fault),
+	emp_proc_entry_rw(hva_remote_fault),
+	emp_proc_entry_rw(gpa_local_fault),
+	emp_proc_entry_rw(gpa_remote_fault),
+	emp_proc_entry_ro(donor_reqs),
+	emp_proc_entry_rw(reclaim),
+	emp_proc_entry_rw(post_write),
+	emp_proc_entry_rw(post_read),
+	emp_proc_entry_rw(stale_page),
+	emp_proc_entry_rw(remote_tlb_flush),
+	emp_proc_entry_rw(remote_tlb_flush_no_ipi),
+	emp_proc_entry_rw(remote_tlb_flush_force),
+	emp_proc_entry_rw(io_read_pages),
+	emp_proc_entry_rw(csf_fault),
+	emp_proc_entry_rw(csf_useful),
+	emp_proc_entry_rw(cpf_to_csf_transition),
+	emp_proc_entry_rw(post_read_mempoll),
+	emp_proc_entry_rw(fsync),
+	emp_proc_entry_END,
+};
+#endif
 
 static inline int emp_procfs_reg(struct emp_proc_entry *list, 
 						  struct proc_dir_entry *pde, 
@@ -821,6 +1023,12 @@ static inline int emp_procfs_reg(struct emp_proc_entry *list,
 
 void emp_procfs_del(struct emp_mm *bvma)
 {
+#ifdef CONFIG_EMP_STAT
+	if (bvma->emp_stat_dir) {
+		proc_remove(bvma->emp_stat_dir);
+		bvma->emp_stat_dir = NULL;
+	}
+#endif
 	if (bvma->emp_proc_dir) {
 		proc_remove(bvma->emp_proc_dir);
 		bvma->emp_proc_dir = NULL;
@@ -831,8 +1039,13 @@ int emp_procfs_add(struct emp_mm *bvma, int id)
 {
 	char dirname[PROC_NAME_SIZE];
 
+#ifdef CONFIG_EMP_STAT
+	if (bvma->emp_proc_dir || bvma->emp_stat_dir)
+		return -1;
+#else
 	if (bvma->emp_proc_dir)
 		return -1;
+#endif
 
 	if (emp_proc_dir == NULL)
 		return -1;
@@ -846,6 +1059,14 @@ int emp_procfs_add(struct emp_mm *bvma, int id)
 		goto err;
 
 
+#ifdef CONFIG_EMP_STAT
+	bvma->emp_stat_dir = proc_mkdir("stat", bvma->emp_proc_dir);
+	if (!bvma->emp_stat_dir)	
+		goto err;
+	
+	if (emp_procfs_reg(emp_proc_stat, bvma->emp_stat_dir, bvma))
+		goto err;
+#endif
 	return 0;
 
 err:

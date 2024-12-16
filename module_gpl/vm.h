@@ -109,6 +109,9 @@ struct emp_config {
 	int     mem_poll;
 	int     use_compound_page;
 #endif
+#ifdef CONFIG_EMP_STAT
+	int     reset_after_read; /* reset statistics after reading them */
+#endif
 #ifdef CONFIG_EMP_OPT
 	int     next_pt_premapping;
 	int     eval_media;
@@ -419,6 +422,9 @@ struct emp_mm {
 	int                 close;
 
 	struct proc_dir_entry *emp_proc_dir;
+#ifdef CONFIG_EMP_STAT
+	struct proc_dir_entry *emp_stat_dir;
+#endif
 	struct emp_config   config;
 
 	DECLARE_BITMAP(vmrs_bitmap, EMP_VMRS_MAX);
@@ -435,6 +441,10 @@ struct emp_mm {
 #endif
 	struct vcpu_var __percpu *pcpus;
 
+#ifdef CONFIG_EMP_STAT
+	/* variables for collecting stats */
+	struct emp_stat     stat;
+#endif
 
 	struct emp_stm_ops  sops;
 	struct emp_lps_ops  lops;

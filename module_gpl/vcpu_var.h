@@ -68,6 +68,15 @@ struct vcpu_var {
 		int             weight;
 	} post_writeback;
 
+#ifdef CONFIG_EMP_STAT
+	/* statistics */
+	struct {
+	    u64 vma_fault;
+		u64 local_fault;
+		u64 remote_fault;
+	    u64 alloc_pages_wait_count;
+	} stat;
+#endif
 
 	int                     id;
 	u64                     private;

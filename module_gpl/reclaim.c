@@ -375,6 +375,9 @@ void wait_for_prefetch_subblocks(struct emp_mm *emm, struct vcpu_var *cpu,
 	for (i = 0; i < n_vs; i++) {
 		if (__wait_for_prefetched_block(emm, cpu, vs[i]) == false)
 			continue;
+#ifdef CONFIG_EMP_STAT
+		emm->stat.csf_useful++;
+#endif
 	}
 }
 EXPORT_SYMBOL(wait_for_prefetch_subblocks);
@@ -660,6 +663,9 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 		set_local_page_cpu_lru(head->local_page, cpu_id);
 	}
 
+#ifdef CONFIG_EMP_STAT
+	emm->stat.post_write_count++;
+#endif	
 	return head_wr;
 
 error:
@@ -982,6 +988,9 @@ _reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas,
 	*tlb_flush_force = true;
 	bvma->vops.unmap_gpas(bvma, gpas[end], tlb_flush_force);
 
+#ifdef CONFIG_EMP_STAT
+	bvma->stat.recl_count += n_gpas;
+#endif
 
 	return 0;
 }

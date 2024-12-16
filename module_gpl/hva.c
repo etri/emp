@@ -317,6 +317,9 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 
 
 	cpu = emp_this_cpu_ptr(emm->pcpus);
+#ifdef CONFIG_EMP_STAT
+	inc_vma_fault(cpu);
+#endif
 
 	sb_order = bvma_subblock_order(emm);
 	demand_off = (vmf->address - vmr->descs->vm_base);
@@ -375,6 +378,9 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 #endif /* CONFIG_EMP_VM */
 
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
+#ifdef CONFIG_EMP_STAT
+		emm->stat.csf_fault++;
+#endif /* CONFIG_EMP_STAT */
 	}
 #endif /* CONFIG_EMP_BLOCK */
 
@@ -397,6 +403,9 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 
 	// all or nothing policy is assumed for a block
 	if (head->r_state != GPA_INIT) {
+#ifdef CONFIG_EMP_STAT
+		inc_local_fault(cpu);
+#endif
 		r = handle_local_fault(vmr, &head, demand, cpu, vmf, &ret);
 		debug_progress(head, r);
 		if (r != 0) {

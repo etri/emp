@@ -331,6 +331,9 @@ int wait_pages_available(struct emp_mm *bvma, struct vcpu_var *cpu)
 {
 	int res;
 
+#ifdef CONFIG_EMP_STAT
+	cpu->stat.alloc_pages_wait_count++;
+#endif
 	res = wait_event_interruptible_timeout(
 			bvma->ftm.free_pages_wq, //wait queue
 			is_local_free_pages_list_empty(bvma, cpu) || //condition to wakeup
