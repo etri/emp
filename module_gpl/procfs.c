@@ -263,6 +263,135 @@ static ssize_t initial_local_cache_size_write(struct file *file, const char __us
 	return count;
 }
 
+#ifdef CONFIG_EMP_BLOCK
+static ssize_t initial_block_size_read(struct file *file, char __user *buf,
+											size_t count, loff_t *ppos) 
+{
+	extern int initial_block_order;
+	return __size_read(file, buf, count, ppos, __PAGES_TO_SIZE(1) << initial_block_order);
+}
+
+static ssize_t initial_block_size_write(struct file *file, const char __user *buf,
+										size_t count, loff_t *ppos)
+{
+	extern int initial_block_order;
+	extern int initial_subblock_order;
+	size_t block_size;
+	int block_order;
+
+	block_size = __size_write(file, buf, count, ppos);
+
+	if (block_size < 0)
+		return block_size;
+	
+	block_order = get_order(block_size);
+	// temporally huge page is not supported
+	if (block_order < 0 || block_order > HPAGE_PMD_ORDER) {
+		printk(KERN_ERR "ERROR: requested block size is not applied. size: 0x%lx order: %d\n",
+				block_size, block_order);
+		return -EINVAL;
+	}
+	// smaller than DMA size
+	else if (block_order < initial_subblock_order) {
+		printk(KERN_ERR "ERROR: requested subblock size(0x%lx) is not applied since it is smaller than initial subblock size(0x%lx)\n",
+				block_size, 1L << initial_subblock_order);
+		return -EINVAL;
+	}
+	
+	printk("initial_block_order: %d (size: 0x%lx)\n", block_order, block_size);
+	initial_block_order = block_order;
+
+	return count;
+}
+
+static ssize_t initial_subblock_size_read(struct file *file, char __user *buf,
+											size_t count, loff_t *ppos) 
+{
+	extern int initial_subblock_order;
+	return __size_read(file, buf, count, ppos, __PAGES_TO_SIZE(1) << initial_subblock_order);
+}
+
+static ssize_t initial_subblock_size_write(struct file *file, const char __user *buf,
+										size_t count, loff_t *ppos)
+{
+	extern int initial_subblock_order;
+	size_t subblock_size;
+	int subblock_order;
+
+	subblock_size = __size_write(file, buf, count, ppos);
+
+	if (subblock_size < 0)
+		return subblock_size;
+	
+	subblock_order = get_order(subblock_size);
+	// temporally huge page is not supported
+	if (subblock_order < 0 || subblock_order > HPAGE_PMD_ORDER) {
+		printk(KERN_ERR "ERROR: requested subblock size is not applied. size: 0x%lx order: %d\n",
+				subblock_size, subblock_order);
+		return -EINVAL;
+	}
+	// smaller than DMA size
+	else if (subblock_order > DMA_OPERATION_MAX_ORDER) {
+		printk(KERN_ERR "ERROR: requested subblock size is not applied. size: 0x%lx order: %d\n",
+				subblock_size, subblock_order);
+		return -EINVAL;
+	}
+	
+	printk("initial_subblock_order: %d (size: 0x%lx)\n", subblock_order, subblock_size);
+	initial_subblock_order = subblock_order;
+
+	return count;
+}
+
+EMP_PROC_INITIAL_BOOLEAN(use_compound_page)
+EMP_PROC_INITIAL_BOOLEAN(critical_subblock_first)
+EMP_PROC_INITIAL_BOOLEAN_READ(critical_page_first)
+static ssize_t initial_critical_page_first_write(struct file *file, const char __user *buf,
+											size_t count, loff_t *ppos) {
+	extern int initial_critical_page_first;
+	extern int initial_critical_subblock_first;
+	int critical_page_first = initial_critical_page_first;
+	ssize_t ret = __integer_write(file, buf, count, ppos,
+							&critical_page_first, 0, 1);
+
+	if (ret < 0) return ret;
+
+	printk(KERN_ERR "critical_page_first is currently supported only on RDMA\n");
+	return -EINVAL;
+
+	initial_critical_page_first = critical_page_first;
+	printk(KERN_INFO "initial_critical_page_first: %d\n", initial_critical_page_first);
+
+	return ret;
+}
+
+EMP_PROC_INITIAL_BOOLEAN_READ(enable_transition_csf)
+static ssize_t initial_enable_transition_csf_write(struct file *file, const char __user *buf,
+											size_t count, loff_t *ppos) {
+	extern int initial_enable_transition_csf;
+	extern int initial_critical_page_first;
+	extern int initial_critical_subblock_first;
+	int enable_transition_csf = initial_enable_transition_csf;
+	ssize_t ret = __integer_write(file, buf, count, ppos,
+							&enable_transition_csf, 0, 1);
+
+	if (ret < 0) return ret;
+
+	if ((enable_transition_csf == 1) &&
+			(initial_critical_subblock_first == 0 && initial_critical_page_first == 0)) {
+		printk(KERN_ERR "critical_subblock_first or critical_page_first must be enabled for enable_transition_csf\n");
+		return -EINVAL;
+	}
+
+	initial_enable_transition_csf = enable_transition_csf;
+	printk(KERN_INFO "initial_enable_transition_csf: %d\n", initial_enable_transition_csf);
+
+	return ret;
+}
+
+EMP_PROC_INITIAL_BOOLEAN(mark_empty_page)
+EMP_PROC_INITIAL_BOOLEAN(mem_poll)
+#endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_aggr);
 EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_max);
@@ -340,6 +469,66 @@ static ssize_t online_read(struct file *file, char __user *buf,
 	return ret;
 }
 
+#ifdef CONFIG_EMP_BLOCK
+EMP_PROC_VM_CONFIG_INTEGER_READ(block_order)
+EMP_PROC_VM_CONFIG_INTEGER_READ(subblock_order)
+EMP_PROC_VM_CONFIG_BOOLEAN(critical_subblock_first)
+
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(critical_page_first);
+static ssize_t critical_page_first_write(struct file *file, const char __user *buf,
+									size_t count, loff_t *ppos)
+{
+	ssize_t ret;
+	int critical_page_first;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	critical_page_first = bvma->config.critical_page_first;
+
+	ret = __integer_write(file, buf, count, ppos,
+						&critical_page_first, 0, 1);
+	if (ret < 0) return ret;
+
+	printk(KERN_ERR "ERROR: [emp_id: %d] critical_page_first is currently supported only on RDMA\n",
+			bvma->id);
+	return -EINVAL;
+
+	bvma->config.critical_page_first = critical_page_first;
+	printk(KERN_INFO "critical_page_first: emp_id: %d value: %d\n", bvma->id, critical_page_first);
+	return ret;
+}
+
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(enable_transition_csf);
+static ssize_t enable_transition_csf_write(struct file *file, const char __user *buf,
+									size_t count, loff_t *ppos)
+{
+	ssize_t ret;
+	int enable_transition_csf;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	enable_transition_csf = bvma->config.enable_transition_csf;
+
+	ret = __integer_write(file, buf, count, ppos,
+						&enable_transition_csf, 0, 1);
+	if (ret < 0) return ret;
+
+	if ((enable_transition_csf == 1) &&
+			(bvma->config.critical_subblock_first == 0 &&
+			 bvma->config.critical_page_first == 0)) {
+		printk(KERN_ERR "ERROR: [emp_id: %d] critical_subblock_first or "
+				"critical_page_first must be enabled for enable_transition_csf\n",
+						bvma->id);
+		return -EINVAL;
+	}
+
+	bvma->config.enable_transition_csf = enable_transition_csf;
+	printk(KERN_INFO "enable_transition_csf: emp_id: %d value: %d\n", bvma->id, enable_transition_csf);
+	return ret;
+}
+
+EMP_PROC_VM_CONFIG_BOOLEAN(mark_empty_page);
+EMP_PROC_VM_CONFIG_BOOLEAN(mem_poll);
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(use_compound_page);
+#endif
 static ssize_t local_cache_size_read(struct file *file, char __user *buf,
 							size_t count, loff_t *ppos)
 {
@@ -453,6 +642,16 @@ static ssize_t local_cache_size_read(struct file *file, char __user *buf,
 
 static struct emp_proc_entry emp_proc_global[] = {
 	emp_proc_entry_initial_rw(local_cache_size),
+#ifdef CONFIG_EMP_BLOCK
+	emp_proc_entry_initial_rw(block_size),
+	emp_proc_entry_initial_rw(subblock_size),
+	emp_proc_entry_initial_rw(use_compound_page),
+	emp_proc_entry_initial_rw(critical_subblock_first),
+	emp_proc_entry_initial_rw(critical_page_first),
+	emp_proc_entry_initial_rw(enable_transition_csf),
+	emp_proc_entry_initial_rw(mark_empty_page),
+	emp_proc_entry_initial_rw(mem_poll),
+#endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 	emp_proc_entry_ro(emp_debug_alloc_size_aggr),
 	emp_proc_entry_ro(emp_debug_alloc_size_max),
@@ -464,6 +663,16 @@ static struct emp_proc_entry emp_proc_global[] = {
 
 static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_ro(online),
+#ifdef CONFIG_EMP_BLOCK
+	emp_proc_entry_ro(block_order),
+	emp_proc_entry_ro(subblock_order),
+	emp_proc_entry_rw(critical_subblock_first),
+	emp_proc_entry_rw(critical_page_first),
+	emp_proc_entry_rw(enable_transition_csf),
+	emp_proc_entry_rw(mark_empty_page),
+	emp_proc_entry_rw(mem_poll),
+	emp_proc_entry_ro(use_compound_page),
+#endif
 	emp_proc_entry_ro(local_cache_size),
 	emp_proc_entry_END,
 };

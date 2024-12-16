@@ -18,6 +18,25 @@
 #include "debug.h"
 #include "pcalloc.h"
 
+#ifdef CONFIG_EMP_BLOCK
+static inline void emp_init_gpa(struct emp_mm *b, struct emp_gpa *g) {
+	memset(g, 0, sizeof(struct emp_gpa));
+#ifdef CONFIG_EMP_DEBUG_GPA_STATE
+	init_gpa_flags(g, 0);
+#endif
+	____emp_gpa_init_lock(g);
+	g->r_state = GPA_INIT;
+	set_gpa_remote_page_free(g);
+	g->last_mr_id = -1;
+	g->block_order = BLOCK_MAX_ORDER;
+	g->sb_order = bvma_subblock_order(b);
+	g->max_block_order = BLOCK_MAX_ORDER;
+	g->desc_order = g->block_order - g->sb_order;
+	init_progress_info(g);
+	init_gpa_contrib_inactive(g);
+	debug_gpa_refcnt_init(g);
+}
+#else
 static inline void emp_init_gpa(struct emp_mm *b, struct emp_gpa *g) {
 	memset((struct emp_gpa *)g, 0, sizeof(struct emp_gpa));
 #ifdef CONFIG_EMP_DEBUG_GPA_STATE
@@ -31,6 +50,7 @@ static inline void emp_init_gpa(struct emp_mm *b, struct emp_gpa *g) {
 	init_gpa_contrib_inactive(g);
 	debug_gpa_refcnt_init(g);
 }
+#endif
 
 static struct page *
 cleanup_gpa(struct emp_mm *, struct emp_gpa *);
@@ -141,7 +161,15 @@ static unsigned long get_num_low_memory_pages(struct emp_mm *e)
 }
 #endif /* CONFIG_EMP_VM */
 
+#ifdef CONFIG_EMP_BLOCK
+static inline void set_gpa_block_order(struct emp_gpa *g, int order) {
+	g->block_order = order;
+	g->max_block_order = order;
+	g->desc_order = g->block_order - g->sb_order;
+}
+#else
 #define set_gpa_block_order(g, o) do {} while(0)
+#endif
 
 #define emp_ext_init_gpa(e, g, i) do {} while(0)
 
@@ -1623,6 +1651,11 @@ int gpa_init(struct emp_mm *emm)
 	emm->vops.free_gpa = free_gpa;
 	emm->vops.set_gpa_remote = set_gpa_remote;
 
+#ifdef CONFIG_EMP_BLOCK
+	printk("GPA block: %d pages subblock: %d pages\n", 
+				(1 << emm->config.block_order),
+				(1 << emm->config.subblock_order));
+#endif
 
 	for (i = 0; i <= BLOCK_MAX_ORDER; i++)
 		set_gpadesc_alloc(emm, i, NULL);

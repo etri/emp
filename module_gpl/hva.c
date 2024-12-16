@@ -84,11 +84,34 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_gpa *head,
 {
 	struct emp_gpa *sb_head;
 	struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
+#ifdef CONFIG_EMP_BLOCK
+	bool csf;
+#endif
 
 	head->r_state = GPA_ACTIVE;
 	set_gpa_flags_if_unset(head, GPA_HPT_MASK);
 	clear_gpa_flags_if_set(head, GPA_REMOTE_MASK);
 
+#ifdef CONFIG_EMP_BLOCK
+	csf = bvma_csf_enabled(bvma) && 
+		!is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK);
+	
+	if (csf && fetch && !prefetched_sb) {
+		/* processed only a sub-block, not all */
+		if ((bvma->sops.wait_read_async)(bvma, cpu, demand)) {
+			debug_page_ref_io_end(demand->local_page);
+			emp_put_subblock(demand);
+		}
+
+		if (gpa_subblock_order(head) != gpa_block_order(head)) {
+			head->local_page->demand_offset
+						= gpa_block_offset(head, pgoff);
+			set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+			set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
+		}
+		return;
+	}
+#endif
 
 	// Assumption: only gpa descriptors in a block reside in a contiguous memory region.
 	debug_BUG_ON((fe - fs) > num_subblock_in_block(demand));
@@ -330,6 +353,30 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	fs = head;
 	fe = head + num_subblock_in_block(head);
 
+#ifdef CONFIG_EMP_BLOCK
+	/* release (wait && map) all the prefetched sub-blocks in a block */
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+		debug___emp_page_fault_hva(head);
+
+		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
+			emp_page_fault_hptes_map(emm, vmr, head, demand,
+				       	demand_sb_off - head_idx, fs, fe,
+					true, vmf, true);
+		}
+#ifdef CONFIG_EMP_VM
+		else if (is_gpa_flags_set(head, GPA_EPT_MASK)) {
+			struct kvm_memory_slot *ms;
+			u64 head_gpa = hva_to_gpa(emm, vmf->address, &ms) -
+				((demand - head) << (sb_order + PAGE_SHIFT)) -
+				((demand_off & gpa_subblock_mask(demand)) << PAGE_SHIFT);
+			emp_page_fault_sptes_map(kvm_get_any_vcpu(emm->ekvm.kvm),
+						 cpu, head, head_gpa, ms);
+		}
+#endif /* CONFIG_EMP_VM */
+
+		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
+	}
+#endif /* CONFIG_EMP_BLOCK */
 
 #ifdef CONFIG_EMP_IO
 	// following must be cleared

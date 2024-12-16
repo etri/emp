@@ -9,7 +9,7 @@ EMP_VM := yes
 # EMP extension support
 EMP_EXT := no
 # block and subblock support
-EMP_BLOCK := no
+EMP_BLOCK := yes
 # add optimizations
 EMP_OPT := no
 # io optimization for VM

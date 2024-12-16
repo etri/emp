@@ -108,9 +108,15 @@ enum gpa_state {
 #define ERR_MAP_EXISTS (1)
 
 
+#ifdef CONFIG_EMP_BLOCK
+#define gpa_subblock_order(g) ((g)->sb_order)
+#define gpa_subblock_size(g)  (1 << (g)->sb_order)
+#define gpa_subblock_mask(g)  (gpa_subblock_size(g) - 1)
+#else
 #define gpa_subblock_order(g) (0)
 #define gpa_subblock_size(g)  (1)
 #define gpa_subblock_mask(g)  (0)
+#endif
 
 #define gpa_subblock_page_order(g) (gpa_subblock_order(g) + PAGE_SHIFT)
 #define gpa_subblock_page_size(g)  (1 << gpa_subblock_page_order(g))

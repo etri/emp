@@ -32,7 +32,16 @@ is_local_free_pages_list_empty(struct emp_mm *bvma, struct vcpu_var *cpu)
  */
 void clear_page_state(struct emp_mm *bvma, struct page *page)
 {
+#ifdef CONFIG_EMP_BLOCK
+	if (bvma->config.use_compound_page == false) {
+		page->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP);
+		return;
+	}
+
+	page->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP & ~PG_head_mask);
+#else
 	page->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP);
+#endif
 }
 
 /**
@@ -119,7 +128,14 @@ static struct page *__alloc_page(struct emp_mm *emm)
 
 	/* setup get free page flags */
 	gfp = GFP_HIGHUSER_MOVABLE; //allocated pages will be used by user
+#ifdef CONFIG_EMP_BLOCK
+	if (emm->config.use_compound_page) 
+		gfp |= __GFP_COMP;
+	else
+		gfp &= ~__GFP_COMP; //compound page must not be used here
+#else
 	gfp &= ~__GFP_COMP; //compound page must not be used here
+#endif
 
 	/* allocate pages with the given order */
 #ifdef CONFIG_EMP_PREFER_DCPMM
@@ -146,6 +162,16 @@ static struct page *__alloc_page(struct emp_mm *emm)
 	 * We have to increase reference counts of following pages because
 	 * kernel will try to release the pages with reference count zero. */
 	clear_page_state(emm, page);
+#ifdef CONFIG_EMP_BLOCK
+	/* without CONFIG_EMP_BLOCK, page_order is always 0 */
+	if (page_order && emm->config.use_compound_page == false) {
+		int i;
+		for (i = 1; i < (1 << page_order); i++) {
+			page_ref_inc(page + i);
+			clear_page_state(emm, page + i);
+		}
+	}
+#endif
 
 	/* Acquire locks for all page descriptors in allocated pages.
 	 * The locks will be released when the pages are popped from free list.
@@ -345,6 +371,52 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 	might_sleep();
 
 	emp_list_lock(free_page_list);
+#ifdef CONFIG_EMP_BLOCK
+	if (subblock_order && emm->config.use_compound_page == false) {
+		int i;
+		int remained;
+		emp_list_for_each_safe(cur, n, free_page_list) {
+			/* To prevent CPU stuck, breathe every 4GB */
+			num_subblock++;
+			if ((num_subblock & 0x3ff) == 0)
+				cond_resched();
+
+			page = get_free_page_from_list(cur);
+			emp_list_del_init(cur, free_page_list);
+			_emp_unlock_page(page, subblock_order);
+#ifdef CONFIG_EMP_BLOCK
+			remained = 0;
+			/* without CONFIG_EMP_BLOCK, subblock_order is always 0. */
+			for (i = 1; i < subblock_size; i++) {
+				page_ref_dec(page + i);
+				remained += page_ref_count(page + i);
+				INIT_LIST_HEAD(&(page + i)->lru);
+			}
+
+			page_ref_add(page, remained);
+			debug_page_ref_mark_page(-100, page, remained);
+#endif
+
+			if (PageUnevictable(page))
+				ClearPageUnevictable(page);
+			emp_free_pages(page, subblock_order);
+		}
+	} else {
+		emp_list_for_each_safe(cur, n, free_page_list) {
+			/* To prevent CPU stuck, breathe every 4GB */
+			num_subblock++;
+			if ((num_subblock & 0x3ff) == 0)
+				cond_resched();
+
+			page = get_free_page_from_list(cur);
+			emp_list_del_init(cur, free_page_list);
+			_emp_unlock_page(page, subblock_order);
+			if (PageUnevictable(page))
+				ClearPageUnevictable(page);
+			emp_free_pages(page, subblock_order);
+		}
+	}
+#else /* !CONFIG_EMP_BLOCK */
 	emp_list_for_each_safe(cur, n, free_page_list) {
 		/* To prevent CPU stuck, breathe every 4GB */
 		num_subblock++;
@@ -358,6 +430,7 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 			ClearPageUnevictable(page);
 		emp_free_pages(page, subblock_order);
 	}
+#endif /* !CONFIG_EMP_BLOCK */
 	debug_assert(emp_list_empty(free_page_list));
 	atomic_sub(num_subblock * subblock_size, &emm->ftm.alloc_pages_len);
 	emp_list_unlock(free_page_list);
@@ -365,8 +438,27 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 	debug_alloc_exit(emm);
 }
 
+#ifdef CONFIG_EMP_BLOCK
+static void 
+mark_empty_page(struct emp_mm *emm, struct page *page, int order, int demand)
+{
+	void *addr, *addr_end;
+
+	if (!bvma_mark_empty_page(emm))
+		return;
+	/*if (demand == -1)*/
+		/*return;*/
+
+	addr_end = page_address(page + (1 << order));
+	for (addr = page_address(page) + PAGE_SIZE - sizeof(u64);
+			addr < addr_end; addr += PAGE_SIZE) {
+		*(volatile u64 *)(addr) = EMPTY_PAGE;
+	}
+}
+#else
 static inline void 
 mark_empty_page(struct emp_mm *emm, struct page *page, int order, int demand){}
+#endif
 
 /**
  * _alloc_pages - Allocates a page with the page order for vcpu

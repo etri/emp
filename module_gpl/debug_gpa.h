@@ -62,7 +62,12 @@ struct progress_info {
 
 // This header file can be included before than any other header files
 // except for config.h. Therefore, we include some duplucated macros.
+#ifdef CONFIG_EMP_BLOCK
+#define debug_gpa_num_subblock_in_block(g) \
+	(1 << ((g)->block_order - (g)->sb_order))
+#else
 #define debug_gpa_num_subblock_in_block(g) (1)
+#endif
 #define debug_gpa_for_each_gpas(pos, head) \
 	for (pos = (head); \
 		pos < ((head) + (debug_gpa_num_subblock_in_block(head))); \

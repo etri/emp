@@ -703,6 +703,57 @@ static bool try_clear_fetching_work_request(struct emp_mm *bvma,
 	return true;
 }
 
+#ifdef CONFIG_EMP_BLOCK
+/**
+ * clear_fetching_demand_page - Wait to fetch a demand page for CPF
+ * @param bvma bvma data structure
+ * @param vcpu working vcpu ID
+ * @param w work request
+ * @param demand_sb_offset offset of demand page in a subblock
+ *
+ * @retval 2: fallback to CSF
+ * @retval 1: succeed to wait a demand page
+ * @retval 0: failed to wait
+ */
+static int
+clear_fetching_demand_page(struct emp_mm *bvma, struct vcpu_var *cpu,
+			   struct work_request *w, unsigned int demand_sb_offset)
+{
+	void *address;
+	struct emp_gpa *g = w->gpa;
+	struct page *p;
+	int retry_count = 10;
+	int ret = 0;
+
+	if (!bvma_mark_empty_page(bvma) || !bvma_cpf_enabled(bvma))
+		return ret;
+
+	p = g->local_page->page;
+	address = page_address(p + demand_sb_offset) + PAGE_SIZE - sizeof(u64);
+
+	/* Busy-waiting for checking demand page overwritten */
+	for (;;) {
+		if ((*(volatile u64 *)(address)) != EMPTY_PAGE) {
+			ret = 1;
+			break;
+		}
+
+		if (--retry_count < 0) {
+			/* Fallback to I/O completion */
+			if (try_clear_fetching_work_request(bvma, cpu, w)) {
+				ret = 2;
+				break;
+			}
+			retry_count = 10;
+		}
+
+		cond_resched();
+	}
+	debug_check_tag_upto(w, address + sizeof(u64));
+
+	return ret;
+}
+#endif
 
 void clear_in_flight_fetching_block(struct emp_vmr *vmr,
 				struct vcpu_var *cpu, struct emp_gpa *head)
@@ -789,6 +840,28 @@ static bool try_wait_read_async(struct emp_mm *bvma, struct vcpu_var *cpu,
 		return false;
 }
 
+#ifdef CONFIG_EMP_BLOCK
+/**
+ * wait_read_async_demand_page - Wait completed a demand page fetch for CPF
+ * @param bvma bvma data structure
+ * @param vcpu working vcpu ID
+ * @param gpa gpa of fetched page
+ * @param demand_sb_offset demand offset within the subblock
+ *
+ * @retval 2: fallback to CSF
+ * @retval 1: succeed to wait a demand page fetch
+ * @retval 0: failed to wait fetching
+ */
+static int wait_read_async_demand_page(struct emp_mm *bvma, struct vcpu_var *cpu,
+					struct emp_gpa *gpa, unsigned int demand_sb_offset)
+{
+	struct work_request *w = gpa->local_page->w;
+	if (w == NULL)
+		return false;
+
+	return clear_fetching_demand_page(bvma, cpu, w, demand_sb_offset);
+}
+#endif
 
 /**
  * donor_mem_rw_init - Initialize memory interface to donor
@@ -806,4 +879,7 @@ void donor_mem_rw_init(struct emp_mm *bvma)
 	bvma->sops.wait_writeback_async_steal = wait_writeback_async_steal;
 	bvma->sops.wait_read_async = wait_read_async;
 	bvma->sops.try_wait_read_async = try_wait_read_async;
+#ifdef CONFIG_EMP_BLOCK
+	bvma->sops.wait_read_async_demand_page = wait_read_async_demand_page;
+#endif
 }

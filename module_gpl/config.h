@@ -65,8 +65,13 @@
 #define LOW_MEMORY_MAX_ORDER (9) // 2MB
 #endif // CONFIG_EMP_VM
 
+#ifdef CONFIG_EMP_BLOCK
+#define BLOCK_MAX_ORDER (9)
+#define BLOCK_MAX_SIZE  (1 << BLOCK_MAX_ORDER)
+#else
 #define BLOCK_MAX_ORDER (0)
 #define BLOCK_MAX_SIZE  (1)
+#endif
 #define DMA_OPERATION_MAX_ORDER (5) // maximum size of dma operation is 128KB
 #define DMA_WRITEBACK_MAX_ORDER (5U)
 
@@ -74,7 +79,12 @@
 
 // high PER_VCPU_WB_REQUESTS_MAX increases latency of wb page handling
 #define PER_VCPU_WB_REQUESTS_MAX(b) (128 << bvma_subblock_order(b))
+#ifdef CONFIG_EMP_BLOCK
+#define PER_VCPU_FREE_LPAGES_LEN(b, c) \
+	(1 << (b->config.block_order - b->config.subblock_order + c))
+#else
 #define PER_VCPU_FREE_LPAGES_LEN(b, c) (1 << (c))
+#endif
 
 
 #define LOCAL_CACHE_SIZE      (4 * SIZE_GIGA)

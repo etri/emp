@@ -75,9 +75,14 @@ void reclaim_set(struct emp_mm *);
 int reclaim_init(struct emp_mm *);
 void reclaim_exit(struct emp_mm *);
 
+#ifdef CONFIG_EMP_BLOCK
+void wait_for_prefetch_subblocks(struct emp_mm *, struct vcpu_var *,
+				 struct emp_gpa **, int);
+#else
 static inline void  
 wait_for_prefetch_subblocks(struct emp_mm *emm, struct vcpu_var *cpu,
 			    struct emp_gpa *vs[], int n_vs) {}
+#endif
 
 bool check_gpa_block_reclaimable(struct emp_mm *, struct emp_gpa *);
 

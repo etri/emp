@@ -307,6 +307,78 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 	return ret;
 }
 
+#ifdef CONFIG_EMP_BLOCK
+bool __wait_for_prefetched_block(struct emp_mm *emm, struct vcpu_var *cpu, 
+				 struct emp_gpa *head)
+{
+	struct emp_gpa *g, *pf_sb_head;
+	bool cpf_prefetched;
+	int pf_sb_base, pf_sb_offset;
+	int demand_offset;
+
+	/* release work requests of prefetch sub-blocks */
+	if (!clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK))
+		return false;
+
+	debug_wait_for_prefetch_subblocks(head);
+
+	demand_offset = head->local_page->demand_offset;
+	pf_sb_base = demand_offset >> gpa_subblock_order(head);
+	pf_sb_offset = demand_offset & gpa_subblock_mask(head);
+	pf_sb_head = head + pf_sb_base;
+
+	cpf_prefetched = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	for_each_gpas(g, head) {
+		if (g == pf_sb_head && !cpf_prefetched)
+			continue;
+
+		if (!emm->sops.wait_read_async(emm, cpu, g))
+			continue;
+
+		clear_gpa_flags_if_set(g, GPA_REMOTE_MASK);
+
+#ifdef CONFIG_EMP_VM
+		/* To ensure the page reference count at unmap_gpas()
+		 * HPT: 2
+		 * EPT: 1
+		 * TODO: Actually, reference counter of prefetched HPT
+		 * should be reduced */
+		if (!is_gpa_flags_set(head, GPA_EPT_MASK))
+			continue;
+		if (g == pf_sb_head && cpf_prefetched)
+			emp_put_subblock_except(g, pf_sb_offset);
+		else
+			emp_put_subblock(g);
+#else
+		//continue; // This is unnecessary for now.
+#endif
+	}
+	head->local_page->demand_offset = 0;
+	return true;
+}
+
+/**
+ * wait_for_prefetch_subblocks - Wait for the fetching prefetch sub-blocks
+ * @param bvma bvma data structure
+ * @param cpu working vcpu ID
+ * @param vs victims list
+ * @param n_vs the number of victims
+ *
+ * Since the blocks in the inactive list are unmapped,
+ * all the prefetch work requests relatd in the block should be done
+ * before the block is moved on the inactive list.
+ */
+void wait_for_prefetch_subblocks(struct emp_mm *emm, struct vcpu_var *cpu,
+				 struct emp_gpa *vs[], int n_vs)
+{
+	int i;
+	for (i = 0; i < n_vs; i++) {
+		if (__wait_for_prefetched_block(emm, cpu, vs[i]) == false)
+			continue;
+	}
+}
+EXPORT_SYMBOL(wait_for_prefetch_subblocks);
+#endif
 
 /**
  * select_victims_al - select victims from active list
@@ -1023,7 +1095,12 @@ int reclaim_emp_pages(struct emp_mm *b, struct vcpu_var *cpu, int pressure,
 				bool force)
 {
 	int reclaimed_pages = 0;
+#ifdef CONFIG_EMP_BLOCK
+	int pressure_block = min(pressure >> b->config.block_order,
+				 NUM_VICTIM_CLUSTER);
+#else
 	int pressure_block = min(pressure, NUM_VICTIM_CLUSTER);
+#endif
 
 	if (force && VCPU_WB_REQUEST_EMPTY(cpu)) {
 		reclaimed_pages = update_inactive_list(b, cpu, pressure_block);

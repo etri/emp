@@ -32,6 +32,16 @@
 
 /* ----- global variables ----- */
 size_t  initial_local_cache_pages; // counts in 4kb
+#ifdef CONFIG_EMP_BLOCK
+int     initial_block_order;
+int     initial_subblock_order;
+int     initial_use_compound_page;
+int     initial_critical_subblock_first;
+int     initial_critical_page_first;
+int     initial_mark_empty_page;
+int     initial_mem_poll;
+int     initial_enable_transition_csf;
+#endif
 int     initial_remote_reuse;
 int     initial_remote_policy_subblock;
 int     initial_remote_policy_block;
@@ -818,6 +828,18 @@ static struct emp_mm *create_emm(void)
 	init_emp_list(&bvma->ftm.free_page_list);
 	init_waitqueue_head(&bvma->ftm.free_pages_wq);
 
+#ifdef CONFIG_EMP_BLOCK
+	bvma->config.subblock_order = initial_subblock_order;
+	bvma->config.block_order = max(initial_block_order,
+			initial_subblock_order);
+	bvma->config.use_compound_page = bvma->config.subblock_order?
+					initial_use_compound_page: false;
+	bvma->config.critical_subblock_first = initial_critical_subblock_first;
+	bvma->config.critical_page_first = initial_critical_page_first;
+	bvma->config.enable_transition_csf = initial_enable_transition_csf;
+	bvma->config.mark_empty_page = initial_mark_empty_page;
+	bvma->config.mem_poll = initial_mem_poll;
+#endif
 	bvma->config.remote_reuse = initial_remote_reuse;
 	bvma->config.remote_policy_subblock = initial_remote_policy_subblock;
 	bvma->config.remote_policy_block = initial_remote_policy_block;
@@ -1101,6 +1123,11 @@ static int __init emp_init(void)
 	//nvme_test_while_init(); /* for debug */
 	//
 	initial_local_cache_pages = LOCAL_CACHE_PAGES;
+#ifdef CONFIG_EMP_BLOCK
+	initial_block_order = BLOCK_MAX_ORDER;
+	initial_subblock_order = 0;
+	initial_use_compound_page = true;
+#endif
 	initial_remote_reuse = DEFAULT_REMOTE_REUSE;
 	initial_remote_policy_subblock = DEFAULT_REMOTE_POLICY_SUBBLOCK;
 	initial_remote_policy_block = DEFAULT_REMOTE_POLICY_BLOCK;

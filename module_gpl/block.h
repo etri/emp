@@ -37,6 +37,189 @@ static inline void ____emp_gpa_unlock(struct emp_gpa *gpa)
 	atomic_set(&gpa->lock, 0);
 }
 
+#ifdef CONFIG_EMP_BLOCK
+#define num_subblock_in_block(g) \
+	(1 << (gpa_block_order(g) - gpa_subblock_order(g)))
+
+#define for_each_gpas(pos, head) \
+	for (pos = (head); \
+		pos < ((head) + (num_subblock_in_block(head))); \
+		pos++)
+
+#define for_each_gpas_reverse(pos, head) \
+	for (pos = ((head) + (num_subblock_in_block(head)) - 1); \
+		pos >= (head); pos--)
+
+#define for_each_gpas_index(pos, index, head) \
+	for (pos = (head), index = 0;\
+			pos < ((head) + (num_subblock_in_block(head)));\
+			pos++, index++)
+
+#define for_all_gpa_heads_range(vmr, index, pos, start, end) \
+	for ((index) = emp_get_block_head_index(vmr, start), \
+		(pos) = get_gpadesc(vmr, index); \
+			(pos) && ((index) < (end)); \
+			(index) += num_subblock_in_block(pos), \
+			(pos) = get_gpadesc(vmr, index))
+
+#define raw_for_all_gpa_heads_range(vmr, index, pos, start, end) \
+	for ((index) = (start), \
+	     (pos) = get_next_exist_head_gpadesc(vmr, &(index)); \
+			(pos) && ((index) < (end)); \
+			(index) += num_subblock_in_block(pos), \
+			(pos) = get_next_exist_head_gpadesc(vmr, &(index)))
+
+#define for_all_gpa_heads(vmr, index, pos) \
+	for_all_gpa_heads_range(vmr, index, pos, 0, (vmr)->descs->gpa_len)
+
+#define raw_for_all_gpa_heads(vmr, index, pos) \
+	raw_for_all_gpa_heads_range(vmr, index, pos, 0, (vmr)->descs->gpa_len)
+
+#define for_all_gpas(vmr, index, pos) \
+	for ((index) = 0, (pos) = get_gpadesc(vmr, index); \
+			(pos); \
+			(index)++, \
+			(pos) = get_gpadesc(vmr, index))
+
+#define raw_for_all_gpas(vmr, index, pos) \
+	for ((index) = 0, (pos) = get_next_exist_gpadesc(vmr, &index); \
+			(pos); \
+			(index)++, \
+			(pos) = get_next_exist_gpadesc(vmr, &index))
+
+#define gpa_block_order(gpa) ((gpa)->block_order)
+#define gpa_block_size(gpa)	(1UL << ((gpa)->block_order))
+#define __gpa_block_size(gpa, order) (1UL << ((gpa)->block_order + order))
+#define gpa_next_block(gpa) (gpa + num_subblock_in_block(gpa))
+#define gpa_block_mask(gpa)	(~(gpa_block_size(gpa) - 1))
+#define gpa_block_offset(gpa, offset)	((offset) & (gpa_block_size(gpa) - 1))
+#define gpa_page_mask(gpa)	~(__gpa_block_size(gpa, PAGE_SHIFT) - 1)
+
+#define gpa_desc_order(i) (gpa_block_order(i)-gpa_subblock_order(i))
+
+static inline unsigned long
+_emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index, int order)
+{
+	unsigned long gpa_offset;
+	unsigned long order_mask = (1UL << order) - 1;
+
+	gpa_offset = index;
+	if (likely(vmr->descs->block_aligned_start <= gpa_offset))
+		gpa_offset -= vmr->descs->block_aligned_start;
+	return index - (gpa_offset & order_mask);
+}
+
+static inline unsigned long
+emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index)
+{
+	struct emp_gpa *gpa = get_gpadesc(vmr, index);
+	if (unlikely(!gpa))
+		return WRONG_GPA_IDX;
+	if (gpa_desc_order(gpa) == 0)
+		return index;
+	return _emp_get_block_head_index(vmr, index, gpa_desc_order(gpa));
+}
+
+static inline struct emp_gpa *_emp_get_block_head(struct emp_gpa *g, int order)
+{
+	unsigned long addr = (unsigned long) g;
+	addr -= addr % (sizeof(struct emp_gpa) << order);
+	return (struct emp_gpa *) addr;
+}
+
+static inline struct emp_gpa *emp_get_block_head(struct emp_gpa *g)
+{
+	return _emp_get_block_head(g, gpa_desc_order(g));
+}
+
+/**
+ * emp_lock_block - Lock the head of the block
+ * @param vmr vmr of the index
+ * @parem _gpa pointer of gpa subblock address in the block to lock
+ * @param index gpa subblock index in the block to lock
+ *
+ * @return head of the block
+ */
+static inline struct emp_gpa *
+_emp_lock_block(struct emp_vmr *vmr, struct emp_gpa **_gpa, unsigned long index)
+{
+	struct emp_gpa *head;
+	struct emp_gpa *gpa = _gpa ? *_gpa : get_gpadesc(vmr, index);
+	if (unlikely(!gpa))
+		return NULL;
+relock:
+	// lock head
+	head = emp_get_block_head(gpa);
+	while (!____emp_gpa_trylock(head))
+		cond_resched();
+
+	// check that gpa has not been changed
+	if (unlikely(raw_get_gpadesc(vmr, index) != gpa)) {
+		gpa = raw_get_gpadesc(vmr, index);
+		if (_gpa) *_gpa = gpa;
+		goto unlock;
+	}
+
+	// check that head has not been changed
+	if (likely(head == emp_get_block_head(gpa)))
+		return head;
+
+unlock:
+	debug_emp_unlock_block(head);
+
+	____emp_gpa_unlock(head);
+	goto relock;
+}
+
+/**
+ * emp_trylock_block - Try to lock the head of the block
+ * @param vmr vmr of the index
+ * @parem gpa pointer of gpa subblock address in the block to lock
+ * @param index gpa subblock index in the block to lock
+ *
+ * @return head of the block
+ */
+static inline struct emp_gpa *
+_emp_trylock_block(struct emp_vmr *vmr, struct emp_gpa **_gpa, unsigned long index)
+{
+	struct emp_gpa *head;
+	struct emp_gpa *gpa = _gpa ? *_gpa : get_gpadesc(vmr, index);
+	if (unlikely(!gpa))
+		return NULL;
+relock:
+	head = emp_get_block_head(gpa);
+	if (!____emp_gpa_trylock(head))
+		return NULL;
+
+	// check that gpa has not been changed
+	if (unlikely(raw_get_gpadesc(vmr, index) != gpa)) {
+		gpa = raw_get_gpadesc(vmr, index);
+		if (_gpa) *_gpa = gpa;
+		goto unlock;
+	}
+
+	// check that head has not been changed
+	if (likely(head == emp_get_block_head(gpa)))
+		return head;
+
+unlock:
+	debug_emp_unlock_block(head);
+
+	____emp_gpa_unlock(head);
+	goto relock;
+}
+
+/**
+ * emp_unlock_block - Unlock the head of the block
+ * @param head head of the block
+ */
+static inline void _emp_unlock_block(struct emp_gpa *head)
+{
+	debug_emp_unlock_block(head);
+
+	____emp_gpa_unlock(head);
+}
+#else /* !CONFIG_EMP_BLOCK */
 
 #define num_subblock_in_block(g) (1)
 
@@ -156,6 +339,7 @@ static inline void _emp_unlock_block(struct emp_gpa *gpa)
 
 	____emp_gpa_unlock(gpa);
 }
+#endif /* !CONFIG_EMP_BLOCK */
 
 /**
  * __emp_trylock_block - Try to lock the head of the block
@@ -270,6 +454,58 @@ get_next_exist_gpadesc(struct emp_vmr *vmr, unsigned long *index) {
 		return __get_next_exist_gpadesc(vmr, index);
 }
 
+#ifdef CONFIG_EMP_BLOCK
+static inline struct emp_gpa *
+__get_next_exist_head_gpadesc(struct emp_vmr *vmr, unsigned long *indexp)
+{
+	struct emp_mm *emm = vmr->emm;
+	struct emp_vmdesc *desc = vmr->descs;
+	struct emp_gpa *gpa = NULL;
+	struct gpadesc_region *region;
+	unsigned long index = *indexp;
+	int desc_order;
+
+	region = get_gpadesc_region(desc, index);
+	if (unlikely(!region)) // indexp >= gpa_len
+		return NULL;
+
+	// We already check raw_get_gpadesc(vmr, index) == NULL.
+	// Thus, raw_get_gpadesc(vmr, _emp_get_block_head_index(vmr, index, desc_order)) == NULL.
+	desc_order = region->block_order - bvma_subblock_order(emm);
+	index = _emp_get_block_head_index(vmr, index, desc_order);
+	index += 1UL << desc_order;
+	gpa = raw_get_gpadesc(vmr, index);
+	while (!gpa) {
+		region = get_gpadesc_region_predict(desc, index, region);
+		if (unlikely(!region)) {// index >= gpa_len
+			*indexp = index;
+			return NULL;
+		}
+		desc_order = region->block_order - bvma_subblock_order(emm);
+		index += 1UL << desc_order;
+		gpa = raw_get_gpadesc(vmr, index);
+	}
+
+	*indexp = index;
+	return gpa;
+}
+
+static inline struct emp_gpa *
+get_next_exist_head_gpadesc(struct emp_vmr *vmr, unsigned long *indexp) {
+	struct emp_gpa *gpa;
+	unsigned long index = *indexp;
+	gpa = raw_get_gpadesc(vmr, index);
+	if (gpa) {
+		index = _emp_get_block_head_index(vmr, index, gpa_desc_order(gpa));
+		if (unlikely(index != *indexp)) {
+			*indexp = index;
+			gpa = get_exist_gpadesc(vmr, index);
+		}
+		return gpa;
+	} else
+		return __get_next_exist_head_gpadesc(vmr, indexp);
+}
+#endif
 
 /* trylock the gpa descriptor that belongs to @lp */
 static inline struct emp_gpa *

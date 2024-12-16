@@ -1097,6 +1097,11 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	struct emp_vmr *vmr;
 	pgoff_t gpa_off;
 	struct emp_gpa *head;
+#ifdef CONFIG_EMP_BLOCK
+	bool csf = bvma_csf_enabled(bvma);
+	bool cpf = bvma_cpf_enabled(bvma);
+	int fallback;
+#endif
 	unsigned long sb_index;
 	int gpa_sb_offset;
 
@@ -1115,10 +1120,45 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	if (head->r_state != GPA_FETCHING)
 		return 0;
 
+#ifdef CONFIG_EMP_BLOCK
+	if (csf && !is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK)) {
+		if (cpf) {
+			/* waiting only for demand page */
+			fallback = bvma->sops.wait_read_async_demand_page(bvma, vcpu,
+									  gpa, gpa_sb_offset);
+
+			/* processed only a page, not all */
+			head->local_page->demand_offset = gpa_block_offset(head, gpa_off);
+			if (fallback > 1)
+				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+			else
+				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CPF_MASK);
+			set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
+		} else {
+			/* waiting only for demand subblock */
+			if ((bvma->sops.wait_read_async)(bvma, vcpu, gpa)) {
+				/* Called from emp_page_fault_gpa(). Forking on EPT is not allowed. */
+				debug_BUG_ON(is_gpa_remote_page_cow(gpa) == true);
+				clear_gpa_flags_if_set(gpa, GPA_REMOTE_MASK);
+			}
+
+			/* processed only a sub-block, not all */
+			if (gpa_subblock_order(head) != head->block_order) {
+				head->local_page->demand_offset = gpa_block_offset(head, gpa_off);
+				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
+				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
+			}
+		}
+		goto out;
+	}
+#endif
 	/* At this point, gpa is already in lru lists 
 	 * you don't have to insert this gpa into active list */
 	/* if GPA fetching is in progress, we have to wait(barrier). */
 	wait_fetching_except(bvma, vcpu, head, NULL);
+#ifdef CONFIG_EMP_BLOCK
+out:
+#endif
 	return 1;
 }
 
@@ -1250,6 +1290,39 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	/* Assume that gpa descriptors in a block reside on a contiguous memory */
 	head_idx = demand_sb_off - (demand - head);
 
+#ifdef CONFIG_EMP_BLOCK
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+		debug_emp_page_fault_gpa(head);
+
+		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
+			struct vm_fault vmf = {
+				.vma = vmr->host_vma,
+				.pgoff = GPN_OFFSET(bvma, HVA_TO_GPN(bvma, vmr, hva)),
+				.address = hva
+			};
+
+			vmf.flags = FAULT_FLAG_WRITE;
+			emp_page_fault_hptes_map(bvma, vmr, head, demand, demand_sb_off,
+						 fs, fe, true, &vmf, true);
+		} else if (is_gpa_flags_set(head, GPA_EPT_MASK)) {
+			u64 mapping_attr;
+			u64 head_gpa = (gva & PAGE_MASK) - 
+				((demand - head) << (sb_order + PAGE_SHIFT)) -
+				((demand_off & sb_mask) << PAGE_SHIFT);
+
+			mapping_attr = emp_page_fault_sptes_map(kvm_vcpu,
+					cpu, head, head_gpa, slot);
+
+			if ((write_fault == false) ||
+				(mapping_attr & PT_WRITABLE_MASK)) {
+				clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
+				goto return_to_fault_inst;
+			}
+		}
+
+		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
+	}
+#endif
 
 	debug_emp_page_fault_gpa2(head);
 
@@ -1347,6 +1420,12 @@ skip_install_sptes:
 					? 'V' : 'N',
 				demand ? get_gpa_remote_page_val(demand) : -1);
 	return ret;
+#ifdef CONFIG_EMP_BLOCK
+/* defined(CONFIG_EMP_BLOCK || defined(CONFIG_EMP_EXT) */
+return_to_fault_inst:
+	emp_unlock_block(head);
+	return RET_PF_RETRY;
+#endif
 }
 
 int COMPILER_DEBUG

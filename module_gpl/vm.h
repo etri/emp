@@ -81,11 +81,31 @@ enum DEBUG_RSS_SUB_KERNEL_ID {
 struct work_request;
 
 extern size_t initial_local_cache_pages; // counts in 4kb
+#ifdef CONFIG_EMP_BLOCK
+extern int    initial_block_order;
+extern int    initial_subblock_order;
+extern int    initial_use_compound_page;
+extern int    initial_critical_subblock_first;
+extern int    initial_critical_page_first;
+extern int    initial_mark_empty_page;
+extern int    initial_mem_poll;
+extern int    initial_enable_transition_csf;
+#endif
 extern int    initial_remote_reuse;
 extern int    initial_remote_policy_subblock;
 extern int    initial_remote_policy_block;
 
 struct emp_config {
+#ifdef CONFIG_EMP_BLOCK
+	u8      block_order;
+	u8      subblock_order;
+	int     critical_subblock_first;
+	int     critical_page_first;
+	int     enable_transition_csf;
+	int     mark_empty_page;
+	int     mem_poll;
+	int     use_compound_page;
+#endif
 	int     remote_reuse; /* reuse remote page: remote inclusive policy */
 	int     remote_policy_subblock;
 	int     remote_policy_block;
@@ -415,6 +435,18 @@ struct emp_mm {
 	struct emp_mr_ops   mops;
 };
 
+#ifdef CONFIG_EMP_BLOCK
+#define bvma_block_order(b)     ((b)->config.block_order)
+#define bvma_block_size(b)      (1 << ((b)->config.block_order))
+#define bvma_subblock_order(b)  ((b)->config.subblock_order)
+#define bvma_subblock_size(b)   (1 << ((b)->config.subblock_order))
+#define bvma_subblock_mask(b)   (bvma_subblock_size(b) - 1)
+#define bvma_csf_enabled(b)     ((b)->config.critical_subblock_first)
+#define bvma_cpf_enabled(b)     ((b)->config.critical_page_first)
+#define bvma_transition_csf(b)  ((b)->config.enable_transition_csf)
+#define bvma_mark_empty_page(b) ((b)->config.mark_empty_page)
+#define bvma_mem_poll(b)        ((b)->config.mem_poll)
+#else
 #define bvma_block_order(b)     (0)
 #define bvma_block_size(b)      (1)
 #define bvma_subblock_order(b)  (0)
@@ -425,6 +457,7 @@ struct emp_mm {
 #define bvma_transition_csf(b)  (0)
 #define bvma_mark_empty_page(b) (0)
 #define bvma_mem_poll(b)        (0)
+#endif
 
 #define bvma_sib_order(b)       (bvma_block_order(b) - bvma_subblock_order(b))
 #define bvma_sib_size(b)        (1 << bvma_sib_order(b))
@@ -446,6 +479,9 @@ struct emp_mm {
 #define vmdesc_subblock_size(d)   (1 << vmdesc_subblock_order(d))
 #define vmdesc_subblock_mask(d)   (vmdesc_subblock_size(d) - 1)
 
+#ifdef CONFIG_EMP_BLOCK
+#define EMPTY_PAGE	((u64)(0xDEADBEEF)) // for CPF
+#endif
 
 #define VCPU_START_ID (1)
 
