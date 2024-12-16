@@ -52,6 +52,11 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 		dma_ops = &rdma_dma_ops;
 		break;
 #endif
+#ifdef CONFIG_EMP_MEMDEV
+	case DONOR_DEV_MEMDEV:
+		dma_ops = &memdev_dma_ops;
+		break;
+#endif
 	default:
 		printk(KERN_ERR "donor type %d requested\n",  donor->dev_type);
 		ret = -EINVAL;
@@ -105,6 +110,11 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 		mr->addr = donor->addr;
 		mr->port = donor->port;
 		mr->type = MR_RDMA;
+		break;
+#endif
+#ifdef CONFIG_EMP_MEMDEV
+	case DONOR_DEV_MEMDEV:
+		mr->type = MR_MEM;
 		break;
 #endif
 	}

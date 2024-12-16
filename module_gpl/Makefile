@@ -35,6 +35,13 @@ endif
 # '#endif' below is not for 'make', but for the code management.
 #endif
 
+#ifdef CONFIG_EMP_MEMDEV
+# '#ifdef' adove is not for 'make', but for the code management.
+ifeq ($(MEMDEV_SUPPORT), yes)
+ emp-y += memdev.o
+endif
+# '#endif' below is not for 'make', but for the code management.
+#endif
 
 default: modules
 modules:

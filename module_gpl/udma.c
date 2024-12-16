@@ -8,6 +8,9 @@
 #ifdef CONFIG_EMP_RDMA
 #include "rdma.h"
 #endif
+#ifdef CONFIG_EMP_MEMDEV
+#include "memdev.h"
+#endif
 #include "vm.h"
 #include "subblock.h"
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
@@ -30,6 +33,9 @@ int dma_open(void *opaque)
 #ifdef CONFIG_EMP_RDMA
 	rdma_open(opaque);
 #endif
+#ifdef CONFIG_EMP_MEMDEV
+	memdev_open(opaque);
+#endif
 	return 0;
 }
 
@@ -45,6 +51,9 @@ void dma_release(void *opaque)
 #ifdef CONFIG_EMP_RDMA
 	rdma_release(opaque);
 #endif
+#ifdef CONFIG_EMP_MEMDEV
+	memdev_release(opaque);
+#endif
 }
 
 int dma_init(void)
@@ -54,6 +63,9 @@ int dma_init(void)
 #endif
 #ifdef CONFIG_EMP_RDMA
 	rdma_init();
+#endif
+#ifdef CONFIG_EMP_MEMDEV
+	memdev_init();
 #endif
 	return 0;
 }
@@ -65,6 +77,9 @@ void dma_exit(void)
 #endif
 #ifdef CONFIG_EMP_RDMA
 	rdma_exit();
+#endif
+#ifdef CONFIG_EMP_MEMDEV
+	memdev_exit();
 #endif
 	return;
 }

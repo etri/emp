@@ -45,6 +45,9 @@ struct memreg {
 #ifdef CONFIG_EMP_BLOCKDEV
 		MR_NVME,
 #endif
+#ifdef CONFIG_EMP_MEMDEV
+		MR_MEM,
+#endif
 	} type;
 	int                     dma_order;
 	bool                    inorder;

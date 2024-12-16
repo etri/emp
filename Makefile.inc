@@ -23,7 +23,7 @@ EMP_INSN_EMUL := no
 # remote memory using block device support (e.g. NVMe SSD)
 BLOCKDEV_SUPPORT := yes
 # remote memory using memory-like device support (EXPERIMENTAL)
-MEMDEV_SUPPORT := no
+MEMDEV_SUPPORT := yes
 # remote memory using rdma support
 RDMA_SUPPORT := yes
 #  depend on RDMA_SUPPORT

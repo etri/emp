@@ -76,6 +76,12 @@ struct work_request {
 			int                     errors;
 		};
 #endif
+#ifdef CONFIG_EMP_MEMDEV
+		struct {
+			struct completion       m_wait;
+			int                     m_errors;
+		};
+#endif
 #ifdef CONFIG_EMP_RDMA
 		struct {
 			wait_queue_head_t       wq;
@@ -119,6 +125,14 @@ struct context {
 	wait_queue_head_t   ctrl_wq;
 
 	union {
+#ifdef CONFIG_EMP_MEMDEV
+		/* Memory Device */
+		struct {
+			struct page **memdev_map;
+			void *memdev_ptr;
+			unsigned long memdev_len; // memdev_size >> (subblock_order + PAGE_SHIFT)
+		};
+#endif
 #ifdef CONFIG_EMP_BLOCKDEV
 		/* Block Device */
 		struct {
@@ -183,6 +197,13 @@ struct connection {
 	atomic_t        refcount;
 	wait_queue_head_t ctrl_wq;
 	union {
+#ifdef CONFIG_EMP_MEMDEV
+		/* Memory Device */
+		struct {
+			unsigned int         memdev_node; // numa node id
+			size_t               memdev_size;
+		};
+#endif
 #ifdef CONFIG_EMP_BLOCKDEV
 		/* Block Device */
 		struct {
@@ -283,6 +304,9 @@ extern struct dma_ops rdma_dma_ops;
 
 // direct queue: 0, softirq queue: >0
 #define N_RDMA_QUEUES (3)
+#endif
+#ifdef CONFIG_EMP_MEMDEV
+extern struct dma_ops memdev_dma_ops;
 #endif
 
 static inline int get_wr_remote_page_mrid(struct work_request *w) {
