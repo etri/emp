@@ -1026,7 +1026,7 @@ static inline void __clear_rdma_conn_param(struct rdma_conn_param *p)
 
 static int 
 rdma_create_context(struct connection *conn, struct donor_info *donor, 
-		    int poll_context)
+		    int poll_context, bool chained_ops)
 {
 	int context_id, ret;
 	struct context *context;
@@ -1056,7 +1056,7 @@ rdma_create_context(struct connection *conn, struct donor_info *donor,
 	atomic_set(&context->disconnected, 0);
 
 	context->poll_context = poll_context;
-	if (context->poll_context != POLL_CONTEXT_MEMPOLL)
+	if (chained_ops && context->poll_context != POLL_CONTEXT_MEMPOLL)
 		context->chained_ops = true;
 
 	cm_id = rdma_create_id(&init_net, emp_cm_event_handler, context,
@@ -1151,7 +1151,7 @@ static int rdma_create_conn(struct emp_mm *emm, struct connection **c,
 		poll_contexts[i] = POLL_CONTEXT_SOFTIRQ;
 
 	for (i = 0; i < N_RDMA_QUEUES; i++) {
-		rdma_create_context(conn, donor, poll_contexts[i]);
+		rdma_create_context(conn, donor, poll_contexts[i], emm->config.chained_ops);
 		atomic_inc(&conn->refcount);
 	}
 

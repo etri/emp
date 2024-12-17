@@ -239,6 +239,7 @@ struct free_remote_page {
 void __free_remote_page(struct emp_mm *, struct remote_page *);
 bool alloc_remote_page(struct emp_mm *, struct emp_gpa *);
 bool free_remote_page(struct emp_mm *, struct emp_gpa *, bool);
+void reclaim_remote_page_block(struct emp_mm *, struct emp_gpa *);
 void remote_page_release(struct emp_mm *emm, struct emp_gpa *head, int num);
 void adjust_remote_page_policy(struct emp_mm *emm, struct memreg *mr);
 int remote_page_init(struct emp_mm *);

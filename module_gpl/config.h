@@ -98,6 +98,10 @@
 #define DONOR_PORT            (19675)
 #endif
 
+#ifdef CONFIG_EMP_OPT
+#define DEFAULT_CHAINED_OPERATION (1)
+#endif
+
 #define LOCAL_CACHE_SIZE      (4 * SIZE_GIGA)
 #define LOCAL_CACHE_PAGES     (LOCAL_CACHE_SIZE >> PAGE_SHIFT)
 

@@ -38,15 +38,14 @@ static inline unsigned long __remote_page_release(struct emp_mm *emm, struct rem
 static inline void
 ____free_remote_page(struct emp_mm *emm, struct remote_page *remote_page)
 {
-	if (!emm->config.remote_reuse) {
-		__remote_page_release(emm, remote_page);
-		set_remote_page_free(remote_page);
-	}
+	__remote_page_release(emm, remote_page);
+	set_remote_page_free(remote_page);
 }
 
 void __free_remote_page(struct emp_mm *emm, struct remote_page *remote_page)
 {
-	____free_remote_page(emm, remote_page);
+	if (!emm->config.remote_reuse)
+		____free_remote_page(emm, remote_page);
 }
 EXPORT_SYMBOL(__free_remote_page);
 
@@ -56,9 +55,25 @@ static void __free_remote_page_block(struct emp_mm *emm, struct emp_gpa *head)
 	for_each_gpas(gpa, head) {
 		if (is_gpa_remote_page_free(gpa))
 			continue;
+		__free_remote_page(emm, &gpa->remote_page);
+	}
+}
+
+/**
+ * reclaim_remote_page_block - Free remote pages in a block forcely
+ * @param emm emp_mm data structure
+ * @param head the head of a gpa block
+ */
+void reclaim_remote_page_block(struct emp_mm *emm, struct emp_gpa *head)
+{
+	struct emp_gpa *gpa;
+	for_each_gpas(gpa, head) {
+		if (is_gpa_remote_page_free(gpa))
+			continue;
 		____free_remote_page(emm, &gpa->remote_page);
 	}
 }
+EXPORT_SYMBOL(reclaim_remote_page_block);
 
 /**
  * free_remote_page - Free a remote page and insert it to a free remote page list
@@ -89,7 +104,7 @@ bool free_remote_page(struct emp_mm *emm,
 		return false;
 
 	if (do_free)
-		____free_remote_page(emm, remote_page);
+		__free_remote_page(emm, remote_page);
 	return true;
 }
 EXPORT_SYMBOL(free_remote_page);
@@ -352,7 +367,7 @@ error:
 	for_each_gpas(gpa, head) {
 		if (is_gpa_remote_page_free(gpa))
 			continue;
-		____free_remote_page(emm, &gpa->remote_page);
+		__free_remote_page(emm, &gpa->remote_page);
 	}
 	return false;
 }

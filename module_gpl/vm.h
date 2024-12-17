@@ -93,6 +93,7 @@ extern int    initial_enable_transition_csf;
 #endif
 #ifdef CONFIG_EMP_OPT
 extern int    initial_eval_media;
+extern int    initial_chained_ops;
 #endif
 extern int    initial_remote_reuse;
 extern int    initial_remote_policy_subblock;
@@ -115,6 +116,7 @@ struct emp_config {
 #ifdef CONFIG_EMP_OPT
 	int     next_pt_premapping;
 	int     eval_media;
+	int	chained_ops;
 #endif
 	int     remote_reuse; /* reuse remote page: remote inclusive policy */
 	int     remote_policy_subblock;
