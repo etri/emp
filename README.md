@@ -1,6 +1,6 @@
 # Elastic Memory Platform (EMP)
 
-이 프로젝트는 2-계층 메모리 관리 기술을 기반으로 하는 Elastic Memory Platform(EMP)을 구현하기 위해 고성능컴퓨팅시스템연구실에서 개발한 SW입니다. \
+이 프로젝트는 다계층 이종 메모리 관리 기술을 기반으로 패브릭 메모리 시스템을 구축하는 Elastic Memory Platform(EMP)입니다. \
 EMP는 가상머신(Virtual Machine), 애플리케이션, 컨테이너(Container)가 대규모 메모리를 효율적으로 사용할 수 있도록 하는 기술입니다. \
 EMP의 실행 모드는 가상머신 기반 (VM EMP), 애플리케이션/컨테이너 기반 (user-level EMP)의 두 가지 모드로 지원됩니다. 
 
