@@ -20,6 +20,9 @@
 #include <linux/genhd.h>
 #endif
 
+#define IS_POLLING_WR(w) (((w)->command & EMP_REQ_POLLED) \
+			&& test_bit(QUEUE_FLAG_POLL, &(w)->q->queue_flags))
+
 static int wait_for_wc(struct emp_mm *, struct vcpu_var *, struct work_request *);
 static int try_wait_for_wc(struct emp_mm *, struct work_request *);
 
@@ -110,6 +113,10 @@ static void bdev_end_io_read_page(struct bio *bio) {
 	}
 
 	w->errors = error;
+	if (IS_POLLING_WR(w)) {
+		complete(&w->wait);
+		return;
+	}
 	w->bio = (void *)0xdeadbeef;
 	wmb();
 	complete(&w->wait);
@@ -136,6 +143,10 @@ static void bdev_end_io_write_page(struct bio *bio) {
 	}
 
 	w->errors = error;
+	if (IS_POLLING_WR(w)) {
+		complete(&w->wait);
+		return;
+	}
 	w->bio = (void *)0xdeadbeef;
 	wmb();
 	complete(&w->wait);
@@ -614,14 +625,8 @@ static int create_conn(struct emp_mm *emm, struct connection **connection,
 
 	{
 		struct request_queue *q = bdev->bd_disk->queue;
-		if (test_bit(QUEUE_FLAG_POLL, &q->queue_flags)) {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-			conn->read_command_flag = REQ_HIPRI;
-#else
-			conn->read_command_flag = REQ_POLLED;
-#endif
-		}
+		if (test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
+			conn->read_command_flag = EMP_REQ_POLLED;
 	}
 
 	*connection = conn;
@@ -690,38 +695,16 @@ void check_and_writeback_inactive_block(struct emp_mm *, int);
 static int 
 wait_for_wc(struct emp_mm *bvma, struct vcpu_var *cpu, struct work_request *w)
 {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-	if ((w->command & REQ_HIPRI) &&
-			test_bit(QUEUE_FLAG_POLL, &w->q->queue_flags)) {
-#else
-	if ((w->command & REQ_POLLED) &&
-			test_bit(QUEUE_FLAG_POLL, &w->q->queue_flags)) {
-#endif
+	if (IS_POLLING_WR(w)) {
 		// although target work request is completed, we should call
 		// blk_poll to prevent from being stucked on completion queue
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-		blk_poll(w->q, w->cookie, false);
-#else
-		bio_poll(w->bio, NULL, false);
-#endif
+		emp_wr_blk_poll(w);
 		while (!completion_done(&w->wait)) {
-			/*if (bvma && w->type == TYPE_FETCHING) {*/
-				/*check_and_writeback_inactive_block(bvma, cpu);*/
-				/*[>blk_poll(w->q, w->cookie, false);<]*/
-				/*[>cond_resched();<]*/
-				/*[>continue;<]*/
-			/*}*/
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-			blk_poll(w->q, w->cookie, true);
-#else
-			bio_poll(w->bio, NULL, false);
-#endif
-
+			emp_wr_blk_poll(w);
 			cond_resched();
 		}
+		bio_put(w->bio);
+		w->bio = (void *)0xdeadbeef;
 	} else {
 		unsigned long hang_check;
 
@@ -765,18 +748,15 @@ wait_for_wc(struct emp_mm *bvma, struct vcpu_var *cpu, struct work_request *w)
  */
 static int try_wait_for_wc(struct emp_mm *bvma, struct work_request *w)
 {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-	if ((w->command & REQ_HIPRI) &&
-			test_bit(QUEUE_FLAG_POLL, &w->q->queue_flags)) {
-		blk_poll(w->q, w->cookie, false);
+	if (IS_POLLING_WR(w)) {
+		emp_wr_blk_poll(w);
+		if (completion_done(&w->wait)) {
+			bio_put(w->bio);
+			w->bio = (void *)0xdeadbeef;
+			return 1;
+		} else
+			return 0;
 	}
-#else
-	if ((w->command & REQ_POLLED) &&
-			test_bit(QUEUE_FLAG_POLL, &w->q->queue_flags)) {
-		bio_poll(w->bio, NULL, false);
-	}
-#endif
 	return completion_done(&w->wait) ? 1: 0;
 }
 

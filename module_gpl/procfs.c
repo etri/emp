@@ -651,12 +651,7 @@ static ssize_t read_poll_write(struct file *file, const char __user *buf,
 
 	q = conn->bdev->bd_disk->queue;
 	if (flag && test_bit(QUEUE_FLAG_POLL, &q->queue_flags)) {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-		m->conn->read_command_flag = REQ_HIPRI;
-#else
-		m->conn->read_command_flag = REQ_POLLED;
-#endif
+		m->conn->read_command_flag = EMP_REQ_POLLED;
 	} else {
 		m->conn->read_command_flag = 0;
 	}
