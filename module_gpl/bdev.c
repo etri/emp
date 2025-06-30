@@ -595,11 +595,13 @@ static int create_conn(struct emp_mm *emm, struct connection **connection,
 	conn->size = donor->size;
 	conn->bdev = bdev;
 	/* test and set member variables of connection */
+	/* test_bdev is optional running in donor_mgmt.c
 	if (test_bdev(conn)) {
 		printk(KERN_ERR "checking %s failed\n", donor->path);
 		ret = -EINVAL;
 		goto open_blkdev_error;
 	}
+	*/
 
 	atomic_set(&context->is_connected, 1);
 	context->ctrl_state = CONTEXT_READY;
