@@ -52,7 +52,12 @@ set(mi_sources
     src/segment.c
     src/segment-map.c
     src/stats.c
-    src/prim/prim.c)
+    src/prim/prim.c
+    src/emp/env.c
+    src/emp/libemp.c
+    src/emp/internal/syscall_ret.c
+    src/emp/mmap/mmap.c)
+
 
 set(mi_cflags "")
 set(mi_libraries "")
