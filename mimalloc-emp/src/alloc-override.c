@@ -40,8 +40,12 @@ typedef struct mi_nothrow_s { int _tag; } mi_nothrow_t;
 #define MI_FORWARD1(fun,x)      MI_FORWARD(fun)
 #define MI_FORWARD2(fun,x,y)    MI_FORWARD(fun)
 #define MI_FORWARD3(fun,x,y,z)  MI_FORWARD(fun)
+
+#ifdef CONFIG_EMP
 #define MI_FORWARD4(fun,x,y,z,a)  MI_FORWARD(fun)	// EMP
 #define MI_FORWARD6(fun,x,y,z,a,b,c)  MI_FORWARD(fun)	// EMP
+#endif
+
 #define MI_FORWARD0(fun,x)      MI_FORWARD(fun)
 #define MI_FORWARD02(fun,x,y)   MI_FORWARD(fun)
 #else
@@ -98,7 +102,11 @@ __attribute__((used)) static struct mi_interpose_s _mi_interposes[]  __attribute
 	MI_INTERPOSE_FUN(free,mi_cfree), // use safe free that checks if pointers are from us
 	MI_INTERPOSE_FUN(vfree,mi_cfree),
 #endif
+
+#ifdef CONFIG_EMP
 	MI_INTERPOSE_MI(mmap),	// EMP
+#endif
+
 };
 
 #ifdef __cplusplus
@@ -136,7 +144,11 @@ __attribute__((used)) static struct mi_interpose_s _mi_cxx_interposes[]  __attri
 	mi_decl_export void* calloc(size_t size, size_t n)    MI_FORWARD2(mi_calloc, size, n)
 	mi_decl_export void* realloc(void* p, size_t newsize) MI_FORWARD2(mi_realloc, p, newsize)
 mi_decl_export void  free(void* p)                    MI_FORWARD0(mi_free, p)
+
+#ifdef CONFIG_EMP
 	mi_decl_export void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) MI_FORWARD6(mi_mmap, addr, length, prot, flags, fd, offset)	// EMP
+#endif
+
 #endif
 
 #if (defined(__GNUC__) || defined(__clang__)) && !defined(__APPLE__)

@@ -58,6 +58,7 @@ set(mi_sources
     src/emp/internal/syscall_ret.c
     src/emp/mmap/mmap.c)
 
+add_compile_definitions(CONFIG_EMP)
 
 set(mi_cflags "")
 set(mi_libraries "")

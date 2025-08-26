@@ -7,7 +7,10 @@
 #include "mimalloc.h"
 #include "mimalloc/internal.h"
 #include "mimalloc/prim.h"
+
+#ifdef CONFIG_EMP
 #include "emp/libemp.h" // EMP
+#endif
 
 #include <string.h>  // memcpy, memset
 #include <stdlib.h>  // atexit
@@ -702,7 +705,9 @@ static bool mi_initialized = _mi_process_init();
 #elif defined(__GNUC__) || defined(__clang__)
 // GCC,Clang: use the constructor attribute
 static void __attribute__((constructor)) _mi_process_init(void) {
+#ifdef CONFIG_EMP
 	libemp_init(); // EMP
+#endif
 	mi_process_load();
 }
 

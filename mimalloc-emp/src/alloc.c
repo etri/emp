@@ -13,7 +13,9 @@
 #include "mimalloc/atomic.h"
 #include "mimalloc/prim.h"   // _mi_prim_thread_id()
 
+#ifdef CONFIG_EMP
 #include "emp/mmap_impl.h"   // EMP
+#endif
 
 #include <string.h>      // memset, strlen (for mi_strdup)
 #include <stdlib.h>      // malloc, abort
@@ -179,12 +181,13 @@ mi_decl_nodiscard extern inline mi_decl_restrict void* mi_malloc(size_t size) mi
 }
 
 /* EMP */
+#ifdef CONFIG_EMP
 mi_decl_nodiscard extern inline mi_decl_restrict void* mi_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) mi_attr_noexcept {
 	void *ret;
 	ret = emp_mmap(addr, length, prot, flags, fd, offset);
-	//emp_mmap(addr, length, prot, flags, fd, offset, ret);
 	return ret;
 }
+#endif
 
 // zero initialized small block
 mi_decl_nodiscard mi_decl_restrict void* mi_zalloc_small(size_t size) mi_attr_noexcept {
@@ -775,7 +778,26 @@ static inline mi_segment_t* mi_checked_ptr_segment(const void* p, const char* ms
 
 
 	mi_decl_nodiscard void* mi_realloc(void* p, size_t newsize) mi_attr_noexcept {
+#ifdef CONFIG_EMP 
+		/* EMP */
+		void *newp;
+
+		if (p == NULL)
+			return(mi_heap_malloc(mi_prim_get_default_heap(), newsize));
+
+		newp = mi_heap_malloc(mi_prim_get_default_heap(), newsize);
+
+		if (!newp) return 0;
+
+		_mi_memcpy(newp, p, newsize);
+		mi_free(p);
+
+		_mi_warning_message("%s(): new ptr=0x%lx, size=0x%lx\n", __func__, newp, newsize);
+
+		return newp;
+#else
 		return mi_heap_realloc(mi_prim_get_default_heap(),p,newsize);
+#endif
 	}
 
 	mi_decl_nodiscard void* mi_reallocn(void* p, size_t count, size_t size) mi_attr_noexcept {

@@ -156,7 +156,12 @@ static int unix_madvise(void* addr, size_t size, int advice) {
   #if defined(__sun)
   return madvise((caddr_t)addr, size, advice);  // Solaris needs cast (issue #520)
   #else
+  /* EMP */
+#ifdef CONFIG_EMP
+  return 0;
+#else
   return madvise(addr, size, advice);
+#endif
   #endif
 }
 
@@ -411,6 +416,7 @@ int _mi_prim_protect(void* start, size_t size, bool protect) {
   int err = mprotect(start, size, protect ? PROT_NONE : (PROT_READ | PROT_WRITE));
   if (err != 0) { err = errno; }  
   unix_mprotect_hint(err);
+  _mi_warning_message("%s (error: %d (0x%x))\n", __func__, err, err);
   return err;
 }
 
