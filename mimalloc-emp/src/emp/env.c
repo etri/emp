@@ -102,6 +102,7 @@ int emp_setup_media(int fd, const char *path)
 		switch (dev_type) {
 		case DONOR_DEV_RDMA:
 			is_rdma = true;
+			__attribute__((fallthrough));
 		case DONOR_DEV_NVME:
 		case DONOR_DEV_PMEM:
 			if (!subtoken) {

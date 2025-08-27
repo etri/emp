@@ -13,9 +13,14 @@
 #include "mimalloc/atomic.h"
 #include "mimalloc/prim.h"   // _mi_prim_thread_id()
 
+/* EMP */
 #ifdef CONFIG_EMP
-#include "emp/mmap_impl.h"   // EMP
-#endif
+#include <stdarg.h>
+#include <stdio.h>
+#include <linux/mman.h>
+
+#include "emp/syscall_impl.h"
+#endif CONFIG_EMP
 
 #include <string.h>      // memset, strlen (for mi_strdup)
 #include <stdlib.h>      // malloc, abort
@@ -187,7 +192,44 @@ mi_decl_nodiscard extern inline mi_decl_restrict void* mi_mmap(void *addr, size_
 	ret = emp_mmap(addr, length, prot, flags, fd, offset);
 	return ret;
 }
-#endif
+
+mi_decl_nodiscard extern inline mi_decl_restrict int mi_mprotect(void *addr, size_t len, int prot) mi_attr_noexcept {
+	int ret;
+	ret = emp_mprotect(addr, len, prot);
+	return ret;
+}
+
+mi_decl_nodiscard extern inline mi_decl_restrict int mi_madvise(void *addr, size_t length, int advice) mi_attr_noexcept {
+	int ret;
+	ret = emp_madvise(addr, length, advice);
+	return ret;
+}
+
+static void dummy(void) { }
+weak_alias(dummy, __vm_wait);
+
+mi_decl_nodiscard extern inline mi_decl_restrict void *mi_mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...) mi_attr_noexcept {
+	va_list ap;
+	void *new_address = NULL;
+	void *ret = NULL;;
+
+	if (flags & MREMAP_FIXED) {
+		__vm_wait();
+		va_start(ap, flags);
+		new_address = va_arg(ap, void *);
+		va_end(ap);
+	}
+
+	ret = emp_mremap(old_address, old_size, new_size, flags, new_address);
+	return ret;
+}
+
+mi_decl_nodiscard extern inline mi_decl_restrict int mi_munmap(void *addr, size_t length) mi_attr_noexcept {
+	int ret;
+	ret = emp_munmap(addr, length);
+	return ret;
+}
+#endif CONFIG_EMP
 
 // zero initialized small block
 mi_decl_nodiscard mi_decl_restrict void* mi_zalloc_small(size_t size) mi_attr_noexcept {
@@ -779,25 +821,44 @@ static inline mi_segment_t* mi_checked_ptr_segment(const void* p, const char* ms
 
 	mi_decl_nodiscard void* mi_realloc(void* p, size_t newsize) mi_attr_noexcept {
 #ifdef CONFIG_EMP 
+//#if 0 
 		/* EMP */
 		void *newp;
+		size_t size;
+		size_t copysize;
+		size_t start = 0;;
+
+#ifdef EMP_DEBUG
+		fprintf(stderr, "%s(): ptr=0x%lx, size=0x%lx\n", __func__, (unsigned long)p, newsize);
+#endif
 
 		if (p == NULL)
 			return(mi_heap_malloc(mi_prim_get_default_heap(), newsize));
 
-		newp = mi_heap_malloc(mi_prim_get_default_heap(), newsize);
+		if (p && newsize == 0) {
+			mi_free(p);
+			return NULL;
+		}
+
+		//newp = mi_heap_malloc(mi_prim_get_default_heap(), newsize);
+		newp = mi_malloc(newsize);
 
 		if (!newp) return 0;
 
-		_mi_memcpy(newp, p, newsize);
+		memset(newp, 0, newsize);
+		size = _mi_usable_size(p,"mi_realloc"); // also works if p == NULL (with size 0)
+		copysize = (newsize > size ? size : newsize);
+		if (newsize > size) {
+			start = (size >= sizeof(intptr_t) ? size - sizeof(intptr_t) : 0);
+		}
+		fprintf(stderr, "%s(): size=%d, newsize=%d, copysize=%d, start=%d\n", __func__, size, newsize, copysize, start);
+		_mi_memcpy(newp, p, copysize);
 		mi_free(p);
-
-		_mi_warning_message("%s(): new ptr=0x%lx, size=0x%lx\n", __func__, newp, newsize);
 
 		return newp;
 #else
 		return mi_heap_realloc(mi_prim_get_default_heap(),p,newsize);
-#endif
+#endif CONFIG_EMP
 	}
 
 	mi_decl_nodiscard void* mi_reallocn(void* p, size_t count, size_t size) mi_attr_noexcept {

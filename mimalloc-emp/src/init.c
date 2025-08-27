@@ -651,6 +651,9 @@ static void mi_cdecl mi_process_done(void) {
 		mi_stats_print(NULL);
 	}
 	mi_allocator_done();
+#ifdef CONFIG_EMP
+	libemp_exit();
+#endif
 	_mi_verbose_message("process done: 0x%zx\n", _mi_heap_main.thread_id);
 	os_preloading = true; // don't call the C runtime anymore
 }

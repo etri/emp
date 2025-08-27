@@ -56,9 +56,14 @@ set(mi_sources
     src/emp/env.c
     src/emp/libemp.c
     src/emp/internal/syscall_ret.c
-    src/emp/mmap/mmap.c)
+    src/emp/syscall/mprotect.c
+    src/emp/syscall/madvise.c
+    src/emp/syscall/mremap.c
+    src/emp/syscall/munmap.c
+    src/emp/syscall/mmap.c)
 
 add_compile_definitions(CONFIG_EMP)
+add_compile_definitions(EMP_DEBUG)
 
 set(mi_cflags "")
 set(mi_libraries "")
