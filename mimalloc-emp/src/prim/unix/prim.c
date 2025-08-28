@@ -156,12 +156,7 @@ static int unix_madvise(void* addr, size_t size, int advice) {
   #if defined(__sun)
   return madvise((caddr_t)addr, size, advice);  // Solaris needs cast (issue #520)
   #else
-#ifdef CONFIG_EMP
-  _mi_warning_message("%s (advice: %d (0x%x))\n", __func__, advice, advice);
-  return 0;
-#else
   return madvise(addr, size, advice);
-#endif
   #endif
 }
 

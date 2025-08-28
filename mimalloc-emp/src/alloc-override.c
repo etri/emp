@@ -41,6 +41,7 @@ typedef struct mi_nothrow_s { int _tag; } mi_nothrow_t;
 #define MI_FORWARD2(fun,x,y)    MI_FORWARD(fun)
 #define MI_FORWARD3(fun,x,y,z)  MI_FORWARD(fun)
 
+/* EMP */
 #ifdef CONFIG_EMP
 #define MI_FORWARD4(fun,x,y,z,a)  MI_FORWARD(fun)	// EMP
 #define MI_FORWARD5(fun,x,y,z,a,b)  MI_FORWARD(fun)	// EMP
@@ -104,12 +105,13 @@ __attribute__((used)) static struct mi_interpose_s _mi_interposes[]  __attribute
 	MI_INTERPOSE_FUN(vfree,mi_cfree),
 #endif
 
+/* EMP */
 #ifdef CONFIG_EMP
 	MI_INTERPOSE_MI(mmap),		// EMP
-	MI_INTERPOSE_MI(mprotect),	// EMP
 	MI_INTERPOSE_MI(madvise),	// EMP
 	MI_INTERPOSE_MI(mremap),	// EMP
-	MI_INTERPOSE_MI(munmap),	// EMP
+	//MI_INTERPOSE_MI(mprotect),	// EMP
+	//MI_INTERPOSE_MI(munmap),	// EMP
 #endif
 
 };
@@ -150,12 +152,15 @@ __attribute__((used)) static struct mi_interpose_s _mi_cxx_interposes[]  __attri
 	mi_decl_export void* realloc(void* p, size_t newsize) MI_FORWARD2(mi_realloc, p, newsize)
 mi_decl_export void  free(void* p)                    MI_FORWARD0(mi_free, p)
 
+/* EMP */
 #ifdef CONFIG_EMP
 	mi_decl_export void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) MI_FORWARD6(mi_mmap, addr, length, prot, flags, fd, offset)	// EMP
-	mi_decl_export int mprotect(void *addr, size_t len, int prot) MI_FORWARD3(mi_mprotect, addr, len, prot)	// EMP
-	mi_decl_export int madvise(void *addr, size_t length, int advice) MI_FORWARD3(mi_madvise, addr, lenth, advise)	// EMP
+	mi_decl_export int madvise(void *addr, size_t length, int advice) MI_FORWARD3(mi_madvise, addr, lenth, advise)							// EMP
 	mi_decl_export void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ... /* void *new_address */) MI_FORWARD5(mi_mremap, old_address, old_size, new_size, flags, ...)	// EMP
-	mi_decl_export int munmap(void *addr, size_t length) MI_FORWARD2(mi_munmap, addr, length)	// EMP
+#if 0 // use default mprotect & munmap
+	mi_decl_export int mprotect(void *addr, size_t len, int prot) MI_FORWARD3(mi_mprotect, addr, len, prot)	// EMP
+	mi_decl_export int munmap(void *addr, size_t length) MI_FORWARD2(mi_munmap, addr, length)		// EMP
+#endif
 #endif
 
 #endif

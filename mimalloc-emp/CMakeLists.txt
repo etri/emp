@@ -53,17 +53,25 @@ set(mi_sources
     src/segment-map.c
     src/stats.c
     src/prim/prim.c
+# -----------------------------------------------------------------------------
+# EMP
+# -----------------------------------------------------------------------------
     src/emp/env.c
     src/emp/libemp.c
     src/emp/internal/syscall_ret.c
-    src/emp/syscall/mprotect.c
     src/emp/syscall/madvise.c
     src/emp/syscall/mremap.c
-    src/emp/syscall/munmap.c
+    #src/emp/syscall/mprotect.c
+    #src/emp/syscall/munmap.c
     src/emp/syscall/mmap.c)
 
+# -----------------------------------------------------------------------------
+# EMP
+# -----------------------------------------------------------------------------
+# enable EMP
 add_compile_definitions(CONFIG_EMP)
-add_compile_definitions(EMP_DEBUG)
+# enable EMP debug message
+#add_compile_definitions(EMP_DEBUG)
 
 set(mi_cflags "")
 set(mi_libraries "")
