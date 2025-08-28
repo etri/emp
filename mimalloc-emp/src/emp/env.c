@@ -5,7 +5,7 @@
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 
-#define __USE_DONOR_DEV_TYPE_STR__
+//#define __USE_DONOR_DEV_TYPE_STR__
 #include "emp/emp_ioctl.h"
 
 /**
