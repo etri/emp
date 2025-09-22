@@ -99,8 +99,20 @@ terms of the MIT license. A copy of the license can be found in the file
 #include <stdbool.h>    // bool
 #include <stdint.h>     // INTPTR_MAX
 
+/* EMP */
+#ifdef CONFIG_EMP
+#include <sys/types.h>  // off_t
+#endif
+
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+/* EMP */
+#ifdef CONFIG_EMP
+mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)  mi_attr_noexcept mi_attr_malloc;
+mi_decl_nodiscard mi_decl_export int mi_madvise(void *addr, size_t length, int advice)  mi_attr_noexcept;
+mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_mremap(void *old_address, size_t old_size, size_t new_size, int flags, ... /* void *new_address */)  mi_attr_noexcept mi_attr_malloc;
 #endif
 
 // ------------------------------------------------------
