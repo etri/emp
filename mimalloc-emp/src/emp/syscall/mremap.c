@@ -14,7 +14,6 @@
 
 /* EMP */
 extern int empfd;
-#define LIBEMP_READY (empfd != -1)
 
 void *emp_mremap(void *old_address, size_t old_size, size_t new_size, int flags, void *new_address)
 {

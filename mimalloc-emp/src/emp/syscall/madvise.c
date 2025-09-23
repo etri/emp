@@ -9,7 +9,6 @@
 
 /* EMP */
 extern int empfd;
-#define LIBEMP_READY (empfd != -1)
 
 int emp_madvise(void *addr, size_t length, int advice)
 {
