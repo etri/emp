@@ -63,10 +63,6 @@ size_t _mi_os_good_alloc_size(size_t size) {
 }
 
 void _mi_os_init(void) {
-/* EMP */
-#ifdef CONFIG_EMP
-	libemp_init(); // EMP
-#endif
   _mi_prim_mem_init(&mi_os_mem_config);
 }
 
