@@ -75,6 +75,20 @@ void libemp_init(void)
 	if (param_emp_verbose)
 		verbose = atoi(param_emp_verbose);
 
+	if (param_emp_path[0] == '!') {
+                // empfd was opened at parent process
+                empfd = atoi(param_emp_path + 1);
+                if (fdopen(empfd, "rw") == NULL)  {
+                        fprintf(stderr, "libemp.so: [ERROR] Failed to inherit emp module: %s\n", strerror(errno));
+                        exit(-1);
+                }
+
+                print_verbose("libemp.so: [INFO] succeed to inherit emp module. emp_fd: %d\n", empfd);
+
+                emp_enable();
+                return;
+        }
+
 	// open emp 
 	empfd = open("/dev/emp", O_RDWR);
 	if (empfd < 0) {

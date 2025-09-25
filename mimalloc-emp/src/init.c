@@ -710,7 +710,7 @@ static bool mi_initialized = _mi_process_init();
 #elif defined(__GNUC__) || defined(__clang__)
 // GCC,Clang: use the constructor attribute
 //
-bool emp_initialized; 
+static bool emp_initialized = false; 
 static void __attribute__((constructor)) _mi_process_init(void) {
 /* EMP */
 #ifdef CONFIG_EMP
