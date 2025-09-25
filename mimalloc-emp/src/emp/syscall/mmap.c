@@ -22,6 +22,7 @@ typedef long syscall_arg_t;
 
 /* EMP */
 extern int empfd;
+#define LIBEMP_READY (empfd != -1)
 
 void *emp_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {

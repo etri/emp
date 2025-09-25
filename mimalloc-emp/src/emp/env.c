@@ -5,26 +5,24 @@
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 
-#define __USE_DONOR_DEV_TYPE_STR__
-#include <emp/emp_ioctl.h>
-#include <emp/libemp.h>
-#include <numa.h>
+//#define __USE_DONOR_DEV_TYPE_STR__
+#include "emp/emp_ioctl.h"
 
+/**
+ * emp_get_donor_dev_type - get emp donor type: dram ? nvme ? pmem ? remote mememory
+ * @param path emp memory path
+ *
+ * @retval DONOR_DEV_DRAM: dram
+ * @retval DONOR_DEV_NVME: nvme, pmem
+ * @retval DONOR_DEV_RDMA: remote memory
+ */
 static enum donor_dev_type emp_get_donor_dev_type(char *path)
 {
 	if (strncmp(path, "dram", 4) == 0 ||
 			strncmp(path, "DRAM", 4) == 0)
 		return DONOR_DEV_DRAM;
 
-	if (strncmp(path, "memdev", 6) == 0 ||
-			strncmp(path, "MEMDEV", 6) == 0)
-		return DONOR_DEV_MEMDEV;
-
 	if (strstr(path, "/dev/nvme") == path)
-		return DONOR_DEV_NVME;
-
-	/* ramdisk support */
-	if (strstr(path, "/dev/ram") == path)
 		return DONOR_DEV_NVME;
 
 	/* pmem is supported as a nvme device */
@@ -34,36 +32,33 @@ static enum donor_dev_type emp_get_donor_dev_type(char *path)
 	return DONOR_DEV_RDMA;
 }
 
-static void populate_memory_region(void *__ptr, size_t size)
+/**
+ * emp_setup_media - resolve emp path and setup donor
+ * @param fd emp fd
+ * @pram path emp memory path
+ *
+ * @retval -EINVAL: Error
+ * @retval 0: Success
+ */ 
+int emp_setup_media(int fd, const char *path)
 {
-	long *ptr = (long *) __ptr;
-	long *end = (long *) (((char *) __ptr) + size);
-	for ( ; ptr < end; ptr += (4096/sizeof(long)))
-		*ptr = 0L;
-	printf("Memory region 0x%016lx ~ 0x%016lx is populated\n",
-			(unsigned long) __ptr,
-			(unsigned long) end);
-}
-
-int emp_setup_media(int fd, const char *__path)
-{
-	struct donor_info *donor;
+	struct donor_info donor;
 	int ret;
 	char *token, *subtoken, *str, *c, term;
 	char *saveptr1, *saveptr2 = NULL;
+	char path_str[PATH_MAX];
 	int path_len;
 	enum donor_dev_type dev_type;
-	char *path;
+	bool is_rdma = false;
 
-	if (__path == NULL)
+	if (path == NULL) {
 		return -EINVAL;
+	}
 
-	path = strdup(__path);
-	if (path == NULL)
-		return -errno;
-
+	memset(&donor, 0, sizeof(struct donor_info));
 	term = '\0';
-	str = (char *)path;
+	strcpy(path_str, (char *) path);
+	str = (char *)path_str;
 	for (c = str; *c != term; c++) {
 		switch (*c) {
 		case '\"':
@@ -76,89 +71,81 @@ int emp_setup_media(int fd, const char *__path)
 	if (*c == term)
 		*c = '\0';
 
-	print_verbose("emp memory: %s\n", str);
+#ifdef EMP_DEBUG
+	fprintf(stderr, "emp memory: %s\n", str);
+#endif
 	while ((token = strtok_r(str, "|", &saveptr1))) {
 		subtoken = strtok_r(token, ":", &saveptr2);
 		path_len = strlen(subtoken) + 1;
 
-		donor = malloc(sizeof(struct donor_info) + path_len);
-		if (donor == NULL) {
-			ret = -ENOMEM;
-			break;
-		}
-		donor->path_len = path_len;
-		strncpy(donor->path, subtoken, path_len);
+		donor.path_len = path_len;
+		strncpy(donor.path, subtoken, path_len);
+#ifdef EMP_DEBUG
+		fprintf(stderr, "donor.path: %s\n", donor.path);
+#endif
 
-		dev_type = emp_get_donor_dev_type(donor->path);
-		print_verbose("memory_node: type: %s path: %s", 
+		dev_type = emp_get_donor_dev_type(donor.path);
+#ifdef EMP_DEBUG
+		fprintf(stderr, "memory_node: type: %s path: %s", 
 				donor_dev_type_str[dev_type],
-				((dev_type != DONOR_DEV_DRAM)? 
-				 donor->path : "DRAM"));
-		donor->dev_type = dev_type;
+				dev_type != DONOR_DEV_DRAM ? donor.path : "DRAM");
+#endif
+		donor.dev_type = dev_type;
 
 		subtoken = strtok_r(NULL, ":", &saveptr2);
-		print_verbose(", size: %s", subtoken);
-		donor->size = atol(subtoken);
+#ifdef EMP_DEBUG
+		fprintf(stderr, ", size: %s", subtoken);
+#endif
+		donor.size = atol(subtoken);
 
 		subtoken = strtok_r(NULL, ":", &saveptr2);
 		switch (dev_type) {
 		case DONOR_DEV_RDMA:
+			is_rdma = true;
+			__attribute__((fallthrough));
 		case DONOR_DEV_NVME:
 		case DONOR_DEV_PMEM:
-		case DONOR_DEV_MEMDEV:
 			if (!subtoken) {
 				ret = -EINVAL;
 				break;
 			}
 
-			donor->loc = 0; // initialization
-			if (dev_type == DONOR_DEV_RDMA) {
-				donor->addr = inet_addr(donor->path);
-				donor->port = atoi(subtoken);
-				print_verbose(", port: %d", donor->port);
-			} else if (dev_type == DONOR_DEV_NVME
-					|| dev_type == DONOR_DEV_PMEM) {
-				donor->base = atoi(subtoken);
-				print_verbose(", base: 0x%x", donor->base);
-			} else if (dev_type == DONOR_DEV_MEMDEV) {
-				donor->node = atoi(subtoken);
-				if (subtoken[0] == '-') {
-					donor->node = -donor->node;
-					donor->ptr = numa_alloc_onnode(donor->size << 20, donor->node);
-					if (donor->ptr == NULL) {
-						ret = -ENOMEM;
-						break;
-					}
-					print_verbose(", node: %d ptr: %p", donor->node, donor->ptr);
-					populate_memory_region(donor->ptr, donor->size << 20);
-				} else {
-					print_verbose(", node: %d ptr: %p", donor->node, NULL);
-				}
-			}
-			print_verbose("\n");
+			donor.addr = dev_type==DONOR_DEV_RDMA?
+				inet_addr(donor.path): 0;
+			donor.port = atoi(subtoken);
 
-			ret = ioctl(fd, IOCTL_CONN_DONOR, donor);
+			subtoken = strtok_r(NULL, ":", &saveptr2);
+			ret = ioctl(fd, IOCTL_CONN_DONOR, &donor);
+
+			if(ret == -1) fprintf(stderr, "err: ioctl: RDMA\n");
+#ifdef EMP_DEBUG
+			fprintf(stderr, ", %s: %d\n",
+					dev_type==DONOR_DEV_RDMA?"port":"offset",
+					donor.port);
+#endif
 			break;
 		case DONOR_DEV_DRAM:
-			print_verbose("\n");
-			ret = ioctl(fd, IOCTL_SET_DRAM, donor);
+			ret = ioctl(fd, IOCTL_SET_DRAM, &donor);
+			if(ret == -1) fprintf(stderr, "err: ioctl: RDMA\n");
+#ifdef EMP_DEBUG
+			fprintf(stderr, "\n");
+#endif
 			break;
 		}
-		free(donor);
 
 		if (ret)
 			break;
 		str = NULL;
 	}
 
-	free(path);
+	if (is_rdma) {
+		if (ioctl(fd, IOCTL_FINI_CONN, 0))
+			return -EINVAL;
+	}
 
-	if (!ret)
-		ret = ioctl(fd, IOCTL_FINI_CONN, 0);
-
-
-	if (!ret)
+	if (!ret) {
 		return 0;
+	}
 
 	return -EINVAL;
 }

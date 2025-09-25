@@ -7,6 +7,7 @@
 
 /* EMP */
 extern int empfd;
+#define LIBEMP_READY (empfd != -1)
 
 int emp_mprotect(void *addr, size_t len, int prot)
 {

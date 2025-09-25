@@ -74,7 +74,7 @@ add_compile_definitions(CONFIG_EMP)
 #add_compile_definitions(EMP_DEBUG)
 
 set(mi_cflags "")
-set(mi_libraries "-lnuma")
+set(mi_libraries "")
 
 # -----------------------------------------------------------------------------
 # Convenience: set default build type depending on the build directory
