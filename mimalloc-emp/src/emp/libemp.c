@@ -60,6 +60,7 @@ void emp_restore(int emp_status)
  */
 void libemp_init(void) 
 {
+        char empfd_str[16];
 	int ret;
 	char *param_emp_path, *param_emp_verbose;
 
@@ -103,6 +104,8 @@ void libemp_init(void)
 		close(empfd);
 		exit(-1);
 	}
+        snprintf(empfd_str, 16, "!%d", empfd);
+        setenv("EMP_MEM_PATH", empfd_str, 1);
 
 	emp_enable();
 
