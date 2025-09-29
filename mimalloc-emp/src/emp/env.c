@@ -10,6 +10,11 @@
 #include <emp/libemp.h>
 #include <numa.h>
 
+#include <unistd.h>
+
+#define	MINIMUM_LOCAL_CACHE_SIZE	(4 << 10)	// MiB
+
+
 static enum donor_dev_type emp_get_donor_dev_type(char *path)
 {
 	if (strncmp(path, "dram", 4) == 0 ||
@@ -45,6 +50,43 @@ static void populate_memory_region(void *__ptr, size_t size)
 			(unsigned long) end);
 }
 
+size_t get_container_memory_limit(void) {
+	FILE *fp = NULL;
+	char buffer[256];
+	size_t limit = -1;
+
+	// cgroup v2: /sys/fs/cgroup/memory.max
+	fp = fopen("/sys/fs/cgroup/memory.max", "r");
+	if (fp == NULL) {
+		// fallback to cgroup v1
+		fp = fopen("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r");
+	}
+
+	if (fp != NULL) {
+		if (fgets(buffer, sizeof(buffer), fp) != NULL) {
+			buffer[strcspn(buffer, "\n")] = 0;  // remove newline
+			if (strcmp(buffer, "max") == 0) {
+				limit = -1;  // unlimited
+			} else {
+				limit = (size_t) (strtoll(buffer, NULL, 10) >> 20); // MiB
+			}
+		}
+		fclose(fp);
+	} else {
+		print_verbose("\n");
+		fprintf(stderr, "libemp.so: [ERROR] Failed to open cgroup memory file. Note: \"dram:-1\" indicates that EMP will use the cgroup-assigned memory limit.\n");
+	}
+
+	return limit;
+}
+
+size_t get_host_total_memory(void) {
+	long pages = sysconf(_SC_PHYS_PAGES);
+	long page_size = sysconf(_SC_PAGE_SIZE);
+
+	return pages * page_size;  // byte
+}
+
 int emp_setup_media(int fd, const char *__path)
 {
 	struct donor_info *donor;
@@ -54,6 +96,7 @@ int emp_setup_media(int fd, const char *__path)
 	int path_len;
 	enum donor_dev_type dev_type;
 	char *path;
+	size_t limit;
 
 	if (__path == NULL)
 		return -EINVAL;
@@ -140,7 +183,22 @@ int emp_setup_media(int fd, const char *__path)
 			ret = ioctl(fd, IOCTL_CONN_DONOR, donor);
 			break;
 		case DONOR_DEV_DRAM:
+			if (donor->size == (size_t)-1) {
+				limit = get_container_memory_limit();
+				if (limit != (size_t)-1) {
+					donor->size = limit; // MiB
+					print_verbose(" \u2192 use container memory limit: %ld", donor->size);
+				} else {
+					return -ENOMEM;
+				}
+			}
 			print_verbose("\n");
+
+			if (donor->size < (size_t) MINIMUM_LOCAL_CACHE_SIZE) {
+				fprintf(stderr, "libemp.so: [ERROR] Minimum local cache size should be larger than %d GiB\n", MINIMUM_LOCAL_CACHE_SIZE >> 10);
+				return -ENOMEM;
+			}
+
 			ret = ioctl(fd, IOCTL_SET_DRAM, donor);
 			break;
 		}
