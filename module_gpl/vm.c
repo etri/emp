@@ -432,9 +432,11 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	finish_emp_vma_split(vmr, false);
 #endif
 
-	printk(KERN_NOTICE "%s emm_id: %d vmr_id: %d vma:%p virt %lx vmr: %lx\n",
+	printk(KERN_NOTICE "%s emm_id: %d vmr_id: %d vma:%016lx virt %lx vmr: %016lx desc: %016lx ref: %d\n",
 				__func__, vmr->emm->id, vmr->id,
-				vma, vma->vm_start, (unsigned long) vmr);
+				(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
+				(unsigned long) vmr->descs,
+				(int) (vmr->descs ? atomic_read(&vmr->descs->refcount) : -1));
 
 	/* vmr->vmr_closing may be set by mmu notifier */
 	if (vmr->vmr_closing == false) {

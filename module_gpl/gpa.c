@@ -1173,11 +1173,13 @@ static inline void __lock_max_block(struct emp_gpa *max_head, int num)
 		__emp_lock_block(gpa);
 }
 
-static inline void
+/* return true if any pages are dirty. return false otherwise. */
+static inline bool
 __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			unsigned long hva, unsigned long page_len, pmd_t *pmd)
 {
-	pte_t *ptep;
+	pte_t *ptep, pte;
+	bool dirty = false;
 	struct page *page;
 	unsigned long pfn, i;
 	struct vm_area_struct *vma = vmr->host_vma;
@@ -1195,18 +1197,22 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	for (i = 0; i < page_len; i++, hva += PAGE_SIZE, ptep++, pfn++, page++) {
 		/* kernel may be unmap this PTE due to the splitted vma
 		 * Then, just skip the unmap. */
-		if (unlikely(pte_pfn(*ptep) == 0UL))
+		pte = *ptep;
+		if (unlikely(pte_pfn(pte) == 0UL))
 			continue;
-		debug_BUG_ON(pte_pfn(*ptep) != page_to_pfn(page));
+		debug_BUG_ON(pte_pfn(pte) != page_to_pfn(page));
 		native_pte_clear(NULL, 0, ptep);
 		flush_cache_page(vma, hva, pfn);
 		tlb_remove_tlb_entry((&vmr->close_tlb), ptep, hva);
+		if (!dirty && pte_dirty(pte))
+			dirty = true;
 		kernel_page_remove_rmap(page, vma, false);
 	}
 
 	/* We do not use wrapper __emp_put_pages_map(),
 	 * since __put_local_page_pmd() will sync the page ref for debug */
 	____emp_put_pages_map(gpa, page_len);
+	return dirty;
 }
 
 static inline void
@@ -1217,6 +1223,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 	struct emp_gpa *head, *gpa;
 	spinlock_t *ptl;
 	pmd_t *pmd;
+	bool dirty;
 
 	for (i = 0, head = max_head; i < size;
 			i += num_subblock_in_block(head),
@@ -1246,8 +1253,10 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		if (unlikely(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK))) {
 			sb_page_len = ____partial_gpa_to_page_len(vmr, head,
 							head_idx, head_hva);
-			__unmap_subblock_single_vmr(vmr, head, head_hva,
+			dirty = __unmap_subblock_single_vmr(vmr, head, head_hva,
 							sb_page_len, pmd);
+			if (dirty)
+				set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 			emp_update_rss_sub(vmr, sb_page_len,
 					DEBUG_RSS_SUB_UNMAP_MAX_BLOCK_PARTIAL,
 					head, DEBUG_UPDATE_RSS_BLOCK);
@@ -1256,6 +1265,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		}
 #endif
 
+		dirty = false;
 		sb_page_len = gpa_subblock_size(head);
 		for_each_gpas(gpa, head) {
 #ifdef CONFIG_EMP_DEBUG
@@ -1263,10 +1273,12 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 			debug_assert(gpa == head ||
 					emp_lp_lookup_pmd(gpa, vmr->id) == pmd);
 #endif
-			__unmap_subblock_single_vmr(vmr, gpa, head_hva,
+			dirty |= __unmap_subblock_single_vmr(vmr, gpa, head_hva,
 							sb_page_len, pmd);
 			head_hva += sb_page_len << PAGE_SHIFT;
 		}
+		if (dirty)
+			set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 		emp_update_rss_sub(vmr, gpa_block_size(head),
 					DEBUG_RSS_SUB_UNMAP_MAX_BLOCK,
 					head, DEBUG_UPDATE_RSS_BLOCK);
@@ -1311,7 +1323,7 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
  */
 static inline int
 __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
-		struct emp_vmr *vmr, int vm_refcnt,
+		struct emp_vmr *vmr, int vm_refcnt, bool may_dirty,
 		struct emp_vmr *next_vmr_shared,
 		struct emp_gpa *max_head, unsigned long size,
 		struct emp_gpa **gpa_dir, unsigned long max_head_idx)
@@ -1329,6 +1341,8 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 			head += num_subblock_in_block(head)) {
 		unsigned long gpa_idx = max_head_idx + i;
 		debug_progress(head, (((u64) vmr->id) << 32) | head->r_state);
+		if (may_dirty)
+			set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 		for_each_gpas(gpa, head) {
 			if (gpa->local_page)
 				__put_local_page_pmd(vmr, gpa);
@@ -1552,11 +1566,20 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 	unsigned long i, step;
 	int desc_order = region->block_order - bvma_subblock_order(emm);
 	struct kmem_cache *cachep = get_gpadesc_alloc(emm, desc_order);
+	bool may_dirty = false;
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
 	struct gpadesc_alloc_at_table *table;
 	table = emp_vzalloc(sizeof(struct gpadesc_alloc_at_table)
 					* (1 << GPADESC_ALLOC_AT_TABLE_SHIFT));
 #endif
+	if (!do_unmap && vm_refcnt > 0) {
+		/* if do_unmap == true, we will check dirty bit of PTE */
+		unsigned long vm_flags = vmr->host_vma->vm_flags;
+		if ((vm_flags & (VM_SHARED | VM_MAYSHARE)) != 0
+				&& (vm_flags & (VM_WRITE | VM_MAYWRITE)) != 0)
+			may_dirty = true;
+	}
+
 	step = 1UL << desc_order;
 	// Don't use for_all_gpa_heads_range() here. desc_order may be different
 	// from gpa_block_order(head) due to elastic block.
@@ -1596,7 +1619,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 			}
 		}
 #endif
-		if (__put_max_block(emm, cpu, vmr, vm_refcnt,
+		if (__put_max_block(emm, cpu, vmr, vm_refcnt, may_dirty,
 					next_vmr_shared, max_head, step,
 					gpa_dir, i) > 0) {
 			__unlock_max_block(max_head, step);
