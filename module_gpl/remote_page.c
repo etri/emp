@@ -60,22 +60,6 @@ static void __free_remote_page_block(struct emp_mm *emm, struct emp_gpa *head)
 }
 
 /**
- * reclaim_remote_page_block - Free remote pages in a block forcely
- * @param emm emp_mm data structure
- * @param head the head of a gpa block
- */
-void reclaim_remote_page_block(struct emp_mm *emm, struct emp_gpa *head)
-{
-	struct emp_gpa *gpa;
-	for_each_gpas(gpa, head) {
-		if (is_gpa_remote_page_free(gpa))
-			continue;
-		____free_remote_page(emm, &gpa->remote_page);
-	}
-}
-EXPORT_SYMBOL(reclaim_remote_page_block);
-
-/**
  * free_remote_page - Free a remote page and insert it to a free remote page list
  * @param emm emp_mm data structure
  * @param remote_page remote page info
@@ -379,7 +363,7 @@ EXPORT_SYMBOL(alloc_remote_page);
  * @head max block head
  * @num the number of gpa descriptors that belongs to @head.
  */
-inline void COMPILER_DEBUG
+void COMPILER_DEBUG
 remote_page_release(struct emp_mm *emm, struct emp_gpa *head, int num)
 {
 	struct emp_gpa *g;
@@ -393,9 +377,10 @@ remote_page_release(struct emp_mm *emm, struct emp_gpa *head, int num)
 		if (put_cow_remote_page(emm, g) == false)
 			continue;
 #endif
-		__remote_page_release(emm, &g->remote_page);
+		____free_remote_page(emm, &g->remote_page);
 	}
 }
+EXPORT_SYMBOL(remote_page_release);
 
 void adjust_remote_page_policy(struct emp_mm *emm, struct memreg *mr)
 {
