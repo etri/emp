@@ -432,11 +432,12 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	finish_emp_vma_split(vmr, false);
 #endif
 
-	printk(KERN_NOTICE "%s emm_id: %d vmr_id: %d vma:%016lx virt %lx vmr: %016lx desc: %016lx ref: %d\n",
-				__func__, vmr->emm->id, vmr->id,
-				(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
-				(unsigned long) vmr->descs,
-				(int) (vmr->descs ? atomic_read(&vmr->descs->refcount) : -1));
+	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d vma:%016lx virt: %016lx "
+				"vmr: %016lx desc: %016lx ref: %d\n",
+			__func__, vmr->emm->id, vmr->emm->vmrs_len, vmr->id,
+			(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
+			(unsigned long) vmr->descs,
+			(int) (vmr->descs ? atomic_read(&vmr->descs->refcount) : -1));
 
 	/* vmr->vmr_closing may be set by mmu notifier */
 	if (vmr->vmr_closing == false) {
@@ -1705,6 +1706,13 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		dup_dir = true;
 	}
 
+	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d "
+			"vma:%016lx virt: %016lx flags: %lx "
+			"vmr: %016lx shared: %d wipeonfork: %d\n",
+		__func__, emm->id, emm->vmrs_len, new_vmr->id,
+		(unsigned long) new_vma, new_vma->vm_start, new_vma->vm_flags,
+		(unsigned long) new_vmr, vm_shared, vm_wipeonfork);
+
 	if (dup_vmdesc(new_vmr, prev_vmr, new_vmdesc, dup_dir)) {
 		new_vma->vm_private_data = NULL;
 		emp_vmr_release(new_vmr);
@@ -1757,8 +1765,10 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 
 	__copy_vma_info(new_vmr, new_vma);
 
-	dprintk("%s BEFORE: prev_vmr->vm_start = 0x%lx, vm_end = 0x%lx, new_vmr->vm_start = 0x%lx, vm_end = 0x%lx\n",
-			__func__, prev_vmr->vm_start, prev_vmr->vm_end, new_vmr->vm_start, new_vmr->vm_end);
+	dprintk("%s (BEFORE) prev: vm_start=%016lx vm_end=%016lx "
+		"new_vmr: vm_start=%016lx vm_end=%016lx\n",
+			__func__, prev_vmr->vm_start, prev_vmr->vm_end,
+			new_vmr->vm_start, new_vmr->vm_end);
 
 	if (prev_vmr->vm_start == new_vmr->vm_start) {
 		debug_assert(new_vmr->vm_end == new_vmr->split_addr);
@@ -1768,8 +1778,11 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 		debug_assert(prev_vmr->vm_end == new_vmr->vm_end);
 		prev_vmr->vm_end = new_vmr->vm_start;
 	}
-	dprintk("%s  AFTER: prev_vmr->vm_start = 0x%lx, vm_end = 0x%lx, new_vmr->vm_start = 0x%lx, vm_end = 0x%lx\n",
-			__func__, prev_vmr->vm_start, prev_vmr->vm_end, new_vmr->vm_start, new_vmr->vm_end);
+
+	dprintk("%s  (AFTER) prev: vm_start=%016lx vm_end=%016lx "
+		"new_vmr: vm_start=%016lx, vm_end=%016lx\n",
+			__func__, prev_vmr->vm_start, prev_vmr->vm_end,
+			new_vmr->vm_start, new_vmr->vm_end);
 
 	split_vmdesc(new_vmr, prev_vmr);
 	split_set_gpadesc_regions(prev_vmr);
@@ -1808,13 +1821,6 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 	/* Actually, after duplication, gpa states of two vmrs are identical.
 	 * Thus, we only print out new's. */
 	debug_show_gpa_state(new_vmr, "emp_vma_open(new)");
-
-	printk(KERN_NOTICE "%s mm:%016lx vma:%016lx vm_flags: 0x%016lx anon_vma: %016lx "
-			"vm_start: 0x%lx vm_end: 0x%lx vm_pgoff: 0x%lx\n",
-			__func__,
-			(unsigned long) new_vma->vm_mm, (unsigned long) new_vma,
-			new_vma->vm_flags, (unsigned long) new_vma->anon_vma, new_vma->vm_start,
-			new_vma->vm_end, new_vma->vm_pgoff);
 
 	emp_update_rss_show(new_vmr);
 }
@@ -1903,11 +1909,6 @@ emp_mmap(struct file *filp, struct vm_area_struct *vma)
 		return -ENODEV;
 	bvma = (struct emp_mm *)filp->private_data;
 
-	dprintk("%s (1) mm:%016lx vma:%016lx vm_flags: 0x%016lx "
-		"vm_start: 0x%lx vm_end: 0x%lx\n", __func__,
-		(unsigned long) vma->vm_mm, (unsigned long) vma,
-		vma->vm_flags, vma->vm_start, vma->vm_end);
-
 #ifdef CONFIG_EMP_VM
 	if (bvma->ekvm.kvm &&
 			((vma->vm_start & ~HPAGE_MASK) || 
@@ -1955,6 +1956,12 @@ vm_start_aligned:
 		return -ENODEV;
 	}
 #endif
+
+	printk(KERN_NOTICE "%s emm: %d num_vmr: %d mm: %016lx vma:%016lx "
+				"vm_start: %016lx vm_end: %016lx flags: %lx\n",
+			__func__, bvma->id, bvma->vmrs_len,
+			(unsigned long) vma->vm_mm, (unsigned long) vma,
+			vma->vm_start, vma->vm_end, vma->vm_flags);
 
 	might_sleep();
 
@@ -2334,6 +2341,8 @@ static int emp_open(struct inode *inode, struct file *filp)
 				EMP_DEVICE_NAME);
 		goto open_register_err;
 	}
+	printk(KERN_NOTICE "%s (emm registered) emm: %d num_emp_mm: %ld\n",
+			__func__, bvma->id, emp_mm_arr_len);
 
 	if (emp_procfs_add(bvma, bvma->id)) {
 		ret = -ENOENT;
@@ -2364,8 +2373,8 @@ static int emp_open(struct inode *inode, struct file *filp)
 	bvma->pid = current->pid;
 
 	mutex_unlock(&emp_open_mutex);
-	dprintk("new bvma id:%d\n", bvma->id);
-	dprintk("emp_open exit\n");
+	printk(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
+			__func__, bvma->id, bvma->pid, current->pid, bvma->vmrs_len, emp_mm_arr_len);
 	return ret;
 
 open_procfs_err:
@@ -2415,6 +2424,8 @@ static int emp_release(struct inode *inode, struct file *filp)
 	if (!filp->private_data)
 		return -ENODEV;
 	bvma = (struct emp_mm *)filp->private_data;
+	printk(KERN_NOTICE "%s (begin) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
+			__func__, bvma->id, bvma->pid, current->pid, bvma->vmrs_len, emp_mm_arr_len);
 
 	WARN_ON(atomic_dec_and_test(&bvma->refcount) != true);
 
@@ -2455,6 +2466,9 @@ static int emp_release(struct inode *inode, struct file *filp)
 	}
 #endif
 
+	printk(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
+			__func__, bvma->id, bvma->pid, current->pid, bvma->vmrs_len, emp_mm_arr_len);
+
 	emp_procfs_del(bvma);
 	emp_kfree(bvma->vmrs);
 	emp_kfree(bvma);
@@ -2466,7 +2480,6 @@ static int emp_release(struct inode *inode, struct file *filp)
 	mutex_unlock(&emp_open_mutex);
 	module_put(THIS_MODULE);
 
-	printk(KERN_INFO "emp_release exit.\n");
 
 	return 0;
 }
