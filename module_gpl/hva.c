@@ -222,6 +222,37 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 		if (is_write)
 			pte_entry = maybe_mkwrite(pte_mkdirty(pte_entry), vma);
 		pte_entry = pte_mkold(pte_entry);
+
+		/*
+		 * Set page->mapping and page->index so that get_futex_key() does
+		 * not return -EFAULT when a shared futex (without FUTEX_PRIVATE_FLAG)
+		 * is used on emp-managed memory.
+		 */
+#ifdef CONFIG_EMP_USER
+		if (PageCompound(_page)) {
+			/* compound page: set mapping/index only on head */
+			if (PageHead(_page)) {
+				if (vma->vm_flags & VM_SHARED) {
+					_page->mapping = vma->vm_file->f_mapping;
+					_page->index   = linear_page_index(vma, haddr);
+				} else {
+					_page->mapping = (struct address_space *)
+						((unsigned long)vma->anon_vma | PAGE_MAPPING_ANON);
+					_page->index   = linear_page_index(vma, haddr);
+				}
+			}
+		} else {
+			/* non-compound page: set mapping/index on every page */
+			if (vma->vm_flags & VM_SHARED) {
+				_page->mapping = vma->vm_file->f_mapping;
+				_page->index   = linear_page_index(vma, haddr);
+			} else {
+				_page->mapping = (struct address_space *)
+					((unsigned long)vma->anon_vma | PAGE_MAPPING_ANON);
+				_page->index   = linear_page_index(vma, haddr);
+			}
+		}
+#endif
 		kernel_page_add_file_rmap(_page, vma, false);
 		update_mmu_cache(vma, haddr, _pte);
 		set_pte_at(vma->vm_mm, haddr, _pte, pte_entry);
