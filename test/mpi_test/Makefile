@@ -3,7 +3,7 @@ MPIRUN  = /usr/lib64/openmpi/bin/mpirun
 
 EMP     = EMP_MEM_PATH="dram:$$((16<<10))|10.10.0.113:32768:20675|10.10.0.113:32768:20676|10.10.0.113:32768:20677|10.10.0.113:32768:20678|10.10.0.113:32768:20679|10.10.0.113:32768:20680|10.10.0.113:32768:20681|10.10.0.113:32768:20682" \
           LD_PRELOAD=/usr/local/lib64/libmimalloc.so
-MPIOPT  = --allow-run-as-root --mca btl self,vader --mca mtl ^ofi \
+MPIOPT  = --mca btl self,vader --mca mtl ^ofi \
           -x EMP_MEM_PATH -x LD_PRELOAD
 
 TARGETS = t1_hello t2_malloc t3_fork t4_collective t5_manyranks t6_thread
