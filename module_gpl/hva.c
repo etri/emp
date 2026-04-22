@@ -581,7 +581,6 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	int ts_type;
 #endif
 	unsigned int sb_order, demand_sb_off;
-	int rss_count;
 #ifdef CONFIG_EMP_SHOW_FAULT_PROGRESS
 	s64 __num_emp_hva_fault;
 #endif
@@ -842,18 +841,23 @@ _emp_page_fault_hva_fetch_posted:
 
 	debug___emp_page_fault_hva2(emm, head);
 
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+	{
+		int rss_count;
 #ifdef CONFIG_EMP_USER
-	if (!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)) {
-		rss_count = gpa_block_size(head);
-	} else {
-		int shm_count = emp_lp_count_pmd(head->local_page);
-		rss_count = page_count(head->local_page->page) - 1;
-		rss_count /= shm_count;
-	}
+		if (!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)) {
+			rss_count = gpa_block_size(head);
+		} else {
+			int shm_count = emp_lp_count_pmd(head->local_page);
+			rss_count = page_count(head->local_page->page) - 1;
+			rss_count /= shm_count;
+		}
 #else
-	rss_count = gpa_block_size(head);
+		rss_count = gpa_block_size(head);
 #endif
-	emp_pf_history_add(cpu, rss_count, rss_count);
+		emp_pf_history_add(cpu, rss_count, rss_count);
+	}
+#endif
 
 _emp_page_fault_hva_out:
 	emp_pf_history_add(cpu, gpa_flag_end, __get_gpa_flags(demand));
