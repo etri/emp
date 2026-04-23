@@ -690,8 +690,7 @@ void free_gpa(struct emp_mm *bvma, struct emp_gpa *gpa, struct vcpu_var *cpu)
 	if (!gpa_page || !is_head_page(gpa_page, bvma_subblock_order(bvma)))
 		return;
 
-	if (!push_local_free_page(bvma, gpa_page, cpu))
-		_refill_global_free_page(bvma, gpa_page);
+	push_free_page_list(bvma, gpa_page, cpu);
 }
 
 #ifdef CONFIG_EMP_VM
@@ -1902,7 +1901,7 @@ int gpa_init(struct emp_mm *emm)
 {
 	int i;
 
-	emm->ftm.per_vcpu_free_lpages_len = PER_VCPU_FREE_LPAGES_LEN(emm, 2);
+	emm->ftm.per_vcpu_free_lpages_len = PER_VCPU_FREE_LPAGES_LEN(emm, 8);
 	emm->vops.unmap_gpas = unmap_gpas;
 	emm->vops.free_gpa = free_gpa;
 	emm->vops.set_gpa_remote = set_gpa_remote;

@@ -2074,16 +2074,16 @@ void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive)
 	BUG_ON(atomic_read(&inactive->page_len) != 0);
 }
 
-void debug_push_local_free_page(struct page *page) {
+void debug_push_free_page_list(struct page *page) {
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	int cnt = page_count(page);
 	WARN(cnt != 1,
-		"reference count of page is not 1 at push_local_free_page(). page_count: %d\n",
+		"reference count of page is not 1 at push_free_page_list(). page_count: %d\n",
 		cnt);
 #endif
 }
 
-void debug_pop_local_free_page(struct page *page) {
+void debug_pop_free_page_list_local(struct page *page) {
 	int cnt = page ? page_count(page) : INT_MIN;
 	WARN(cnt != 1,
 		"reference count of page is not 1 at pop_local_free_page(). page_count: %d\n",

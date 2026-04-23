@@ -44,32 +44,77 @@ void clear_page_state(struct emp_mm *bvma, struct page *page)
 }
 
 /**
- * push_local_free_page - Push a free page into thread-local free page list
+ * push_free_page_list - Push a free page into free page list
  * @param bvma bvma data structure
  * @param page page
  * @param cpu working vcpu ID
  */
-bool COMPILER_DEBUG push_local_free_page(struct emp_mm *bvma, struct page *page,
+void COMPILER_DEBUG push_free_page_list(struct emp_mm *emm, struct page *page,
 					 struct vcpu_var *cpu)
 {
-	const int free_lpages_len = bvma->ftm.per_vcpu_free_lpages_len;
-	struct emp_list *local_list = &cpu->local_free_page_list;
+	const int subblock_size = bvma_subblock_size(emm);
+	const int free_lpages_len = emm->ftm.per_vcpu_free_lpages_len;
+	struct emp_list *local_list = cpu ? &cpu->local_free_page_list : NULL;
+	struct emp_list *global_list;
+	struct temp_list to_global;
+	int cut;
 
-	debug_push_local_free_page(page);
+	debug_push_free_page_list(page);
 
-	if (unlikely(cpu == NULL))
-		return false;
+	if (atomic_read(&emm->ftm.free_pages_reclaim) >= subblock_size) {
+		if (atomic_sub_return(subblock_size,
+				&emm->ftm.free_pages_reclaim) >= 0) {
+			int subblock_order = bvma_subblock_order(emm);
+			_emp_unlock_page(page, subblock_order);
+			emp_free_pages(page, subblock_order);
 
-	/* if local free page list is full, return false.
-	 * To prevent imbalance in free pages in other vcpus. */
-	if (emp_list_len(local_list) >= free_lpages_len)
-		return false;
+			atomic_sub(subblock_size, &emm->ftm.alloc_pages_len);
+			return;
+		}
+		// restore the value
+		atomic_add(subblock_size, &emm->ftm.free_pages_reclaim);
+	}
 
-	emp_list_lock(local_list);
-	emp_list_add_tail(&page->lru, local_list);
-	emp_list_unlock(local_list);
+	if (local_list) { // local_list is provided
+		emp_list_lock(local_list);
+		emp_list_add_tail(&page->lru, local_list);
+		if (emp_list_len(local_list) <= free_lpages_len) {
+			emp_list_unlock(local_list);
+			return;
+		}
+		// cut the local free page list
+		init_temp_list(&to_global);
+		cut = emp_list_len(local_list) - (free_lpages_len >> 1);
+		emp_list_cut_count(local_list, cut, &to_global);
+		emp_list_unlock(local_list);
+	} else {
+		init_temp_list(&to_global);
+		temp_list_add_tail(&page->lru, &to_global);
+	}
 
-	return true;
+	cut = temp_list_len(&to_global);
+	if (unlikely(cut == 0))
+		return;
+
+	global_list = &emm->ftm.free_page_list;
+	// Insert to the global free page list
+	if (local_list && cut < free_lpages_len) {
+		// the local list is provided and the cut elements is not many.
+		// Let's trylock the global list.
+		if (!emp_list_trylock(global_list)) {
+			// Trylock failed. Return the elements to the local list.
+			emp_list_lock(local_list);
+			emp_list_splice_tail(&to_global, local_list);
+			emp_list_unlock(local_list);
+			return;
+		}
+	} else {
+		// local_list == NULL or cut >= free_lpage_len
+		emp_list_lock(global_list);
+	}
+	emp_list_splice_tail(&to_global, global_list);
+	emp_list_unlock(global_list);
+	wake_up_interruptible(&emm->ftm.free_pages_wq);
 }
 
 static inline struct page *
@@ -94,7 +139,7 @@ get_free_page_from_list(struct list_head *cur)
  */
 
 struct page * COMPILER_DEBUG 
-pop_local_free_page(struct emp_mm *bvma, struct vcpu_var *cpu)
+pop_free_page_list_local(struct emp_mm *bvma, struct vcpu_var *cpu)
 {
 	struct page *p;
 	struct emp_list *local_list = &cpu->local_free_page_list;
@@ -108,7 +153,7 @@ pop_local_free_page(struct emp_mm *bvma, struct vcpu_var *cpu)
 	p = get_next_free_page(local_list);
 	emp_list_unlock(local_list);
 
-	debug_pop_local_free_page(p);
+	debug_pop_free_page_list_local(p);
 
 	return p;
 }
@@ -187,64 +232,73 @@ static struct page *__alloc_page(struct emp_mm *emm)
 }
 
 /**
- * get_global_free_page - Returns a free page from global free page list of emm
+ * pop_free_page_list_global - Returns a free page from global free page list of emm
  * @param emm emm data structure
  *
  * @return a global free page
  */
-struct page *get_global_free_page(struct emp_mm *emm)
+struct page *pop_free_page_list_global(struct emp_mm *emm, struct vcpu_var *local_cpu)
 {
 	struct page *page;
-	struct emp_list *free_page_list = &emm->ftm.free_page_list;
+	struct emp_list *local_list, *remote_list;
+	struct temp_list pull;
+	int num_pull;
 
-	if (emp_list_len(free_page_list) == 0)
-		return NULL;
-
-	/* get a node that contains free page from list */
-	emp_list_lock(free_page_list);
-	page = get_next_free_page(free_page_list);
-	emp_list_unlock(free_page_list);
-	return page;
-}
-
-/**
- * _refill_global_free_page - Inserts the given page to free list of emm
- * @param emm emm data structure
- * @param page page
- */
-void _refill_global_free_page(struct emp_mm *emm, struct page *page)
-{
-	int subblock_size = bvma_subblock_size(emm);
-	int subblock_order = bvma_subblock_order(emm);
-	struct emp_list *free_page_list = &emm->ftm.free_page_list;
-
-#ifdef CONFIG_EMP_DEBUG_PAGE_REF
-	debug_WARN(page_count(page) != 1,
-		"reference count of page is not 1 at %s. page_count: %d\n",
-		__func__, page_count(page));
-#endif
-
-	if (atomic_read(&emm->ftm.free_pages_reclaim) > 0 &&
-			(emp_list_len(free_page_list) > EMP_MAIN_CPU_LEN(emm))) {
-		if (atomic_add_unless(&emm->ftm.free_pages_reclaim, 
-						-subblock_size, 0) == 0)
-			goto no_reclaim;
-
-		_emp_unlock_page(page, subblock_order);
-		emp_free_pages(page, subblock_order);
-
-		atomic_sub(subblock_size, &emm->ftm.alloc_pages_len);
-
-		return;
+	// Always try the local list first
+	local_list = &local_cpu->local_free_page_list;
+	if (emp_list_len(local_list) > 0) {
+		emp_list_lock(local_list);
+		page = get_next_free_page(local_list);
+		emp_list_unlock(local_list);
+		if (page)
+			return page;
 	}
 
-no_reclaim:
-	emp_list_lock(free_page_list);
-	emp_list_add_tail(&page->lru, free_page_list);
-	emp_list_unlock(free_page_list);
-	wake_up_interruptible(&emm->ftm.free_pages_wq);
+	// The local list is empty, try to pull the block size of free pages
+	init_temp_list(&pull);
+	num_pull = bvma_sib_size(emm);
 
-	return;
+	// First, pull from global_list
+	remote_list = &emm->ftm.free_page_list; // global list
+	if (emp_list_len(remote_list) > 0) {
+		emp_list_lock(remote_list);
+		emp_list_cut_count(remote_list, num_pull, &pull);
+		emp_list_unlock(remote_list);
+		if (page)
+			return page;
+	}
+
+	if (temp_list_len(&pull) == 0) {
+		struct vcpu_var *cpu;
+		int cpu_id;
+
+		for_all_vcpus_from(cpu, cpu_id, local_cpu, emm) {
+			if (cpu == local_cpu)
+				continue;
+			remote_list = &cpu->local_free_page_list;
+			if (emp_list_len(remote_list) == 0)
+				continue;
+			emp_list_lock(remote_list);
+			emp_list_cut_count(remote_list, num_pull, &pull);
+			emp_list_unlock(remote_list);
+			if (temp_list_len(&pull) > 0)
+				break;
+		}
+	}
+
+	if (temp_list_len(&pull) == 0)
+		return NULL;
+
+	page = get_free_page_from_list(temp_list_pop_head(&pull));
+	debug_assert(page);
+
+	if (temp_list_len(&pull) > 0) {
+		emp_list_lock(local_list);
+		emp_list_splice_tail(&pull, local_list);
+		emp_list_unlock(local_list);
+	}
+
+	return page;
 }
 
 /**
@@ -295,7 +349,7 @@ __alloc_page_from_writeback_local(struct emp_mm *bvma, struct vcpu_var *cpu)
 	if (bvma->sops.wait_writeback_async(bvma, cpu, false) == 0)
 		return NULL;
 
-	return pop_local_free_page(bvma, cpu);
+	return pop_free_page_list_local(bvma, cpu);
 }
 
 /**
@@ -314,7 +368,7 @@ __alloc_page_from_writeback_global(struct emp_mm *bvma, struct vcpu_var *cpu)
 	if (bvma->sops.wait_writeback_async_steal(bvma, cpu) == 0)
 		return NULL;
 
-	return pop_local_free_page(bvma, cpu);
+	return pop_free_page_list_local(bvma, cpu);
 }
 
 /**
@@ -497,7 +551,7 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 	WARN_ON(page_order != bvma_subblock_order(bvma));
 
 	/* (1) try to get a free page from thread-local free page list */
-	page = pop_local_free_page(bvma, cpu);
+	page = pop_free_page_list_local(bvma, cpu);
 	if (page) _emp_unlock_page(page, page_order);
 	
 	while (!page) {
@@ -512,7 +566,7 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 		}
 
 		/* (2) get a free page from global free page list */
-		if ((page = get_global_free_page(bvma))) {
+		if ((page = pop_free_page_list_global(bvma, cpu))) {
 			_emp_unlock_page(page, page_order);
 			break;
 		}

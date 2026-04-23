@@ -770,7 +770,7 @@ __dup_partial_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 		printk(KERN_ERR "ERROR: %s failed to allocate local "
 				"page. emm: %d vmr: %d idx: 0x%lx\n",
 				__func__, emm->id, dst_vmr_id, idx);
-		_refill_global_free_page(emm, page);
+		push_free_page_list(emm, page, cpu);
 		return -ENOMEM;
 	}
 	__debug_page_ref_update_page_len(dst->local_page, page_len);
@@ -813,7 +813,7 @@ __dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 			printk(KERN_ERR "ERROR: %s failed to allocate local "
 					"page. emm: %d vmr: %d idx: 0x%lx\n",
 					__func__, emm->id, dst_vmr_id, idx);
-			_refill_global_free_page(emm, page);
+			push_free_page_list(emm, page, cpu);
 			ret = -ENOMEM;
 			goto error;
 		}
@@ -832,7 +832,7 @@ error:
 		emm->lops.free_local_page(emm, dst->local_page);
 		page->private = 0;
 		emp_clear_pg_mlocked(page, gpa_subblock_order(dst));
-		_refill_global_free_page(emm, page);
+		push_free_page_list(emm, page, cpu);
 		dst->local_page = NULL;
 	}
 

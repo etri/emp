@@ -151,7 +151,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	local_page = bvma->lops.alloc_local_page(bvma, vmr->id, mr, page,
 						 page_order, gpa_idx, gpa);
 	if (unlikely(!local_page)) {
-		_refill_global_free_page(bvma, page);
+		push_free_page_list(bvma, page, cpu);
 		return -ENOMEM;
 	}
 	debug_page_ref_update_page_len(local_page, vmr, gpa, gpa_idx);
@@ -181,7 +181,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			emp_update_rss_sub(vmr, __gpa_to_page_len(vmr, gpa, gpa_idx),
 						DEBUG_RSS_SUB_ALLOC_FETCH_ERR,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
-			_refill_global_free_page(bvma, page);
+			push_free_page_list(bvma, page, cpu);
 			return PTR_ERR(w);
 		}
 #ifdef CONFIG_EMP_STAT
@@ -833,7 +833,7 @@ void clear_in_flight_fetching_block(struct emp_vmr *vmr,
 		page->private = 0;
 		emp_clear_pg_mlocked(page, gpa_subblock_order(g));
 		g->local_page = NULL;
-		_refill_global_free_page(emm, page);
+		push_free_page_list(emm, page, cpu);
 		cnt_lp++;
 	}
 

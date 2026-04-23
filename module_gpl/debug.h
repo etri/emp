@@ -260,8 +260,8 @@ void debug_free_gpa_dir_region(struct emp_gpa *head, int desc_order);
 void debug_emp_lp_count_pmd(struct local_page *lp);
 void debug_reclaim_exit_active(struct emp_mm *emm, struct slru *active);
 void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive);
-void debug_push_local_free_page(struct page *page);
-void debug_pop_local_free_page(struct page *page);
+void debug_push_free_page_list(struct page *page);
+void debug_pop_free_page_list_local(struct page *page);
 void debug_alloc_exit(struct emp_mm *emm);
 #else /* !CONFIG_EMP_DEBUG */
 #define debug_check_null_pointer(p) do{}while(0)
@@ -313,8 +313,8 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_emp_lp_count_pmd(lp) do {} while (0)
 #define debug_reclaim_exit_active(emm, active) do {} while (0)
 #define debug_reclaim_exit_inactive(emm, inactive) do {} while (0)
-#define debug_push_local_free_page(page) do {} while (0)
-#define debug_pop_local_free_page(page) do {} while (0)
+#define debug_push_free_page_list(page) do {} while (0)
+#define debug_pop_free_page_list_local(page) do {} while (0)
 #define debug_alloc_exit(emm) do {} while (0)
 #endif /* !CONFIG_EMP_DEBUG */
 

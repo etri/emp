@@ -159,6 +159,30 @@ static inline void emp_list_cut_position(struct emp_list *list,
 	cut->len += count;
 }
 
+static inline void emp_list_cut_count(struct emp_list *list, int count, struct temp_list *cut)
+{
+	struct list_head *pos;
+	int cnt;
+	if (unlikely(count <= 0)) {
+		return;
+	} else if (count >= emp_list_len(list)) {
+		emp_list_drain(list, cut);
+		return;
+	}
+
+	pos = list->head.next;
+	cnt = 1;
+
+	while (cnt < count) {
+		pos = pos->next;
+		cnt++;
+	}
+
+	list_cut_position(&cut->head, &list->head, pos);
+	atomic_sub(count, &list->len);
+	cut->len += count;
+}
+
 static inline void init_temp_list(struct temp_list *list) {
 	INIT_LIST_HEAD(&list->head);
 	list->len = 0;
@@ -197,6 +221,16 @@ static inline void temp_list_del_init(struct list_head *pos, struct temp_list *l
 	list_del_init(pos);
 	list->len--;
 	debug_assert(list->len >= 0);
+}
+
+static inline struct list_head *temp_list_pop_head(struct temp_list *list)
+{
+	struct list_head *ret;
+	if (list_empty(&list->head))
+		return NULL;
+	ret = list->head.next;
+	temp_list_del_init(ret, list);
+	return ret;
 }
 
 struct slru {

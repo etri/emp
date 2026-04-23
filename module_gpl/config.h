@@ -86,10 +86,10 @@
 // high PER_VCPU_WB_REQUESTS_MAX increases latency of wb page handling
 #define PER_VCPU_WB_REQUESTS_MAX(b) (128 << bvma_subblock_order(b))
 #ifdef CONFIG_EMP_BLOCK
-#define PER_VCPU_FREE_LPAGES_LEN(b, c) \
-	(1 << (b->config.block_order - b->config.subblock_order + c))
+#define PER_VCPU_FREE_LPAGES_LEN(emm, cnt) \
+	((1 << ((emm)->config.block_order - (emm)->config.subblock_order)) * (cnt))
 #else
-#define PER_VCPU_FREE_LPAGES_LEN(b, c) (1 << (c))
+#define PER_VCPU_FREE_LPAGES_LEN(emm, cnt) (cnt)
 #endif
 
 #ifdef CONFIG_EMP_RDMA
