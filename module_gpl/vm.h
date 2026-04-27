@@ -152,6 +152,12 @@ struct emp_stat {
 	u64      blk_prefetch_inactive;
 	u64      blk_prefetch_writeback;
 	u64      blk_prefetch_remote;
+	u64      blk_dontneed_try;
+	u64      blk_dontneed_succeed;
+	u64      blk_dontneed_active;
+	u64      blk_dontneed_inactive;
+	u64      blk_dontneed_writeback;
+	u64      blk_dontneed_remote;
 };
 
 // second-tier memory for a mm

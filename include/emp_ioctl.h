@@ -27,7 +27,7 @@
 // #define MADV_EMP_RANDOM             MADV_RANDOM
 // #define MADV_EMP_SEQUENTIAL         MADV_SEQUENTIAL
 #define MADV_EMP_WILLNEED              MADV_WILLNEED
-// #define MADV_EMP_DONTNEED           MADV_DONTNEED
+#define MADV_EMP_DONTNEED              MADV_DONTNEED
 // *** codes from linux ***
 // #define MADV_EMP_REMOVE             MADV_REMOVE
 // #define MADV_EMP_DONTFORK           MADV_DONTFORK
