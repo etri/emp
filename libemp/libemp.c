@@ -33,10 +33,9 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 			empfd, (unsigned long) addr, length, prot,
 			flags, fd, offset);
 
-	if (LIBEMP_READY && ((fd == -1) || (prot & MAP_ANONYMOUS))) {
+	if (LIBEMP_READY && ((fd == -1) || (flags & MAP_ANONYMOUS))) {
 		int emp_flags = flags & ~MAP_ANONYMOUS;
 		print_verbose("libemp.so: mmap for emp\n");
-		/*return real_mmap(addr, length, prot, MAP_SHARED, empfd, offset);*/
 		return real_mmap(addr, length, prot, emp_flags, empfd, offset);
 	}
 
