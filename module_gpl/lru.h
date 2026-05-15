@@ -295,4 +295,20 @@ struct slru {
 		debug_sub_inactive_list_page_len(emm, gpa); \
 		__sub_inactive_list_page_len(gpa_block_size(gpa), emm); \
 } while (0)
+
+#define read_inflight_writeback_page_len(emm) \
+		atomic_read(&(emm)->ftm.inflight_writeback_page_len)
+#define __add_inflight_writeback_page_len(val, emm) atomic_add(val, &(emm)->ftm.inflight_writeback_page_len)
+#define __sub_inflight_writeback_page_len(val, emm) atomic_sub(val, &(emm)->ftm.inflight_writeback_page_len)
+
+#define add_inflight_writeback_page_len(emm, gpa) do { \
+		debug_add_inflight_writeback_page_len(emm, gpa); \
+		__add_inflight_writeback_page_len(gpa_block_size(gpa), emm); \
+} while (0)
+
+#define sub_inflight_writeback_page_len(emm, gpa) do { \
+		debug_sub_inflight_writeback_page_len(emm, gpa); \
+		__sub_inflight_writeback_page_len(gpa_block_size(gpa), emm); \
+} while (0)
+
 #endif /* __LRU_H__ */

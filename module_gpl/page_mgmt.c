@@ -131,9 +131,9 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	debug__handle_gpa_on_inactive_fault(emm, head);
 
-	head->r_state = GPA_INIT;
-
 	sub_inactive_list_page_len(emm, head);
+
+	head->r_state = GPA_INIT;
 
 	if (prev_vmr_id != vmr->id) {
 		if (prev_vmr_id >= 0) {

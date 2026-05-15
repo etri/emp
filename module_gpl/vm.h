@@ -287,6 +287,8 @@ struct emp_ftm {
 	size_t              active_pages_len;
 	struct slru         inactive_list;
 	size_t              inactive_pages_len;
+	size_t              inactive_keep_pages_len;
+	atomic_t            inflight_writeback_page_len;
 
 	struct kmem_cache   *local_pages_cache;
 	struct kmem_cache   *mapped_pmd_cache;
@@ -313,8 +315,8 @@ struct emp_stm_ops {
 				      bool, bool);
 	int (*push_writeback_request)(struct emp_mm *, struct work_request *,
 				      struct vcpu_var *);
-	int (*wait_writeback_async)(struct emp_mm *, struct vcpu_var *, bool);
-	int (*wait_writeback_async_steal)(struct emp_mm *, struct vcpu_var *); 
+	int (*wait_writeback_async)(struct emp_mm *, struct vcpu_var *, int, bool);
+	int (*wait_writeback_async_steal)(struct emp_mm *, struct vcpu_var *, int);
 	bool (*wait_read_async)(struct emp_mm *, struct vcpu_var *,
 				struct emp_gpa *);
 	bool (*try_wait_read_async)(struct emp_mm *, struct vcpu_var *,
@@ -817,7 +819,7 @@ struct emp_ops {
 	int (*handle_remote_fault)(struct emp_vmr *, struct emp_gpa **,
 				   unsigned long, struct emp_gpa *, pgoff_t,
 				   struct vcpu_var *, bool);
-	int (*reclaim_emp_pages)(struct emp_mm *, struct vcpu_var *, int, bool);
+	int (*reclaim_emp_pages)(struct emp_mm *, struct vcpu_var *, int);
 	void (*reclaim_set)(struct emp_mm *);
 	int (*update_lru_lists)(struct emp_mm *, struct vcpu_var *,
 				struct emp_gpa **, int, int);

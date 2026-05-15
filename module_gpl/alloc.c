@@ -335,45 +335,6 @@ static struct page *__alloc_page_from_host(struct emp_mm *emm)
 }
 
 /**
- * __alloc_page_from_writeback_local - Allocate a page after waiting local writeback request
- * @param bvma bvma data structure
- * @param cpu working vcpu ID
- *
- * @return allocated page
- *
- * First, it waits for the writeback from a working vcpu. \n
- * After writeback, the page is freed and it can be available to allocation. \n
- * This function uses theses pages to allocate.
- */
-static struct page *
-__alloc_page_from_writeback_local(struct emp_mm *bvma, struct vcpu_var *cpu)
-{
-	if (bvma->sops.wait_writeback_async(bvma, cpu, false) == 0)
-		return NULL;
-
-	return pop_free_page_list_local(bvma, cpu);
-}
-
-/**
- * __alloc_page_from_writeback_global - Steal the writeback page from other cpus
- * @param bvma bvma data structure
- * @param working vcpu ID
- *
- * @return allcated page
- *
- * It waits the writeback request on the I/O thread and steals
- * the page from I/O thread
- */
-static struct page *
-__alloc_page_from_writeback_global(struct emp_mm *bvma, struct vcpu_var *cpu)
-{
-	if (bvma->sops.wait_writeback_async_steal(bvma, cpu) == 0)
-		return NULL;
-
-	return pop_free_page_list_local(bvma, cpu);
-}
-
-/**
  * wait_pages_available - Wait for available pages
  * @param bvma bvma data structure
  * @param vcpu working vcpu ID
@@ -584,10 +545,9 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 			__num_try_inner++;
 #endif
 			/* (3)-1 wait for writeback requests of normal vcpus */
-			if ((page = __alloc_page_from_writeback_local(bvma, cpu))) {
-				_emp_unlock_page(page, page_order);
+			if (bvma->sops.wait_writeback_async(bvma, cpu,
+							bvma_block_size(bvma), false))
 				break;
-			}
 
 			if (unlikely(check_alloc_pages_available(bvma)))
 				break;
@@ -597,21 +557,15 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 			 * try to retrieve free pages. */ 
 #ifdef CONFIG_EMP_EXT
 			res = emp_ops.reclaim_emp_pages(bvma, cpu,
-					(1 << bvma_block_order(bvma)), true);
+						bvma_block_size(bvma));
 #else
 			res = reclaim_emp_pages(bvma, cpu,
-					(1 << bvma_block_order(bvma)), true);
+						bvma_block_size(bvma));
 #endif
 			if (res > 0)
 				break;
 			else if (unlikely(res < 0)) /* error */
 				return ERR_PTR(-ENXIO);
-
-			/* (3)-3 wait for writeback requests of IO vcpus */
-			if ((page = __alloc_page_from_writeback_global(bvma, cpu))) {
-				_emp_unlock_page(page, page_order);
-				break;
-			}
 
 			if (unlikely(check_alloc_pages_available(bvma)))
 				break;

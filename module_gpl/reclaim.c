@@ -46,7 +46,7 @@ __emp_list_head_local_page(struct emp_list *list)
  */
 static inline bool is_active_list_full(struct emp_mm *bvma)
 {
-	size_t t = bvma->ftm.active_pages_len + NUM_VICTIM_CLUSTER;
+	size_t t = bvma->ftm.active_pages_len;
 	return ((size_t)atomic_read(&bvma->ftm.active_list.page_len) >= t);
 }
 
@@ -57,10 +57,28 @@ static inline bool is_active_list_full(struct emp_mm *bvma)
  * @retval true: Full
  * @retval false: Not full
  */
-static inline bool is_inactive_list_full(struct emp_mm *bvma, int pressure)
+static inline bool is_inactive_list_full(struct emp_mm *bvma)
 {
-	size_t t = bvma->ftm.inactive_pages_len - pressure;
+	size_t t = bvma->ftm.inactive_pages_len;
 	return ((size_t)read_inactive_list_page_len(bvma) >= t);
+}
+
+/**
+ * is_inactive_list_need_writeback - Check if the inactive list need to do writeback
+ * @param bvma bvma data structure
+ *
+ * @retval true: Full
+ * @retval false: Not full
+ */
+static inline bool is_inactive_list_need_writeback(struct emp_mm *bvma, int pressure)
+{
+	// Target length of writeback list is 1/4 of inactive list length
+	size_t t = bvma->ftm.inactive_keep_pages_len;
+	size_t len = (size_t) read_inactive_list_page_len(bvma)
+			- (size_t) read_inflight_writeback_page_len(bvma);
+	if (pressure)
+		t = t > pressure ? t - pressure : 0;
+	return len >= t;
 }
 
 /**
@@ -645,8 +663,9 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 	}
 
 	if (!eager_evict) {
-		int cpu_id = emm->sops.push_writeback_request(emm, head_wr, cpu);
+		int cpu_id;
 		head->r_state = GPA_WB;
+		cpu_id = emm->sops.push_writeback_request(emm, head_wr, cpu);
 		set_local_page_cpu_lru(head->local_page, cpu_id);
 	}
 
@@ -829,14 +848,14 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
  * _update_lru_lists - Update LRU lists
  * @param bvma bvma data structure
  * @param vcpu working vcpu ID
- * @param ps_force pressure
+ * @param pressure pressure
  * @param verbose need to show debug msg?
  *
  * Check the number of pages in LRU lists and move the pages among the lists
  * if the lists are full
  */
 static int _update_lru_lists(struct emp_mm *bvma, struct vcpu_var *cpu,
-				int ps_force, int verbose)
+				int pressure)
 {
 	int i, ret = 0;
 	int n_victim = 0, n_unmap_pages, n_released_pages;
@@ -860,23 +879,14 @@ static int _update_lru_lists(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 	// for inactive queue
 	n_released_pages = 0;
-	n_unmap_pages = max(n_unmap_pages, ps_force);
-	if (is_inactive_list_full(bvma, n_unmap_pages)) {
-		emp_wait_for_writeback(bvma, cpu, 
-				NUM_VICTIM_CLUSTER << bvma_block_order(bvma));
+	if (is_inactive_list_need_writeback(bvma, pressure)) {
 		ret = update_inactive_list(bvma, cpu, NUM_VICTIM_CLUSTER);
 		if (unlikely(ret < 0))
 			return ret;
 		n_released_pages = ret;
 	}
 
-	if (verbose) {
-		printk(KERN_DEBUG 
-			"cpu: %d n_victim: %d n_unmape_pages: %d n_released_pages: %d\n",
-			cpu->id, n_victim, n_unmap_pages, n_released_pages);
-	}
-
-	return ret;
+	return n_released_pages;
 }
 
 /**
@@ -897,7 +907,7 @@ int update_lru_lists_reref(struct emp_mm *b, struct vcpu_var *cpu,
 {
 	if (n_new_gs)
 		add_gpas_to_active_list(b, cpu, new_gs, n_new_gs);
-	return _update_lru_lists(b, cpu, pressure, 0);
+	return _update_lru_lists(b, cpu, 0);
 }
 
 /**
@@ -916,7 +926,7 @@ int update_lru_lists(struct emp_mm *b, struct vcpu_var *cpu,
 {
 	if (n_new_gs)
 		add_gpas_to_active_list(b, cpu, new_gs, n_new_gs);
-	return _update_lru_lists(b, cpu, pressure, 0);
+	return _update_lru_lists(b, cpu, 0);
 }
 
 /**
@@ -943,7 +953,7 @@ int update_lru_lists_lru(struct emp_mm *b, struct vcpu_var *cpu,
 	}
 
 	ret = 0;
-	if (is_inactive_list_full(b, pressure)) {
+	if (is_inactive_list_need_writeback(b, 0)) {
 		r = update_inactive_list(b, cpu, NUM_VICTIM_CLUSTER);
 		if (unlikely(r < 0))
 			return r;
@@ -988,31 +998,31 @@ reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas)
  *
  * @return the number of reclaimed pages
 */
-int reclaim_emp_pages(struct emp_mm *b, struct vcpu_var *cpu, int pressure,
-				bool force)
+int reclaim_emp_pages(struct emp_mm *b, struct vcpu_var *cpu, int pressure)
 {
-	int reclaimed_pages = 0;
-#ifdef CONFIG_EMP_BLOCK
-	int pressure_block = min(pressure >> b->config.block_order,
-				 NUM_VICTIM_CLUSTER);
-#else
-	int pressure_block = min(pressure, NUM_VICTIM_CLUSTER);
-#endif
+	int ret, released = 0;
+	int reclaimed = emp_wait_for_writeback(b, cpu, pressure);
 
-	if (force && VCPU_WB_REQUEST_EMPTY(cpu)) {
-		reclaimed_pages = update_inactive_list(b, cpu, pressure_block);
-		if (unlikely(reclaimed_pages < 0))
-			return reclaimed_pages;
-	}
+	if (reclaimed >= pressure)
+		return reclaimed;
 
-	if (is_active_list_full(b) ||
-			is_inactive_list_full(b, pressure)) {
-		int ret = _update_lru_lists(b, cpu, pressure, 0);
+	pressure -= reclaimed;
+	ret = update_inactive_list(b, cpu,
+				pressure >> bvma_block_order(b));
+	if (unlikely(ret < 0))
+		return ret;
+	released += ret;
+
+	if (released < pressure) {
+		ret = _update_lru_lists(b, cpu, pressure - released);
 		if (unlikely(ret < 0))
 			return ret;
+		released += ret;
 	}
 
-	return reclaimed_pages;
+	// We did emp_wait_for_writeback(), so there are only @released pages on writeback list.
+	reclaimed += emp_wait_for_writeback(b, cpu, released);
+	return reclaimed;
 }
 
 static inline void
@@ -1087,6 +1097,7 @@ void reclaim_set(struct emp_mm *emm)
 	f->inactive_pages_len = atomic_read(&f->local_cache_pages) >> 3;
 	f->active_pages_len = ((atomic_read(&f->local_cache_pages)
 					- f->inactive_pages_len));
+	f->inactive_keep_pages_len = f->inactive_pages_len * 3 / 4;
 }
 
 /**

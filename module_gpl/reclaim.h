@@ -69,7 +69,7 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				struct emp_gpa **gpas, int n_new);
 int emp_writeback_block(struct emp_mm *, struct emp_gpa *, struct vcpu_var *);
 int reclaim_gpa(struct emp_mm *, struct emp_gpa *, bool *);
-int reclaim_emp_pages(struct emp_mm *, struct vcpu_var *, int, bool);
+int reclaim_emp_pages(struct emp_mm *, struct vcpu_var *, int);
 void remove_gpa_from_lru(struct emp_mm *emm, struct emp_gpa *head);
 void reclaim_set(struct emp_mm *);
 int reclaim_init(struct emp_mm *);

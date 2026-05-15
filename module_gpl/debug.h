@@ -323,9 +323,13 @@ void __debug_add_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa,
 void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa, char *file, int line);
 #define debug_add_inactive_list_page_len(emm, gpa) __debug_add_inactive_list_page_len(emm, gpa, __FILE__, __LINE__)
 #define debug_sub_inactive_list_page_len(emm, gpa) __debug_sub_inactive_list_page_len(emm, gpa, __FILE__, __LINE__)
+void debug_add_inflight_writeback_page_len(struct emp_mm *emm, struct emp_gpa *gpa);
+void debug_sub_inflight_writeback_page_len(struct emp_mm *emm, struct emp_gpa *gpa);
 #else
 #define debug_add_inactive_list_page_len(emm, gpa) do {} while (0)
 #define debug_sub_inactive_list_page_len(emm, gpa) do {} while (0)
+#define debug_add_inflight_writeback_page_len(emm, gpa) do {} while (0)
+#define debug_sub_inflight_writeback_page_len(emm, gpa) do {} while (0)
 #endif
 
 #endif

@@ -65,39 +65,28 @@ fetch_pages(struct emp_mm *bvma, struct connection *conn, struct emp_gpa *gpa,
  * @param vcpu working vcpu ID
  * @param pressure the number of pages to wait writeback
  *
+ * @return the number of reclaimed pages
+ *
  * Waits the write operation to donor
  */
-void emp_wait_for_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
+int emp_wait_for_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 			    int pressure)
 {
-	int i;
-	int reclaimed;
-	int reclaimed_subblock = 0; /* total */
-	int num_subblock = pressure >> bvma_subblock_order(bvma);
+	int reclaimed_pages; /* total */
 	struct emp_stm_ops *ops = &bvma->sops;
 	
-	/* we wait @num_subblock times, but do not force the reclaim */
-	num_subblock -= emp_list_len(&cpu->local_free_page_list);
-	if (num_subblock <= 0)
-		return;
+	reclaimed_pages = emp_list_len(&cpu->local_free_page_list) << bvma_subblock_order(bvma);
+	if (reclaimed_pages >= pressure)
+		return reclaimed_pages;
 
-	for (i = 0; i < num_subblock; i++) {
-		reclaimed = ops->wait_writeback_async(bvma, cpu, false);
-		if (reclaimed == 0)
-			break;
-		reclaimed_subblock += reclaimed >> bvma_subblock_order(bvma);
-		if (reclaimed_subblock >= num_subblock)
-			return;
-	}
+	reclaimed_pages += ops->wait_writeback_async(bvma, cpu, false,
+						pressure - reclaimed_pages);
+	if (reclaimed_pages >= pressure)
+		return reclaimed_pages;
 
-	for ( ; i < num_subblock; i++) {
-		reclaimed = ops->wait_writeback_async_steal(bvma, cpu);
-		if (reclaimed == 0)
-			return;
-		reclaimed_subblock += reclaimed >> bvma_subblock_order(bvma);
-		if (reclaimed_subblock >= num_subblock)
-			return;
-	}
+	reclaimed_pages += ops->wait_writeback_async_steal(bvma, cpu,
+						pressure - reclaimed_pages);
+	return reclaimed_pages;
 }
 
 /**
@@ -413,44 +402,6 @@ __try_pop_ready_writeback_request(struct emp_mm *bvma, struct vcpu_var *cpu)
 }
 
 /**
- * pop_writeback_request - Pop a writeback request from a list
- * @param bvma bvma data structure
- * @param cpu working CPU ID
- *
- * @retval NULL: Error
- * @retval n: Success
- */
-static struct work_request *
-pop_writeback_request(struct emp_mm *bvma, struct vcpu_var *cpu)
-{
-	struct work_request *w;
-
-	if (list_empty(&cpu->wb_request_list))
-		return NULL;
-
-	spin_lock(&cpu->wb_request_lock);
-	if (list_empty(&cpu->wb_request_list)) {
-		spin_unlock(&cpu->wb_request_lock);
-		return NULL;
-	}
-
-	list_for_each_entry(w, &cpu->wb_request_list, sibling) {
-		if (emp_trylock_work_request(bvma, w)) {
-			list_del_init(&w->sibling);
-			clear_writeback_request_on_lru(w);
-			cpu->wb_request_size -= w->wr_size;
-			goto found;
-		}
-	}
-	w = NULL; // if not found, initialize @w
-
-found:
-	spin_unlock(&cpu->wb_request_lock);
-
-	return w;
-}
-
-/**
  * push_writeback_request - Add a new writeback request and remove the first one from the list
  * @param bvma bvma data structure
  * @param w work request
@@ -478,6 +429,7 @@ static int push_writeback_request(struct emp_mm *bvma, struct work_request *w,
 		removed_w = __try_pop_ready_writeback_request(bvma, cpu);
 	list_add_tail(&w->sibling, &cpu->wb_request_list);
 	cpu->wb_request_size += w->wr_size;
+	add_inflight_writeback_page_len(bvma, w->gpa);
 	spin_unlock(s);
 
 	debug_BUG_ON(w && w->head_wr == NULL);
@@ -533,7 +485,7 @@ post_writeback_async(struct emp_mm *bvma, struct emp_gpa *gpa,
 			       get_gpa_remote_page_val(gpa), &err, mr->ops);
 		if (unlikely(w == NULL)) {
 			if (err == -ENOMEM)
-				bvma->sops.wait_writeback_async(bvma, cpu, false);
+				bvma->sops.wait_writeback_async(bvma, cpu, 1, false);
 			else /* err == -ENXIO */
 				return NULL;
 		}
@@ -584,6 +536,7 @@ static void clear_writeback_block(struct emp_mm *bvma, struct emp_gpa *head,
 		list_del_init(&w->sibling);
 		clear_writeback_request_on_lru(w);
 		wb_vcpu->wb_request_size -= w->wr_size;
+		sub_inflight_writeback_page_len(bvma, head);
 		spin_unlock(&wb_vcpu->wb_request_lock);
 	}
 
@@ -608,6 +561,63 @@ static void __promote_gpa(struct emp_mm *emm, int cpu, struct emp_gpa *gpa)
 	atomic_add(gpa_block_size(gpa), &target->page_len);
 }
 
+static int
+__wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, struct vcpu_var *local_cpu, int pressure, bool prefetch)
+{
+	struct list_head *wb_list = &cpu->wb_request_list, w_list;
+	spinlock_t *wb_lock = &cpu->wb_request_lock;
+	struct work_request *w, *n;
+	struct emp_gpa *head;
+	int reclaimed = 0, r;
+
+	if (list_empty(wb_list))
+		return 0;
+
+	spin_lock(wb_lock);
+	if (list_empty(wb_list)) {
+		spin_unlock(wb_lock);
+		return 0;
+	}
+
+	INIT_LIST_HEAD(&w_list);
+
+	list_for_each_entry_safe(w, n, wb_list, sibling) {
+		if (emp_trylock_work_request(bvma, w)) {
+			list_del_init(&w->sibling);
+			clear_writeback_request_on_lru(w);
+			list_add_tail(&w->sibling, &w_list);
+			cpu->wb_request_size -= w->wr_size;
+			head = emp_get_block_head(w->gpa);
+			if (!is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
+				reclaimed += w->wr_size;
+				if (reclaimed >= pressure)
+					break;
+			}
+		}
+	}
+
+	spin_unlock(wb_lock);
+
+	if (list_empty(&w_list))
+		return 0;
+
+	reclaimed = 0;
+	list_for_each_entry_safe(w, n, &w_list, sibling) {
+		list_del_init(&w->sibling);
+		/* NOTE: __clear_writeback_block() frees @w. Backup the block
+		 *       head that need to be unlocked. */
+		head = emp_get_block_head(w->gpa);
+		r = __clear_writeback_block(bvma, w, local_cpu, prefetch, true);
+		if (is_gpa_flags_set(head, GPA_PROMOTE_MASK))
+			__promote_gpa(bvma, local_cpu->id, head);
+		else
+			reclaimed += r;
+		emp_unlock_block(head);
+	}
+
+	return reclaimed;
+}
+
 /**
  * wait_writeback_async - Pop a writeback request and clear it
  * @param bvma bvma data structure
@@ -617,29 +627,9 @@ static void __promote_gpa(struct emp_mm *emm, int cpu, struct emp_gpa *gpa)
  * @return the number of completed writeback
  */
 static int 
-wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, bool prefetch)
+wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, int pressure, bool prefetch)
 {
-	struct work_request *w;
-	int ret;
-	struct emp_gpa *head;
-retry:
-	w = pop_writeback_request(bvma, cpu);
-	if (!w)
-		return 0;
-	else {
-		/* NOTE: __clear_writeback_block() frees @w. Backup the block
-		 *       head that need to be unlocked. */
-		head = emp_get_block_head(w->gpa);
-		debug_progress(w, list_empty(&w->subsibling));
-		ret = __clear_writeback_block(bvma, w, cpu, prefetch, true);
-		if (is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
-			__promote_gpa(bvma, cpu->id, head);
-			emp_unlock_block(head);
-			goto retry;
-		}
-		emp_unlock_block(head);
-		return ret;
-	}
+	return __wait_writeback_async(bvma, cpu, cpu, pressure, prefetch);
 }
 
 /**
@@ -649,30 +639,23 @@ retry:
  *
  * @return the number of completed writeback
  */
-static int wait_writeback_async_steal(struct emp_mm *emm, struct vcpu_var *waiting_cpu)
+static int wait_writeback_async_steal(struct emp_mm *emm, struct vcpu_var *waiting_cpu, int pressure)
 {
 	int c;
 	struct vcpu_var *v;
-	struct work_request *w = NULL;
-	struct emp_gpa *head;
-	int ret;
+	int reclaimed = 0;
 
 	for_all_vcpus_from(v, c, waiting_cpu, emm) {
-retry:
-		w = pop_writeback_request(emm, v);
-		if (!w)
+		// This function is normally called after wait_writeback_async().
+		// Thus, skip the waiting cpu.
+		if (v == waiting_cpu)
 			continue;
-		head = emp_get_block_head(w->gpa);
-		ret = __clear_writeback_block(emm, w, waiting_cpu, false, true);
-		if (is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
-			__promote_gpa(emm, waiting_cpu->id, head);
-			emp_unlock_block(head);
-			goto retry; // retry the same cpu
-		}
-		emp_unlock_block(head);
-		return ret;
+		reclaimed += __wait_writeback_async(emm, v, waiting_cpu,
+						pressure - reclaimed, false);
+		if (reclaimed >= pressure)
+			break;
 	}
-	return 0;
+	return reclaimed;
 }
 
 static inline void
