@@ -983,6 +983,7 @@ static void split_update_pte(struct vm_area_struct *vma, struct page *page,
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
 	pte = emp_pte_offset_map(pmd, addr);
+	emp_set_page_mapping_and_index(vma, addr, page, len);
 
 	spin_lock(ptl);
 	/* change the pages */

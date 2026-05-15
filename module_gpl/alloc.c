@@ -5,6 +5,7 @@
 #include "debug.h"
 #include "reclaim.h"
 #include "block-flag.h"
+#include "hva.h"
 
 /**
  * is_local_free_pages_list_empty - Check if the local free page list is empty
@@ -66,6 +67,7 @@ void COMPILER_DEBUG push_free_page_list(struct emp_mm *emm, struct page *page,
 				&emm->ftm.free_pages_reclaim) >= 0) {
 			int subblock_order = bvma_subblock_order(emm);
 			_emp_unlock_page(page, subblock_order);
+			emp_clear_page_mapping_and_index(page, subblock_order);
 			emp_free_pages(page, subblock_order);
 
 			atomic_sub(subblock_size, &emm->ftm.alloc_pages_len);
@@ -455,6 +457,7 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 
 			if (PageUnevictable(page))
 				ClearPageUnevictable(page);
+			emp_clear_page_mapping_and_index(page, subblock_order);
 			emp_free_pages(page, subblock_order);
 		}
 	} else {
@@ -469,6 +472,7 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 			_emp_unlock_page(page, subblock_order);
 			if (PageUnevictable(page))
 				ClearPageUnevictable(page);
+			emp_clear_page_mapping_and_index(page, subblock_order);
 			emp_free_pages(page, subblock_order);
 		}
 	}
@@ -484,6 +488,7 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 		_emp_unlock_page(page, subblock_order);
 		if (PageUnevictable(page))
 			ClearPageUnevictable(page);
+		emp_clear_page_mapping_and_index(page, subblock_order);
 		emp_free_pages(page, subblock_order);
 	}
 #endif /* !CONFIG_EMP_BLOCK */
