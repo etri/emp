@@ -64,21 +64,20 @@ static inline bool is_inactive_list_full(struct emp_mm *bvma)
 }
 
 /**
- * is_inactive_list_need_writeback - Check if the inactive list need to do writeback
+ * num_inactive_list_need_writeback - Check number of pages belongs to the inactive list that need to be moved to writebacke list
  * @param bvma bvma data structure
  *
- * @retval true: Full
- * @retval false: Not full
+ * @retval 0: all pages should be kept in inactive lists
+ * @retval positive: the number of pages that need to be moved to writeback list
  */
-static inline bool is_inactive_list_need_writeback(struct emp_mm *bvma, int pressure)
+static inline int num_inactive_list_need_writeback(struct emp_mm *bvma, int pressure)
 {
 	// Target length of writeback list is 1/4 of inactive list length
 	size_t t = bvma->ftm.inactive_keep_pages_len;
 	size_t len = (size_t) read_inactive_list_page_len(bvma)
-			- (size_t) read_inflight_writeback_page_len(bvma);
-	if (pressure)
-		t = t > pressure ? t - pressure : 0;
-	return len >= t;
+			- (size_t) read_inflight_writeback_page_len(bvma)
+			+ pressure;
+	return len > t ? len - t : 0;
 }
 
 /**
@@ -552,7 +551,8 @@ static bool check_block_free(struct emp_mm *bvma, struct emp_gpa *head)
  */
 static int select_victims_inactive_list(struct emp_mm *bvma,
 					struct vcpu_var *cpu,
-					struct emp_gpa **vs, int vs_len)
+					struct emp_gpa **vs, int vs_len,
+					int *pressure)
 {
 	struct emp_list *list;
 	struct list_head *cur, *n;
@@ -591,7 +591,10 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 
 			v->r_state = GPA_TRANS_IL;
 			vs[n_vs++] = v;
+			*pressure -= gpa_block_size(v);
 			if (n_vs >= vs_len)
+				break;
+			if (*pressure <= 0)
 				break;
 			continue;
 		}
@@ -730,7 +733,7 @@ int emp_writeback_block(struct emp_mm *emm, struct emp_gpa *head,
  * update_inactive_list - select victims from inactive list and writeback
  * @param bvma bvma data structure
  * @param cpu working vcpu ID
- * @param pressure number of writeback
+ * @param pressure number of pages that should be writebacked
  *
  * @return the number of victims
  *
@@ -739,7 +742,7 @@ int emp_writeback_block(struct emp_mm *emm, struct emp_gpa *head,
 static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 				int pressure)
 {
-	struct emp_gpa *victims[pressure], **vs;
+	struct emp_gpa *victims[NUM_VICTIM_CLUSTER], **vs;
 	struct vcpu_var *cpu;
 	int cpu_id;
 	struct emp_list *list;
@@ -755,9 +758,9 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 		if (emp_list_len(list) == 0)
 			continue;
 		vs = victims + n_victims;
-		n_vs = pressure - n_victims;
-		n_victims += select_victims_inactive_list(bvma, cpu, vs, n_vs);
-		if (n_victims >= pressure)
+		n_vs = NUM_VICTIM_CLUSTER - n_victims;
+		n_victims += select_victims_inactive_list(bvma, cpu, vs, n_vs, &pressure);
+		if (n_victims >= NUM_VICTIM_CLUSTER || pressure <= 0)
 			break;
 	}
 
@@ -879,8 +882,9 @@ static int _update_lru_lists(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 	// for inactive queue
 	n_released_pages = 0;
-	if (is_inactive_list_need_writeback(bvma, pressure)) {
-		ret = update_inactive_list(bvma, cpu, NUM_VICTIM_CLUSTER);
+	pressure = num_inactive_list_need_writeback(bvma, pressure);
+	if (pressure > 0) {
+		ret = update_inactive_list(bvma, cpu, pressure);
 		if (unlikely(ret < 0))
 			return ret;
 		n_released_pages = ret;
@@ -953,8 +957,9 @@ int update_lru_lists_lru(struct emp_mm *b, struct vcpu_var *cpu,
 	}
 
 	ret = 0;
-	if (is_inactive_list_need_writeback(b, 0)) {
-		r = update_inactive_list(b, cpu, NUM_VICTIM_CLUSTER);
+	pressure = num_inactive_list_need_writeback(b, 0);
+	if (pressure > 0) {
+		r = update_inactive_list(b, cpu, pressure);
 		if (unlikely(r < 0))
 			return r;
 		ret += r;
@@ -1007,8 +1012,7 @@ int reclaim_emp_pages(struct emp_mm *b, struct vcpu_var *cpu, int pressure)
 		return reclaimed;
 
 	pressure -= reclaimed;
-	ret = update_inactive_list(b, cpu,
-				pressure >> bvma_block_order(b));
+	ret = update_inactive_list(b, cpu, pressure);
 	if (unlikely(ret < 0))
 		return ret;
 	released += ret;
