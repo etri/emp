@@ -64,20 +64,22 @@ static inline bool is_inactive_list_full(struct emp_mm *bvma)
 }
 
 /**
- * num_inactive_list_need_writeback - Check number of pages belongs to the inactive list that need to be moved to writebacke list
+ * get_pressure_of_inactive_list - Check number of pages belongs to the inactive list that need to be moved to writebacke list
  * @param bvma bvma data structure
- *
- * @retval 0: all pages should be kept in inactive lists
- * @retval positive: the number of pages that need to be moved to writeback list
+ * @param hard_pressure number of pages need to be reclaimed
+ * @param soft_pressure (for return) number of pages may need to be writebacked
  */
-static inline int num_inactive_list_need_writeback(struct emp_mm *bvma, int pressure)
+static inline void get_pressure_of_inactive_list(struct emp_mm *bvma, int *hard_pressure, int *soft_pressure)
 {
 	// Target length of writeback list is 1/4 of inactive list length
-	size_t t = bvma->ftm.inactive_keep_pages_len;
-	size_t len = (size_t) read_inactive_list_page_len(bvma)
-			- (size_t) read_inflight_writeback_page_len(bvma)
-			+ pressure;
-	return len > t ? len - t : 0;
+	size_t soft_target = bvma->ftm.inactive_keep_pages_len;
+	size_t hard_target = bvma->ftm.inactive_pages_len;
+	size_t wb_len = (size_t) read_inflight_writeback_page_len(bvma);
+	size_t inactive_len = (size_t) read_inactive_list_page_len(bvma);
+	size_t soft_len = inactive_len - wb_len + *hard_pressure;
+	size_t hard_len = inactive_len + *hard_pressure;
+	*soft_pressure = soft_len > soft_target ? soft_len - soft_target : 0;
+	*hard_pressure = hard_len > hard_target ? hard_len - hard_target : 0;
 }
 
 /**
@@ -594,8 +596,6 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 			*pressure -= gpa_block_size(v);
 			if (n_vs >= vs_len)
 				break;
-			if (*pressure <= 0)
-				break;
 			continue;
 		}
 
@@ -740,13 +740,13 @@ int emp_writeback_block(struct emp_mm *emm, struct emp_gpa *head,
  * Select victims in inactive list and writeback the victims to donor
  */
 static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
-				int pressure)
+				int hard_pressure, int soft_pressure)
 {
 	struct emp_gpa *victims[NUM_VICTIM_CLUSTER], **vs;
 	struct vcpu_var *cpu;
 	int cpu_id;
 	struct emp_list *list;
-	int n_victims, n_victim_pages, n_vs;
+	int n_victims, n_victim_pages, n_vs, pressure;
 	int i;
 	struct slru *inactive_list = &bvma->ftm.inactive_list;
 
@@ -759,9 +759,14 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 			continue;
 		vs = victims + n_victims;
 		n_vs = NUM_VICTIM_CLUSTER - n_victims;
+		pressure = soft_pressure;
 		n_victims += select_victims_inactive_list(bvma, cpu, vs, n_vs, &pressure);
-		if (n_victims >= NUM_VICTIM_CLUSTER || pressure <= 0)
+		hard_pressure -= soft_pressure - pressure;
+		// We tried to reduce soft_pressure, but only hard_pressure is checked.
+		// If hard_pressure is initially 0, we do not check other cpus and only scan the local one.
+		if (n_victims >= NUM_VICTIM_CLUSTER || hard_pressure <= 0)
 			break;
+		soft_pressure = pressure;
 	}
 
 	for (i = 0; i < n_victims; i++) {
@@ -860,7 +865,7 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 static int _update_lru_lists(struct emp_mm *bvma, struct vcpu_var *cpu,
 				int pressure)
 {
-	int i, ret = 0;
+	int i, ret = 0, soft_pressure;
 	int n_victim = 0, n_unmap_pages, n_released_pages;
 	struct emp_gpa *victims[NUM_VICTIM_CLUSTER];
 
@@ -882,9 +887,9 @@ static int _update_lru_lists(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 	// for inactive queue
 	n_released_pages = 0;
-	pressure = num_inactive_list_need_writeback(bvma, pressure);
-	if (pressure > 0) {
-		ret = update_inactive_list(bvma, cpu, pressure);
+	get_pressure_of_inactive_list(bvma, &pressure, &soft_pressure);
+	if (soft_pressure > 0) {
+		ret = update_inactive_list(bvma, cpu, pressure, soft_pressure);
 		if (unlikely(ret < 0))
 			return ret;
 		n_released_pages = ret;
@@ -948,7 +953,7 @@ int update_lru_lists(struct emp_mm *b, struct vcpu_var *cpu,
 int update_lru_lists_lru(struct emp_mm *b, struct vcpu_var *cpu,
 			 struct emp_gpa **new_gs, int n_new_gs, int pressure)
 {
-	int r, ret;
+	int r, ret, soft_pressure;
 
 	if (n_new_gs) {
 		r = add_gpas_to_inactive(b, cpu, new_gs, n_new_gs);
@@ -957,9 +962,9 @@ int update_lru_lists_lru(struct emp_mm *b, struct vcpu_var *cpu,
 	}
 
 	ret = 0;
-	pressure = num_inactive_list_need_writeback(b, 0);
-	if (pressure > 0) {
-		r = update_inactive_list(b, cpu, pressure);
+	get_pressure_of_inactive_list(b, &pressure, &soft_pressure);
+	if (soft_pressure > 0) {
+		r = update_inactive_list(b, cpu, pressure, soft_pressure);
 		if (unlikely(r < 0))
 			return r;
 		ret += r;
@@ -1012,7 +1017,8 @@ int reclaim_emp_pages(struct emp_mm *b, struct vcpu_var *cpu, int pressure)
 		return reclaimed;
 
 	pressure -= reclaimed;
-	ret = update_inactive_list(b, cpu, pressure);
+
+	ret = update_inactive_list(b, cpu, pressure, pressure);
 	if (unlikely(ret < 0))
 		return ret;
 	released += ret;
