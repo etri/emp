@@ -2019,10 +2019,10 @@ void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive)
 {
 	struct emp_list *list;
 #ifdef CONFIG_EMP_VM
-	if (inactive->sync_bufs) {
+	if (inactive->mru_bufs) {
 		int i;
 		for (i = 0; i < inactive->abuf_len; i++) {
-			list = inactive->sync_bufs + i;
+			list = inactive->mru_bufs + i;
 			emp_list_lock(list);
 			BUG_ON(!emp_list_empty(list));
 			BUG_ON(emp_list_len(list) != 0);
@@ -2031,10 +2031,10 @@ void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive)
 	}
 #endif /* CONFIG_EMP_VM */
 
-	if (inactive->host_lru) {
+	if (inactive->host_mru) {
 		int cpu;
 		for_each_possible_cpu(cpu) {
-			list = emp_pc_ptr(inactive->host_lru, cpu);
+			list = emp_pc_ptr(inactive->host_mru, cpu);
 			emp_list_lock(list);
 			BUG_ON(!emp_list_empty(list));
 			BUG_ON(emp_list_len(list) != 0);

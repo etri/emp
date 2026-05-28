@@ -111,13 +111,13 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	struct slru *slru = &emm->ftm.inactive_list;
 	int prev_vmr_id = head->local_page->vmr_id;
 
-	debug_assert(is_local_page_on_lru(head->local_page));
+	debug_assert(is_local_page_on_mru(head->local_page));
 
 	gpa_cpu = get_local_page_cpu(head->local_page);
 	list = get_list_ptr_inactive(emm, slru, gpa_cpu);
 	emp_list_lock(list);
 	emp_list_del(&head->local_page->lru_list, list);
-	clear_local_page_on_lru(head->local_page);
+	clear_local_page_on_mru(head->local_page);
 	emp_list_unlock(list);
 
 	if (prev_vmr_id != vmr->id) {

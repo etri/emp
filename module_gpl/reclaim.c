@@ -580,7 +580,7 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 			continue;
 
 		debug_assert(get_local_page_cpu(lp) == cpu_id
-					&& is_local_page_on_lru(lp));
+					&& is_local_page_on_mru(lp));
 
 		reinsert_gpa = !check_block_free(bvma, v);
 
@@ -588,7 +588,7 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 		// by calling sub_inactive_list_page_len
 		if (reinsert_gpa == false) {
 			emp_list_del(&lp->lru_list, list);
-			clear_local_page_on_lru(lp);
+			clear_local_page_on_mru(lp);
 			debug_check_notlocked(v);
 
 			v->r_state = GPA_TRANS_IL;
@@ -839,7 +839,7 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				emp_get_block_head(gpas[i]));
 
 		head->r_state = GPA_INACTIVE;
-		set_local_page_cpu_lru(head->local_page, cpu_id);
+		set_local_page_cpu_mru(head->local_page, cpu_id);
 		emp_list_add_tail(&head->local_page->lru_list, list);
 		debug_add_inactive_list_page_len(bvma, head);
 		new_pages_len += gpa_block_size(head);
@@ -1146,7 +1146,7 @@ int reclaim_init(struct emp_mm *bvma)
 	if (vcpu_len == 0) {
 		active->mru_bufs = NULL;
 		active->lru_bufs = NULL;
-		inactive->sync_bufs = NULL;
+		inactive->mru_bufs = NULL;
 		goto skip_alloc_bufs;
 	}
 
@@ -1168,12 +1168,12 @@ int reclaim_init(struct emp_mm *bvma)
 	}
 
 	/* initialize per-vcpu inactive_list */
-	inactive->sync_bufs = emp_kmalloc(sizeof(struct emp_list) * vcpu_len, GFP_KERNEL);
-	if (!inactive->sync_bufs)
+	inactive->mru_bufs = emp_kmalloc(sizeof(struct emp_list) * vcpu_len, GFP_KERNEL);
+	if (!inactive->mru_bufs)
 		goto reclaim_init_fail;
 
 	for (i = 0; i < vcpu_len; i++) {
-		init_emp_list(&inactive->sync_bufs[i]);
+		init_emp_list(&inactive->mru_bufs[i]);
 	}
 
 skip_alloc_bufs:
@@ -1194,12 +1194,12 @@ skip_alloc_bufs:
 	}
 
 	/* initialize per-pcpu inactive_list */
-	inactive->host_lru = emp_alloc_pcdata(struct emp_list);
-	if (inactive->host_lru == NULL)
+	inactive->host_mru = emp_alloc_pcdata(struct emp_list);
+	if (inactive->host_mru == NULL)
 		goto reclaim_init_fail;
 
 	for_each_possible_cpu(cpu) {
-		lru = emp_pc_ptr(inactive->host_lru, cpu);
+		lru = emp_pc_ptr(inactive->host_mru, cpu);
 		init_emp_list(lru);
 	}
 
@@ -1207,9 +1207,9 @@ skip_alloc_bufs:
 
 reclaim_init_fail:
 #ifdef CONFIG_EMP_VM
-	if (inactive->sync_bufs) {
-		emp_kfree(inactive->sync_bufs);
-		inactive->sync_bufs = NULL;
+	if (inactive->mru_bufs) {
+		emp_kfree(inactive->mru_bufs);
+		inactive->mru_bufs = NULL;
 	}
 	if (active->mru_bufs) {
 		emp_kfree(active->mru_bufs);
@@ -1220,9 +1220,9 @@ reclaim_init_fail:
 		active->lru_bufs = NULL;
 	}
 #endif /* CONFIG_EMP_VM */
-	if ((inactive->host_lru)) {
-		emp_free_pcdata(inactive->host_lru);
-		inactive->host_lru = NULL;
+	if ((inactive->host_mru)) {
+		emp_free_pcdata(inactive->host_mru);
+		inactive->host_mru = NULL;
 	}
 	if ((active->host_lru)) {
 		emp_free_pcdata(active->host_lru);
@@ -1259,9 +1259,9 @@ void reclaim_exit(struct emp_mm *emm)
 	debug_reclaim_exit_inactive(emm, inactive);
 
 #ifdef CONFIG_EMP_VM
-	if (inactive->sync_bufs) {
-		emp_kfree(inactive->sync_bufs);
-		inactive->sync_bufs = NULL;
+	if (inactive->mru_bufs) {
+		emp_kfree(inactive->mru_bufs);
+		inactive->mru_bufs = NULL;
 	}
 	if (active->mru_bufs) {
 		emp_kfree(active->mru_bufs);
@@ -1273,9 +1273,9 @@ void reclaim_exit(struct emp_mm *emm)
 	}
 #endif /* CONFIG_EMP_VM */
 
-	if (inactive->host_lru) {
-		emp_free_pcdata(inactive->host_lru);
-		inactive->host_lru = NULL;
+	if (inactive->host_mru) {
+		emp_free_pcdata(inactive->host_mru);
+		inactive->host_mru = NULL;
 	}
 	if (active->host_lru) {
 		emp_free_pcdata(active->host_lru);

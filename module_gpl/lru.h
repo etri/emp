@@ -244,13 +244,8 @@ struct slru {
 #endif
 
 #ifdef CONFIG_EMP_VM
-	union {
-		struct {
-			struct emp_list *mru_bufs;
-			struct emp_list *lru_bufs;
-		};
-		struct emp_list     *sync_bufs;
-	};
+	struct emp_list *mru_bufs;
+	struct emp_list *lru_bufs;
 #endif
 	struct {
 		struct emp_list **host_lru;
@@ -270,15 +265,15 @@ struct slru {
 	(IS_IOTHREAD_VCPU(cpu_id) ? emp_pc_ptr((slru)->host_lru, PCPU_ID(emm, cpu_id)) \
 	                          : ((slru)->lru_bufs + (cpu_id)))
 #define get_list_ptr_inactive(emm, slru, cpu_id) \
-	(IS_IOTHREAD_VCPU(cpu_id) ? emp_pc_ptr((slru)->host_lru, PCPU_ID(emm, cpu_id)) \
-	                          : &(slru)->sync_bufs[cpu_id])
+	(IS_IOTHREAD_VCPU(cpu_id) ? emp_pc_ptr((slru)->host_mru, PCPU_ID(emm, cpu_id)) \
+	                          : &(slru)->mru_bufs[cpu_id])
 #else /* !CONFIG_EMP_VM */
 #define get_list_ptr_mru(emm, slru, cpu_id) \
 	(emp_pc_ptr((slru)->host_mru, PCPU_ID(emm, cpu_id)))
 #define get_list_ptr_lru(emm, slru, cpu_id) \
 	(emp_pc_ptr((slru)->host_lru, PCPU_ID(emm, cpu_id)))
 #define get_list_ptr_inactive(emm, slru, cpu_id) \
-	(emp_pc_ptr((slru)->host_lru, PCPU_ID(emm, cpu_id)))
+	(emp_pc_ptr((slru)->host_mru, PCPU_ID(emm, cpu_id)))
 #endif /* !CONFIG_EMP_VM */
 #define read_inactive_list_page_len(emm) \
 		atomic_read(&(emm)->ftm.inactive_list.page_len)
