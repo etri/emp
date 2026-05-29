@@ -574,6 +574,15 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 			 * The code below wakes up this thread when there is
 			 * a new insertion to global free page list */
 			res = wait_pages_available(bvma, cpu);
+
+			/* wait_event_interruptible_timeout returns -ERESTARTSYS
+			 * on signal; check explicitly so a killed task escapes
+			 * the loop instead of being re-queued as a "timeout".
+			 * wait_pages_available() does not set @page. jsut do
+			 * return. */
+			if (fatal_signal_pending(current))
+				return ERR_PTR(-EINTR);
+
 			if (res <= 0 && ((++num_try) % 10 == 0)) {
 				/* Since timeout for wait_pages_available() is HZ/10,
 				 * this message is shown at most once per second.

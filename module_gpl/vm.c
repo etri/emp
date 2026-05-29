@@ -1114,6 +1114,9 @@ unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_v
 
 	// alloc pages
 	dst_page = _alloc_pages(emm, gpa_subblock_order(back_gpa), 0, cpu);
+	if (unlikely(IS_ERR_OR_NULL(dst_page))) {
+		return offset;
+	}
 
 	// copy pages
 	split_copy_pages(dst_page, src_page,  offset, back_page_len);
