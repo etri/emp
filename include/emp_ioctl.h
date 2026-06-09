@@ -94,7 +94,7 @@ struct donor_info {
 
 	int           dev_type;
 	int           path_len;
-	char          path[0];
+	char          path[];
 };
 
 struct emp_madv_info {

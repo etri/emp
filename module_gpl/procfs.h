@@ -20,4 +20,9 @@ struct emp_proc_entry {
 #endif
 };
 
+int emp_procfs_add(struct emp_mm *bvma, int id);
+void emp_procfs_del(struct emp_mm *bvma);
+int emp_procfs_init(void);
+void emp_procfs_exit(void);
+
 #endif /* EMP_PROCFS_H */

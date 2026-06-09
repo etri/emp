@@ -1,6 +1,7 @@
 #ifdef CONFIG_EMP_MEMDEV
 #include <linux/version.h>
 #include <linux/fs.h>
+#include <compat.h>
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 17, 0))
 #include <linux/genhd.h>
@@ -15,6 +16,7 @@
 #include "debug.h"
 #include "local_page.h"
 #include "remote_page.h"
+#include "memdev.h"
 
 struct dma_ops memdev_dma_ops;
 

@@ -5,6 +5,7 @@
 #include "iov.h"
 #include "donor_mgmt.h"
 #include "emp_madvise.h"
+#include "ioctl.h"
 
 /**
  * realloc_donor_info - Allocate donor's memory info

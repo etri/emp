@@ -37,7 +37,7 @@ vmd: FORCE
 
 FORCE: ;
 
-clean: $(ALLDIRS)
+clean: $(SUBDIRS)
 	rm tags 2>/dev/null || true
 
 install: $(SUBDIRS)

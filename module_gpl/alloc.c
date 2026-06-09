@@ -140,7 +140,7 @@ get_free_page_from_list(struct list_head *cur)
  * @return free page
  */
 
-struct page * COMPILER_DEBUG 
+static struct page * COMPILER_DEBUG
 pop_free_page_list_local(struct emp_mm *bvma, struct vcpu_var *cpu)
 {
 	struct page *p;
@@ -239,7 +239,7 @@ static struct page *__alloc_page(struct emp_mm *emm)
  *
  * @return a global free page
  */
-struct page *pop_free_page_list_global(struct emp_mm *emm, struct vcpu_var *local_cpu)
+static struct page *pop_free_page_list_global(struct emp_mm *emm, struct vcpu_var *local_cpu)
 {
 	struct page *page;
 	struct emp_list *local_list, *remote_list;

@@ -49,14 +49,24 @@ pgtable_t kernel_pte_alloc_one(struct mm_struct *mm, unsigned long address);
 pte_t kernel_ptep_clear_flush(struct vm_area_struct *vma, unsigned long address, pte_t *ptep);
 
 struct k_symbol {
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
 	unsigned long page_add_file_rmap;
 	unsigned long page_remove_rmap;
+#else // RHEL_RELEASE_VERSION >= 9.8 or KERNEL_VERSION >= 6.8
+	unsigned long folio_add_file_rmap_ptes;
+	unsigned long folio_remove_rmap_ptes;
+#endif
 	unsigned long tlb_finish_mmu;
 	unsigned long tlb_gather_mmu;
 	unsigned long pte_alloc_one;
 	unsigned long thread_group_cputime_adjusted;
 	unsigned long sysctl_hung_task_timeout_secs;
 	unsigned long ptep_clear_flush;
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+	unsigned long blkdev_get_no_open;
+#endif
 };
 
 int kernel_symbol_init(void);

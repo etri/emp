@@ -567,11 +567,14 @@ static inline unsigned long
 __get_pte_val(struct emp_vmr *vmr, pmd_t *pmdp, unsigned long hva)
 {
 	pte_t *ptep;
+	unsigned long ret;
 	/* NOTE: don't touch *pmdp if vmr->vmr_closing == true. */
 	if (vmr->vmr_closing || pmdp == NULL || pmd_none(*pmdp) || hva == 0UL)
 		return 0;
 	ptep = emp_pte_offset_map(pmdp, hva);
-	return ptep ? ((unsigned long) ptep->pte) : 0UL;
+	ret = ptep ? ((unsigned long) ptep->pte) : 0UL;
+	pte_unmap(ptep);
+	return ret;
 }
 
 inline void COMPILER_DEBUG
@@ -2176,6 +2179,7 @@ void debug_handle_active_fault_handled(struct emp_vmr *vmr, struct emp_gpa *head
 		BUG_ON(pfn_pte == 0);
 		pfn_page = page_to_pfn(gpa->local_page->page);
 		BUG_ON(pfn_page != pfn_pte);
+		pte_unmap(ptep);
 	}
 }
 EXPORT_SYMBOL(debug_handle_active_fault_handled);

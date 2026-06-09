@@ -165,7 +165,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
  * @retval VM_FAULT_NOPAGE(256): Success
  * @retval 0: Error
  */
-int COMPILER_DEBUG
+static int COMPILER_DEBUG
 pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 		unsigned long haddr, unsigned int page_len, const bool is_write)
 {
@@ -221,7 +221,7 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 		flush_icache_page(vma, _page);
 		pte_entry = mk_pte(_page, vma->vm_page_prot);
 		if (is_write)
-			pte_entry = maybe_mkwrite(pte_mkdirty(pte_entry), vma);
+			pte_entry = emp_maybe_mkwrite(pte_mkdirty(pte_entry), vma);
 		pte_entry = pte_mkold(pte_entry);
 
 		kernel_page_add_file_rmap(_page, vma, false);

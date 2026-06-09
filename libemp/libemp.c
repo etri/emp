@@ -45,7 +45,7 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 
 int madvise(void *addr, size_t length, int advice) {
 	struct emp_madv_info madv_info;
-	print_verbose("[libemp - madvise] empfd: %d addr: %lx length: %d %x advice: %d\n",
+	print_verbose("[libemp - madvise] empfd: %d addr: %lx length: %ld %lx advice: %d\n",
 			empfd, (unsigned long) addr, length, length, advice);
 
 	if (!LIBEMP_READY)

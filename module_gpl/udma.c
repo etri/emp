@@ -13,6 +13,7 @@
 #endif
 #include "vm.h"
 #include "subblock.h"
+#include "udma.h"
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
 #include <linux/genhd.h>

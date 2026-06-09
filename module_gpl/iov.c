@@ -4,6 +4,8 @@
 #include "vm.h"
 #include "hva.h"
 #include "block-flag.h"
+#include "compat.h"
+#include "iov.h"
 
 /**
  * mark_io_blocks - Mark contiguous blocks as io_write
@@ -150,7 +152,7 @@ static long fetch_io_blocks(unsigned long io_base)
 	long nr_pages_pinned;
 	struct page *page;
 
-	nr_pages_pinned = get_user_pages(io_base, 1, FOLL_WRITE, &page, NULL);
+	nr_pages_pinned = get_user_pages(io_base, 1, FOLL_WRITE, &page);
 	if (nr_pages_pinned) {
 		put_page(page);
 		debug_page_ref_mark_page(-100, page, -1);
@@ -167,7 +169,7 @@ static long fetch_io_blocks(unsigned long io_base)
  * @param iov iovector
  * @param iov_len the length of iov
  */
-void handle_qiov_write(struct emp_mm *emm, struct iovec *iov, int iov_len)
+static void handle_qiov_write(struct emp_mm *emm, struct iovec *iov, int iov_len)
 {
 	struct emp_vmr *vmr;
 	unsigned int sb_order;
@@ -241,7 +243,7 @@ out:
  * @param iov iovector
  * @param iov_len the length of iov
  */
-void handle_qiov_read(struct emp_mm *emm, struct iovec *iov, int iov_len)
+static void handle_qiov_read(struct emp_mm *emm, struct iovec *iov, int iov_len)
 {
 	struct emp_vmr *vmr;
 	pid_t pid;

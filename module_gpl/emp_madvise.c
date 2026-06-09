@@ -5,6 +5,7 @@
 #include "reclaim.h"
 #include "paging.h"
 #include "vcpu_var.h"
+#include "emp_madvise.h"
 
 #define LEN_FLUSH_HEADS NUM_VICTIM_CLUSTER
 struct blk_pf_ctx {

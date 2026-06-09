@@ -87,26 +87,44 @@
 
 /* After kernel 6.8.0, blkdev_get_by_path() is removed. Use lookup_bdev() and blkdev_get_no_open() instead.
  * After RHEL 9.4 or kernel 6.5.0, blkdev_get_by_path() takes 4 arguments. The fourth argument is struct blk_holder_ops. */
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9,4)) \
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 4)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0))
 	// RHEL_RELEASE_VERSION < 9.4 or KERNEL_VERSION < 6.5
 #define emp_blkdev_get_by_path(path, mode) blkdev_get_by_path((path), (mode), NULL)
-#elif (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,4)) \
+#elif (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 5)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
-	// RHEL_RELEASE_VERSION >= 9.4 or 6.5 <= KERNEL_VERSION < 6.8
+	// 9.4 <= RHEL_RELEASE_VERSION < 9.5 or 6.5 <= KERNEL_VERSION < 6.8
 #define emp_blkdev_get_by_path(path, mode) blkdev_get_by_path((path), (mode), NULL, NULL)
 #else
-	// KERNEL_VERSION >= 6.8
+	// RHEL_RELEASE_VERSION >= 9.5 or KERNEL_VERSION >= 6.8
+/* blkdev_get_no_open() is no longer exported; resolved at runtime via kallsyms.
+ * See kernel_blkdev_get_no_open() in module_gpl/glue.c. */
+extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
 #define emp_blkdev_get_by_path(path, mode) ({ \
 	dev_t ____dev; \
 	int ____ret; \
 	struct block_device *____bdev; \
 	____ret = lookup_bdev((path), &____dev); \
 	if (____ret == 0) \
-		____bdev = blkdev_get_no_open(____dev); \
+		____bdev = kernel_blkdev_get_no_open(____dev); \
 	else \
 		____bdev = ERR_PTR(____ret); \
 	____bdev; })
+#endif
+
+/* After kernel 6.5.0, pte_mkwrite() takes a VMA and is implemented out-of-line
+ * (for x86 shadow-stack support) without an EXPORT_SYMBOL. Inline our own
+ * variant that uses pte_mkwrite_novma() so the module links. EMP does not use
+ * shadow stacks, so skipping that path is safe. */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+#define emp_maybe_mkwrite(pte, vma) ({ \
+		pte_t ____pte = (pte); \
+		if (likely((vma)->vm_flags & VM_WRITE)) \
+			____pte = pte_mkwrite_novma(____pte); \
+		____pte; })
+#else
+#define emp_maybe_mkwrite(pte, vma) maybe_mkwrite((pte), (vma))
 #endif
 
 /* After RHEL 9.4 or kernel 6.5.0, we cannot link pte_offset_map(). */
@@ -135,6 +153,31 @@
 #else
 #define EMP_REQ_POLLED (REQ_POLLED)
 #define emp_wr_blk_poll(w) bio_poll((w)->bio, NULL, false)
+#endif
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 6)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0))
+#define emp_get_user_pages(start, nr_pages, gup_flags, pages) get_user_pages(start, nr_pages, gup_flags, NULL)
+#else
+#define emp_get_user_pages(start, nr_pages, gup_flags, pages) get_user_pages(start, nr_pages, gup_flags)
+#endif
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 5)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+#define EMP_VMA_ITERATOR(name, __mm, __addr)	\
+		struct vm_area_struct *name = (__mm)->mmap
+#define emp_for_each_vma(vmi, vma) for ((vma) = (vmi); (vma); (vma) = (vma)->vm_next)
+#else
+#define EMP_VMA_ITERATOR(name, __mm, __addr) VMA_ITERATOR(name, __mm, __addr)
+#define emp_for_each_vma(vmi, vma) for_each_vma(vmi, vma)
+#endif
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 5)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
+#define emp_mmu_notifier_range_to_vma(range) ((range)->vma)
+#define vm_flags_set(vma, __flags) do { (vma)->vm_flags |= (__flags); } while (0)
+#else
+#define emp_mmu_notifier_range_to_vma(range) vma_lookup((range)->mm, (range)->start)
 #endif
 
 #endif /* __COMPAT_H__ */

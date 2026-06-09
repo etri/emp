@@ -1,5 +1,6 @@
 #include <linux/module.h>
 #include <linux/errno.h>
+#include <linux/pagemap.h>
 #include <linux/file.h>
 #include <linux/swap.h>
 #include <linux/mmu_notifier.h>
@@ -28,6 +29,8 @@
 #include "cow.h"
 #include "pcalloc.h"
 #endif
+#include "ioctl.h"
+#include "procfs.h"
 
 #undef MEASURE_COMPONENTS
 
@@ -78,16 +81,6 @@ struct emp_ops emp_ops;
 static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked);
 #endif
 
-/* ----- functions from procfs.c ----- */
-int emp_procfs_add(struct emp_mm *bvma, int id);
-void emp_procfs_del(struct emp_mm *bvma);
-int emp_procfs_init(void);
-void emp_procfs_exit(void);
-
-/* ----- functions from ioctl.c ------ */
-long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
-		unsigned long ioctl_param);
-	
 #ifdef CONFIG_EMP_EXT
 /**
  * init_emp_ops - initialize emp_ops with default functions
@@ -513,7 +506,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 
 /* TODO: ZERO_BLOCK checking should be located on module_pro */
 #define ZERO_BLOCK (1 << 22)
-bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_gpa *s, unsigned long index_head, struct emp_gpa *hs[])
+static bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_gpa *s, unsigned long index_head, struct emp_gpa *hs[])
 {
 	struct emp_vmr *vmr;
 	struct emp_gpa *g, *r;
@@ -1038,7 +1031,7 @@ static inline void split_copy_pages(struct page *dst, struct page *src, int offs
  * copy pages which are involved in back_vmr,
  * and attach the pages to the local_page.
  */
-unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_vmr, unsigned long split_index, pmd_t *pmd) 
+static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_vmr, unsigned long split_index, pmd_t *pmd) 
 {
 	struct emp_mm *emm = back_vmr->emm;
 	struct emp_vmdesc *back_desc = back_vmr->descs;
@@ -1165,7 +1158,12 @@ unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr *back_v
 
 }
 
-struct emp_gpa * __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_vmr *front_vmr, struct emp_vmr *back_vmr, unsigned long split_addr, struct emp_gpa *split_head, unsigned long split_head_index, unsigned long split_index, pmd_t *pmd)
+static struct emp_gpa *
+__split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
+		struct emp_vmr *front_vmr, struct emp_vmr *back_vmr,
+		unsigned long split_addr, struct emp_gpa *split_head,
+		unsigned long split_head_index, unsigned long split_index,
+		pmd_t *pmd)
 {
 	struct emp_mm *emm = new_vmr->emm;
 	struct emp_gpa *front_gpa, *back_gpa;
@@ -1288,7 +1286,7 @@ static int split_handle_remote_prefetch(struct emp_mm *emm, struct emp_vmr *vmr,
 	return ret;
 }
 
-void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
+static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
 	struct emp_mm *emm = new_vmr->emm;
 	struct mm_struct *new_mm = new_vmr->host_mm;
@@ -1589,7 +1587,7 @@ next_head:
 	}
 }
 
-int split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
+static int split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
 	struct emp_vmdesc *desc;
 	unsigned long gpa_dir_offset;
@@ -1813,9 +1811,7 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 		debug_BUG_ON(!new_vmr);
 	}
 
-	new_vma->vm_flags |= VM_MIXEDMAP;
-	new_vma->vm_flags |= VM_NOHUGEPAGE;
-	new_vma->vm_flags |= VM_DONTEXPAND;
+	vm_flags_set(new_vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
 
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.emp_vma_open)
@@ -2008,9 +2004,7 @@ vm_start_aligned:
 	bvma->ftm.local_cache_pages_headroom = LOCAL_CACHE_BUFFER_SIZE(bvma);
 
 	// prevent numa from relocating the related pages
-	vma->vm_flags |= VM_MIXEDMAP;
-	vma->vm_flags |= VM_NOHUGEPAGE;
-	vma->vm_flags |= VM_DONTEXPAND;
+	vm_flags_set(vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
 
 	vma->vm_ops = &emp_vma_ops;
 	vma->vm_private_data = (void *)vmr;
@@ -2294,6 +2288,21 @@ static void free_bvma(struct emp_mm *bvma)
 	emp_kfree(bvma);
 }
 
+/*
+ * In 6.5+ kernels, folio_mark_dirty() dispatches through
+ * mapping->a_ops->dirty_folio with no fallback. EMP sets
+ * page->mapping = vma->vm_file->f_mapping for VM_SHARED regions
+ * (see emp_set_page_mapping_and_index in hva.h) to support shared
+ * futexes. The default chardev aops on some kernels has dirty_folio
+ * NULL, so munmap() oopses. Override the chardev's mapping aops
+ * once with a private table that uses noop_dirty_folio. */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+static const struct address_space_operations emp_aops = {
+	.dirty_folio = noop_dirty_folio,
+};
+#endif
+
 /**
  * @param filp EMP device file pointer
  *
@@ -2309,6 +2318,12 @@ static int emp_open(struct inode *inode, struct file *filp)
 
 	try_module_get(THIS_MODULE);
 	mutex_lock(&emp_open_mutex);
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+	if (inode->i_mapping && inode->i_mapping->a_ops != &emp_aops)
+		inode->i_mapping->a_ops = &emp_aops;
+#endif
 
 	if ((filp->f_flags & O_ACCMODE) == O_RDONLY) {
 		printk(KERN_ERR "%s: failed to open: inappropriate flags\n",
@@ -2488,7 +2503,7 @@ static int emp_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-int emp_fsync(struct file *filp, loff_t s, loff_t e, int datasync)
+static int emp_fsync(struct file *filp, loff_t s, loff_t e, int datasync)
 {
 	struct emp_mm *bvma;
 
@@ -2576,12 +2591,15 @@ static int __init emp_init(void)
 	if (check_assumption())
 		return -EINVAL;
 
+	if (kernel_symbol_init())
+		return -ENOSYS;
+
 	emp_debug_alloc_init();
 
 #ifdef CONFIG_EMP_EXT
 	init_emp_ops();
 #endif
-	kernel_symbol_init();
+
 #ifdef CONFIG_EMP_VM
 	register_emp_mod(&emp_mod);
 #endif /* CONFIG_EMP_VM */

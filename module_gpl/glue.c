@@ -5,6 +5,7 @@
 #include <linux/kvm_host.h>
 #include <asm/pgtable.h>
 #include <linux/nvme.h>
+#include <linux/blkdev.h>
 #include <linux/kallsyms.h>
 #include <compat.h>
 #include "glue.h"
@@ -33,9 +34,17 @@ static struct k_symbol	*ksym;
  * For using kernel symbols, this function makes a lookup table for needed symbols
  */
 int kernel_symbol_init(void) {
+	int ret = 0; // number of not found symbols
 #ifdef KPROBE_LOOKUP
 	typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 	kallsyms_lookup_name_t kallsyms_lookup_name;
+#endif
+
+	// Check if already did. If this failed at the first time, The whole module init was failed and there is no chance to the second try.
+	if (ksym)
+		return 0;
+
+#ifdef KPROBE_LOOKUP
 	register_kprobe(&kp);
 	kallsyms_lookup_name = (kallsyms_lookup_name_t) kp.addr;
 	unregister_kprobe(&kp);
@@ -48,69 +57,107 @@ int kernel_symbol_init(void) {
 	}
 	memset(ksym, 0, sizeof(struct k_symbol));
 
-	ksym->page_add_file_rmap = kallsyms_lookup_name("page_add_file_rmap");
-	ksym->page_remove_rmap = kallsyms_lookup_name("page_remove_rmap");
-	ksym->tlb_finish_mmu = kallsyms_lookup_name("tlb_finish_mmu");
-	ksym->tlb_gather_mmu = kallsyms_lookup_name("tlb_gather_mmu");
-	ksym->pte_alloc_one = kallsyms_lookup_name("pte_alloc_one");
-	ksym->thread_group_cputime_adjusted = kallsyms_lookup_name("thread_group_cputime_adjusted");
-	ksym->sysctl_hung_task_timeout_secs =
-		kallsyms_lookup_name("sysctl_hung_task_timeout_secs");
-	ksym->ptep_clear_flush = kallsyms_lookup_name("ptep_clear_flush");
+#define KALLSYM_LOOKUP(ksym, name, ret) do { \
+	(ksym)->name = kallsyms_lookup_name(#name); \
+	if ((ksym)->name == (unsigned long) NULL) { \
+		(ret)++; \
+		printk(KERN_ERR "ERROR: %s failed to find symbol '" #name "'\n", __func__); \
+	} \
+} while (0)
 
-#ifdef CONFIG_EMP_DEBUG
-	if (ksym->page_add_file_rmap == (unsigned long) NULL ||
-			ksym->page_remove_rmap == (unsigned long) NULL ||
-			ksym->tlb_finish_mmu == (unsigned long) NULL ||
-			ksym->tlb_gather_mmu == (unsigned long) NULL ||
-			ksym->pte_alloc_one == (unsigned long) NULL ||
-			ksym->thread_group_cputime_adjusted == (unsigned long) NULL ||
-			ksym->sysctl_hung_task_timeout_secs == (unsigned long) NULL ||
-			ksym->ptep_clear_flush == (unsigned long) NULL)
-		printk(KERN_ERR "failed to find some kernel symbols.\n");
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
+	KALLSYM_LOOKUP(ksym, page_add_file_rmap, ret);
+	KALLSYM_LOOKUP(ksym, page_remove_rmap, ret);
+#else // RHEL_RELEASE_VERSION >= 9.8 or KERNEL_VERSION >= 6.8
+	KALLSYM_LOOKUP(ksym, folio_add_file_rmap_ptes, ret);
+	KALLSYM_LOOKUP(ksym, folio_remove_rmap_ptes, ret);
 #endif
-	return 0;
+
+	KALLSYM_LOOKUP(ksym, tlb_finish_mmu, ret);
+	KALLSYM_LOOKUP(ksym, tlb_gather_mmu, ret);
+	KALLSYM_LOOKUP(ksym, pte_alloc_one, ret);
+	KALLSYM_LOOKUP(ksym, ptep_clear_flush, ret);
+	KALLSYM_LOOKUP(ksym, thread_group_cputime_adjusted, ret);
+	KALLSYM_LOOKUP(ksym, sysctl_hung_task_timeout_secs, ret);
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+	KALLSYM_LOOKUP(ksym, blkdev_get_no_open, ret);
+#endif
+
+	return ret;
 }
 
 /**
  * kernel_symbol_init - Disable dynamic kernel symbol lookup
  */
 void kernel_symbol_close(void) {
-	if(ksym)
+	if(ksym) {
 		emp_kfree(ksym);
+		ksym = NULL;
+	}
 }
 
 #ifndef CONFIG_EMP_PAGE_RMAP_OPT
 void kernel_page_add_file_rmap(struct page *page, struct vm_area_struct *vma, bool compound)
 {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0))
+	void (*f)(struct page *, struct vm_area_struct *vma, bool compound);
+	f = (void (*)(struct page *, struct vm_area_struct *vma, bool compound))
+			ksym->page_add_file_rmap;
+	f(page, vma, compound);
+#elif (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
 	void (*f)(struct page *, struct vm_area_struct *vma, bool compound);
 	f = (void (*)(struct page *, struct vm_area_struct *vma, bool compound))
 			ksym->page_add_file_rmap;
 	f(page, vma, compound);
 #else
-
-	void (*f)(struct page *page, bool compound);
-	f = (void (*)(struct page *page, bool compound))
-		ksym->page_add_file_rmap;
-	f(page, compound);
+	void (*f)(struct folio *folio, struct page *page,
+			int nr_pages, struct vm_area_struct *vma);
+	struct folio *folio;
+	unsigned int nr_pages;
+	f = (void (*)(struct folio *folio, struct page *page,
+			int nr_pages, struct vm_area_struct *vma))
+				ksym->folio_add_file_rmap_ptes;
+	folio = page_folio(page);
+	if (!compound)
+		nr_pages = 1;
+	else
+		nr_pages = folio_nr_pages(folio);
+	f(folio, page, nr_pages, vma);
 #endif
 }
 
 void kernel_page_remove_rmap(struct page *pg, struct vm_area_struct *vma, bool compound)
 {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0))
+	void (*f)(struct page *, bool compound);
+	f = (void (*)(struct page *, bool compound))
+			ksym->page_remove_rmap;
+	f(pg, compound);
+#elif (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
 	void (*f)(struct page *, struct vm_area_struct *vma, bool compound);
 	f = (void (*)(struct page *, struct vm_area_struct *vma, bool compound))
 			ksym->page_remove_rmap;
 	f(pg, vma, compound);
 #else
-	void (*f)(struct page *, bool compound);
-	f = (void (*)(struct page *, bool compound))
-			ksym->page_remove_rmap;
-	f(pg, compound);
+	void (*f)(struct folio *folio, struct page *page,
+			int nr_pages, struct vm_area_struct *vma);
+	struct folio *folio;
+	unsigned int nr_pages;
+	f = (void (*)(struct folio *folio, struct page *page,
+			int nr_pages, struct vm_area_struct *vma))
+				ksym->folio_remove_rmap_ptes;
+	folio = page_folio(pg);
+	if (!compound)
+		nr_pages = 1;
+	else
+		nr_pages = folio_nr_pages(folio);
+	f(folio, pg, nr_pages, vma);
 #endif
 }
 #endif /* CONFIG_EMP_PAGE_RMAP_OPT */
@@ -203,3 +250,15 @@ pte_t kernel_ptep_clear_flush(struct vm_area_struct *vma, unsigned long address,
 	f = (pte_t (*)(struct vm_area_struct *, unsigned long, pte_t *))ksym->ptep_clear_flush;
 	return f(vma, address, ptep);
 }
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+struct block_device *kernel_blkdev_get_no_open(dev_t dev)
+{
+	struct block_device *(*f)(dev_t);
+	f = (struct block_device *(*)(dev_t))ksym->blkdev_get_no_open;
+	if (!f)
+		return ERR_PTR(-ENOENT);
+	return f(dev);
+}
+#endif

@@ -564,7 +564,7 @@ __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 		   there was a case that variable assignment of a mk_pte did not work correctly
 		 */
 		pte_entry = mk_pte(page, vma->vm_page_prot);
-		pte_entry = maybe_mkwrite(pte_mkdirty(pte_entry), vma);
+		pte_entry = emp_maybe_mkwrite(pte_mkdirty(pte_entry), vma);
 		kernel_page_add_file_rmap(page, vma, false);
 		update_mmu_cache(vma, addr, _pte);
 		set_pte_at(vma->vm_mm, addr, _pte, pte_entry);
@@ -638,7 +638,7 @@ __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 		debug_assert(page_to_pfn(page) == pfn);
 		flush_cache_page(vma, addr, pfn);
 		pte_entry = pte_mkyoung(pte_entry);
-		pte_entry = maybe_mkwrite(pte_mkdirty(pte_entry), vma);
+		pte_entry = emp_maybe_mkwrite(pte_mkdirty(pte_entry), vma);
 		if (likely(!pte_same(*_pte, pte_entry))) {
 			native_set_pte(_pte, pte_entry);
 			update_mmu_cache(vma, addr, _pte);
@@ -1968,10 +1968,11 @@ emp_mmu_notifier_release(struct mmu_notifier *notifier, struct mm_struct *mm)
 	struct emp_mm *emm = ((struct emp_mmu_notifier *) notifier)->emm;
 	struct vm_area_struct *vma;
 	struct emp_vmr *vmr;
+	EMP_VMA_ITERATOR(vmi, mm, 0);
 
 	dprintk(KERN_ERR "[DEBUG] %s: emm: %d pid: %d\n",
 			__func__, emm->id, current->pid);
-	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+	emp_for_each_vma(vmi, vma) {
 		vmr = __get_emp_vmr(vma);
 		if (vmr == NULL)
 			continue;
@@ -2017,6 +2018,7 @@ emp_mmu_notifier_invalidate_range_start(struct mmu_notifier *notifier,
 	int ret = 0;
 	struct emp_mm *emm;
 	struct emp_vmr *vmr;
+	struct vm_area_struct *range_vma;
 
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	if (range->event != MMU_NOTIFY_CLEAR
@@ -2031,27 +2033,31 @@ emp_mmu_notifier_invalidate_range_start(struct mmu_notifier *notifier,
 
 	emm = ((struct emp_mmu_notifier *) notifier)->emm;
 
+	range_vma = emp_mmu_notifier_range_to_vma(range);
+	if (unlikely(range_vma == NULL))
+		return 0;
+
 	switch (range->event) {
 	case MMU_NOTIFY_CLEAR:
 		if (range->end - range->start != PAGE_SIZE)
 			break;
 
-		vmr = __get_emp_vmr_check(emm, range->vma);
+		vmr = __get_emp_vmr_check(emm, range_vma);
 		if (vmr == NULL)
 			break;
 
-		debug_assert(vmr->host_vma == range->vma);
+		debug_assert(vmr->host_vma == range_vma);
 		debug_assert(vmr->host_mm == range->mm);
 
 		ret = handle_emp_cow_fault_mmu(emm, range->mm,
 							vmr, range->start);
 		break;
 	case MMU_NOTIFY_UNMAP:
-		vmr = __get_emp_vmr_check(emm, range->vma);
+		vmr = __get_emp_vmr_check(emm, range_vma);
 		if (vmr == NULL)
 			break;
 
-		debug_assert(vmr->host_vma == range->vma);
+		debug_assert(vmr->host_vma == range_vma);
 		debug_assert(vmr->host_mm == range->mm);
 
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
@@ -2061,7 +2067,7 @@ emp_mmu_notifier_invalidate_range_start(struct mmu_notifier *notifier,
 		break;
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	case MMU_NOTIFY_PROTECTION_PAGE:
-		vmr = __get_emp_vmr_check(emm, range->vma);
+		vmr = __get_emp_vmr_check(emm, range_vma);
 		if (vmr == NULL)
 			break;
 
@@ -2207,7 +2213,7 @@ void dup_list_del(struct emp_vmr *vmr)
 	spin_unlock(&vmr->emm->dup_list_lock);
 }
 
-void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool dup_dir)
+static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool dup_dir)
 {
 	struct emp_mm *emm = new_vmr->emm;
 	struct mm_struct *new_mm = new_vmr->host_mm;

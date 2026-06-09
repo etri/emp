@@ -669,7 +669,7 @@ static inline bool is_head_page(struct page *page, int page_order) {
  * Free the page and push it to free list
  */
 // free_gpa must be called in reverse order
-void free_gpa(struct emp_mm *bvma, struct emp_gpa *gpa, struct vcpu_var *cpu)
+static void free_gpa(struct emp_mm *bvma, struct emp_gpa *gpa, struct vcpu_var *cpu)
 {
 	int gpa_order;
 	struct page *gpa_page;
@@ -866,7 +866,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	dirty = false;
 
 	for_each_gpas(gpa, head) {
-		pte_t *ptep, pte;
+		pte_t *ptep, pte, *ptep_base;
 		int pte_clear_count;
 		struct page *sb_page, *page;
 
@@ -902,6 +902,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 
 		ptep = emp_pte_offset_map(pmd, hva);
+		ptep_base = ptep; // to pte_unmap() later.
 		pfn = pte_pfn(*ptep);
 
 		pte_clear_count = 0;
@@ -947,6 +948,8 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 				dirty = true;
 			kernel_page_remove_rmap(page, vma, false);
 		}
+
+		pte_unmap(ptep_base);
 
 		page_ref_sub(sb_page, pte_clear_count);
 		debug_page_ref_mark(vmr->id, gpa->local_page, -pte_clear_count);
@@ -1177,7 +1180,7 @@ static inline bool
 __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			unsigned long hva, unsigned long page_len, pmd_t *pmd)
 {
-	pte_t *ptep, pte;
+	pte_t *ptep, pte, *ptep_base;
 	bool dirty = false;
 	struct page *page;
 	unsigned long pfn, i;
@@ -1191,6 +1194,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 #endif
 
 	ptep = emp_pte_offset_map(pmd, hva);
+	ptep_base = ptep;
 	pfn = pte_pfn(*ptep);
 	page = gpa->local_page->page;
 	for (i = 0; i < page_len; i++, hva += PAGE_SIZE, ptep++, pfn++, page++) {
@@ -1207,6 +1211,8 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			dirty = true;
 		kernel_page_remove_rmap(page, vma, false);
 	}
+
+	pte_unmap(ptep_base);
 
 	/* We do not use wrapper __emp_put_pages_map(),
 	 * since __put_local_page_pmd() will sync the page ref for debug */
@@ -1500,7 +1506,7 @@ __wait_for_prefetch_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 }
 #endif /* CONFIG_EMP_BLOCK */
 
-void flush_gpa(struct emp_vmr *vmr, struct vcpu_var *cpu,
+static void flush_gpa(struct emp_vmr *vmr, struct vcpu_var *cpu,
 	struct emp_gpa *max_head, unsigned long head_idx, unsigned long size)
 {
 	unsigned long i;

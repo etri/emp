@@ -192,5 +192,5 @@ ifeq ($(LINUX_DISTRO), CentOS)
 EXTRA_CFLAGS += -DCENTOS
 endif
 
-KBUILD_EXTRA_SYMBOLS += $(CURDIR)/../module_gpl/Module.symvers
-KBUILD_EXTRA_SYMBOLS += $(CURDIR)/../module_kvm/Module.symvers
+KBUILD_EXTRA_SYMBOLS += $(wildcard $(CURDIR)/../module_gpl/Module.symvers)
+KBUILD_EXTRA_SYMBOLS += $(wildcard $(CURDIR)/../module_kvm/Module.symvers)
