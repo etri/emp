@@ -165,7 +165,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
  * @retval VM_FAULT_NOPAGE(256): Success
  * @retval 0: Error
  */
-static int COMPILER_DEBUG
+static int
 pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 		unsigned long haddr, unsigned int page_len, const bool is_write)
 {

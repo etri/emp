@@ -530,7 +530,7 @@ static void __cow_pmd_populate(struct mm_struct *mm, pmd_t *pmd, unsigned long h
 	spin_unlock(ptl);
 }
 
-static void COMPILER_DEBUG
+static void
 __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 			pmd_t *pmd, unsigned long addr, unsigned long len)
 {
