@@ -347,7 +347,6 @@ emp_bdev_post_read(struct connection *conn, struct work_request *w,
 	struct request_queue *q;
 
 	atomic_set(&w->wr_refc, 0);
-	INIT_LIST_HEAD(&w->sibling);
 	w->state = STATE_POST_READ;
 	w->context = conn->contexts[0];
 
@@ -399,7 +398,6 @@ emp_bdev_post_write(struct connection *conn, struct work_request *w,
 	int ret;
 
 	atomic_set(&w->wr_refc, 0);
-	INIT_LIST_HEAD(&w->sibling);
 	w->state = STATE_POST_WRITE;
 	w->context = conn->contexts[0];
 
@@ -784,7 +782,6 @@ static void nvme_wr_ctor(void *opaque)
 #endif
 	w->state = STATE_INIT;
 	w->gpa = NULL;
-	INIT_LIST_HEAD(&w->sibling);
 	INIT_LIST_HEAD(&w->subsibling);
 	INIT_LIST_HEAD(&w->remote_pages);
 

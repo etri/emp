@@ -313,7 +313,7 @@ struct emp_stm_ops {
 	void (*clear_writeback_block)(struct emp_mm *, struct emp_gpa *,
 				      struct work_request *, struct vcpu_var *,
 				      bool, bool);
-	int (*push_writeback_request)(struct emp_mm *, struct work_request *,
+	void (*push_writeback_request)(struct emp_mm *, struct work_request *,
 				      struct vcpu_var *);
 	int (*wait_writeback_async)(struct emp_mm *, struct vcpu_var *, int, bool);
 	int (*wait_writeback_async_steal)(struct emp_mm *, struct vcpu_var *, int);

@@ -204,39 +204,6 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 }
 
 /**
- * remove_first_wb_request - Remove the first writeback request from wb_request_list of the given cpu
- * @param bvma bvma data structure
- * @param cpu working CPU ID
- *
- * @retval NULL: Error
- * @retval n: Success
- *
- * Remove the writeback request stored in vcpu structure
- */
-static inline struct work_request *
-remove_first_wb_request(struct emp_mm *bvma, struct vcpu_var *cpu)
-{
-	struct work_request *w = NULL;
-	struct list_head *wb_request_list;
-
-	wb_request_list = &cpu->wb_request_list;
-
-	if (VCPU_WB_REQUEST_LE_SINGULAR(&cpu))
-		goto out;
-
-	w = list_first_entry(wb_request_list, struct work_request, sibling);
-	if (WR_READY(w)) {
-		list_del_init(&w->sibling);
-		cpu->wb_request_size -= w->wr_size;
-	} else {
-		w = NULL;
-	}
-
-out:
-	return w;
-}
-
-/**
  * free_work_requests - Free work requests
  * @param bvma bvma data structure
  * @param w work request
@@ -378,72 +345,29 @@ int __clear_writeback_block(struct emp_mm *bvma, struct work_request *w,
 	return reclaimed_pages;
 }
 
-static struct work_request *
-__try_pop_ready_writeback_request(struct emp_mm *bvma, struct vcpu_var *cpu)
-{
-	struct list_head *wb_request_list = &cpu->wb_request_list;
-	struct work_request *w;
-
-	debug_assert(spin_is_locked(&cpu->wb_request_lock));
-	if (list_empty(wb_request_list))
-		return NULL;
-
-	w = list_first_entry(wb_request_list, struct work_request, sibling);
-	if (!WR_READY(w))
-		return NULL;
-
-	if (emp_trylock_work_request(bvma, w)) {
-		list_del_init(&w->sibling);
-		clear_writeback_request_on_lru(w);
-		cpu->wb_request_size -= w->wr_size;
-		return w;
-	} else
-		return NULL;
-}
-
 /**
- * push_writeback_request - Add a new writeback request and remove the first one from the list
+ * push_writeback_request - Add a new writeback request
  * @param bvma bvma data structure
- * @param w work request
- * @param cpu working CPU ID
- *
- * @return working vcpu ID
+ * @param w head work request of the block
+ * @param cpu working CPU structure
  */
-static int push_writeback_request(struct emp_mm *bvma, struct work_request *w,
+static void push_writeback_request(struct emp_mm *bvma, struct work_request *w,
 				  struct vcpu_var *cpu)
 {
-	spinlock_t *s;
-	int cpu_queue;
-	struct work_request *removed_w = NULL;
+	struct local_page *lp = emp_get_block_head(w->gpa)->local_page;
+	struct emp_list *list;
 
 	// the function is called after all the members of wr are linked to head_wr,
 	// it means that wr_refc is equal to the number of members
-	w->wr_size = w->chained_ops == false? 
-		atomic_read(&w->wr_refc): w->entangled_wr_len;
+	w->wr_size = w->chained_ops == false ?
+		atomic_read(&w->wr_refc) : w->entangled_wr_len;
 
-	s = &cpu->wb_request_lock;
-
-	spin_lock(s);
-	cpu_queue = cpu->id;
-	if (cpu->wb_request_size + w->wr_size > PER_VCPU_WB_REQUESTS_MAX(bvma))
-		removed_w = __try_pop_ready_writeback_request(bvma, cpu);
-	list_add_tail(&w->sibling, &cpu->wb_request_list);
-	cpu->wb_request_size += w->wr_size;
+	list = get_list_ptr_lru(bvma, &bvma->ftm.inactive_list, cpu->id);
+	emp_list_lock(list);
+	set_local_page_cpu_lru(lp, cpu->id);
+	emp_list_add_tail(&lp->lru_list, list);
 	add_inflight_writeback_page_len(bvma, w->gpa);
-	spin_unlock(s);
-
-	debug_BUG_ON(w && w->head_wr == NULL);
-
-	if (removed_w) {
-		/* NOTE: __clear_writeback_block() frees @w. Backup the block
-		 *       head that need to be unlocked. */
-		struct emp_gpa *head = emp_get_block_head(removed_w->gpa);
-		debug_progress(removed_w, list_empty(&removed_w->subsibling));
-		__clear_writeback_block(bvma, removed_w, cpu, false, true);
-		emp_unlock_block(head);
-	}
-
-	return cpu_queue;
+	emp_list_unlock(list);
 }
 
 /**
@@ -501,7 +425,6 @@ post_writeback_async(struct emp_mm *bvma, struct emp_gpa *gpa,
 		barrier();
 	}
 
-	INIT_LIST_HEAD(&w->sibling);
 #ifdef CONFIG_EMP_STAT
 	atomic_inc(&bvma->stat.write_reqs);
 #endif
@@ -515,29 +438,27 @@ post_writeback_async(struct emp_mm *bvma, struct emp_gpa *gpa,
  * @param head head of the block
  * @param w work request of head of the block
  * @param cpu working vcpu ID
- * @param on_list is work_request on wb_request_list?
+ * @param on_list is the block linked on the writeback list, the LRU side of the inactive list?
  * @param head_locked is head locked?
  */
 static void clear_writeback_block(struct emp_mm *bvma, struct emp_gpa *head,
 				  struct work_request *w, struct vcpu_var *cpu,
 				  bool on_list, bool do_reclaim)
 {
-	struct vcpu_var *wb_vcpu;
-
 	debug_BUG_ON(!w);
 	debug_assert(____emp_gpa_is_locked(head));
 
 	if (on_list) {
 		s16 cpu_id = get_local_page_cpu(head->local_page);
-		wb_vcpu = emp_get_vcpu_from_id(bvma, cpu_id);
-		spin_lock(&wb_vcpu->wb_request_lock);
+		struct emp_list *list = get_list_ptr_lru(bvma,
+				&bvma->ftm.inactive_list, cpu_id);
+		emp_list_lock(list);
 		debug_progress(w, cpu_id);
-		debug_BUG_ON(list_empty(&w->sibling));
-		list_del_init(&w->sibling);
+		debug_BUG_ON(list_empty(&head->local_page->lru_list));
+		emp_list_del(&head->local_page->lru_list, list);
 		clear_writeback_request_on_lru(w);
-		wb_vcpu->wb_request_size -= w->wr_size;
 		sub_inflight_writeback_page_len(bvma, head);
-		spin_unlock(&wb_vcpu->wb_request_lock);
+		emp_list_unlock(list);
 	}
 
 	debug_progress(w, list_empty(&w->subsibling));
@@ -564,29 +485,28 @@ static void __promote_gpa(struct emp_mm *emm, int cpu, struct emp_gpa *gpa)
 static int
 __wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, struct vcpu_var *local_cpu, int pressure, bool prefetch)
 {
-	struct list_head *wb_list = &cpu->wb_request_list, w_list;
-	spinlock_t *wb_lock = &cpu->wb_request_lock;
-	struct work_request *w, *n;
+	struct emp_list *list = get_list_ptr_lru(bvma,
+				&bvma->ftm.inactive_list, cpu->id);
+	struct temp_list to_clear;
+	struct list_head *cur, *n;
+	struct local_page *lp;
+	struct work_request *w;
 	struct emp_gpa *head;
 	int reclaimed = 0, r;
 
-	if (list_empty(wb_list))
+	if (emp_list_empty(list))
 		return 0;
 
-	spin_lock(wb_lock);
-	if (list_empty(wb_list)) {
-		spin_unlock(wb_lock);
-		return 0;
-	}
+	init_temp_list(&to_clear);
 
-	INIT_LIST_HEAD(&w_list);
-
-	list_for_each_entry_safe(w, n, wb_list, sibling) {
+	emp_list_lock(list);
+	emp_list_for_each_safe(cur, n, list) {
+		lp = __get_local_page_from_list(cur);
+		w = lp->w;
 		if (emp_trylock_work_request(bvma, w)) {
-			list_del_init(&w->sibling);
+			emp_list_del(cur, list);
 			clear_writeback_request_on_lru(w);
-			list_add_tail(&w->sibling, &w_list);
-			cpu->wb_request_size -= w->wr_size;
+			temp_list_add_tail(cur, &to_clear);
 			head = emp_get_block_head(w->gpa);
 			if (!is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
 				reclaimed += w->wr_size;
@@ -595,15 +515,16 @@ __wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, struct vcpu_va
 			}
 		}
 	}
+	emp_list_unlock(list);
 
-	spin_unlock(wb_lock);
-
-	if (list_empty(&w_list))
+	if (temp_list_empty(&to_clear))
 		return 0;
 
 	reclaimed = 0;
-	list_for_each_entry_safe(w, n, &w_list, sibling) {
-		list_del_init(&w->sibling);
+	temp_list_for_each_safe(cur, n, &to_clear) {
+		lp = __get_local_page_from_list(cur);
+		w = lp->w;
+		temp_list_del(cur, &to_clear);
 		/* NOTE: __clear_writeback_block() frees @w. Backup the block
 		 *       head that need to be unlocked. */
 		head = emp_get_block_head(w->gpa);

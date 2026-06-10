@@ -666,10 +666,8 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 	}
 
 	if (!eager_evict) {
-		int cpu_id;
 		head->r_state = GPA_WB;
-		cpu_id = emm->sops.push_writeback_request(emm, head_wr, cpu);
-		set_local_page_cpu_lru(head->local_page, cpu_id);
+		emm->sops.push_writeback_request(emm, head_wr, cpu);
 	}
 
 #ifdef CONFIG_EMP_STAT
@@ -1147,6 +1145,7 @@ int reclaim_init(struct emp_mm *bvma)
 		active->mru_bufs = NULL;
 		active->lru_bufs = NULL;
 		inactive->mru_bufs = NULL;
+		inactive->lru_bufs = NULL;
 		goto skip_alloc_bufs;
 	}
 
@@ -1160,25 +1159,24 @@ int reclaim_init(struct emp_mm *bvma)
 		goto reclaim_init_fail;
 
 	for (i = 0; i < vcpu_len; i++) {
-		mru = &active->mru_bufs[i];
-		init_emp_list(mru);
-
-		lru = &active->lru_bufs[i];
-		init_emp_list(lru);
+		init_emp_list(&active->mru_bufs[i]);
+		init_emp_list(&active->lru_bufs[i]);
 	}
 
-	/* initialize per-vcpu inactive_list */
+	/* initialize per-vcpu inactive_list
+	 * mru_bufs holds inactive pages; lru_bufs holds writeback pages */
 	inactive->mru_bufs = emp_kmalloc(sizeof(struct emp_list) * vcpu_len, GFP_KERNEL);
-	if (!inactive->mru_bufs)
+	inactive->lru_bufs = emp_kmalloc(sizeof(struct emp_list) * vcpu_len, GFP_KERNEL);
+	if (!inactive->mru_bufs || !inactive->lru_bufs)
 		goto reclaim_init_fail;
 
 	for (i = 0; i < vcpu_len; i++) {
 		init_emp_list(&inactive->mru_bufs[i]);
+		init_emp_list(&inactive->lru_bufs[i]);
 	}
 
 skip_alloc_bufs:
 #endif /* CONFIG_EMP_VM */
-
 
 	/* initialize per-pcpu active_list */
 	active->host_lru = emp_alloc_pcdata(struct emp_list);
@@ -1193,13 +1191,17 @@ skip_alloc_bufs:
 		init_emp_list(lru);
 	}
 
-	/* initialize per-pcpu inactive_list */
+	/* initialize per-pcpu inactive_list
+	 * host_mru holds inactive pages; host_lru holds writeback pages */
 	inactive->host_mru = emp_alloc_pcdata(struct emp_list);
-	if (inactive->host_mru == NULL)
+	inactive->host_lru = emp_alloc_pcdata(struct emp_list);
+	if (inactive->host_mru == NULL || inactive->host_lru == NULL)
 		goto reclaim_init_fail;
 
 	for_each_possible_cpu(cpu) {
-		lru = emp_pc_ptr(inactive->host_mru, cpu);
+		mru = emp_pc_ptr(inactive->host_mru, cpu);
+		init_emp_list(mru);
+		lru = emp_pc_ptr(inactive->host_lru, cpu);
 		init_emp_list(lru);
 	}
 
@@ -1210,6 +1212,10 @@ reclaim_init_fail:
 	if (inactive->mru_bufs) {
 		emp_kfree(inactive->mru_bufs);
 		inactive->mru_bufs = NULL;
+	}
+	if (inactive->lru_bufs) {
+		emp_kfree(inactive->lru_bufs);
+		inactive->lru_bufs = NULL;
 	}
 	if (active->mru_bufs) {
 		emp_kfree(active->mru_bufs);
@@ -1223,6 +1229,10 @@ reclaim_init_fail:
 	if ((inactive->host_mru)) {
 		emp_free_pcdata(inactive->host_mru);
 		inactive->host_mru = NULL;
+	}
+	if ((inactive->host_lru)) {
+		emp_free_pcdata(inactive->host_lru);
+		inactive->host_lru = NULL;
 	}
 	if ((active->host_lru)) {
 		emp_free_pcdata(active->host_lru);
@@ -1263,6 +1273,10 @@ void reclaim_exit(struct emp_mm *emm)
 		emp_kfree(inactive->mru_bufs);
 		inactive->mru_bufs = NULL;
 	}
+	if (inactive->lru_bufs) {
+		emp_kfree(inactive->lru_bufs);
+		inactive->lru_bufs = NULL;
+	}
 	if (active->mru_bufs) {
 		emp_kfree(active->mru_bufs);
 		active->mru_bufs = NULL;
@@ -1276,6 +1290,10 @@ void reclaim_exit(struct emp_mm *emm)
 	if (inactive->host_mru) {
 		emp_free_pcdata(inactive->host_mru);
 		inactive->host_mru = NULL;
+	}
+	if (inactive->host_lru) {
+		emp_free_pcdata(inactive->host_lru);
+		inactive->host_lru = NULL;
 	}
 	if (active->host_lru) {
 		emp_free_pcdata(active->host_lru);

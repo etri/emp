@@ -1412,9 +1412,9 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		debug_assert(is_local_page_on_list(lp));
 		w = lp->w;
 		debug_assert(w);
-		debug_assert(!list_empty(&w->sibling));
-		debug_assert(w->sibling.next != LIST_POISON1
-				&& w->sibling.prev != LIST_POISON2);
+		debug_assert(!list_empty(&lp->lru_list));
+		debug_assert(lp->lru_list.next != LIST_POISON1
+				&& lp->lru_list.prev != LIST_POISON2);
 	} else if (head->r_state == GPA_INIT) {
 		debug_assert(!head->local_page);
 		if (__is_gpa_flags_set(head, GPA_REMOTE_MASK))
@@ -2032,6 +2032,16 @@ void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive)
 			emp_list_unlock(list);
 		}
 	}
+	if (inactive->lru_bufs) {
+		int i;
+		for (i = 0; i < inactive->abuf_len; i++) {
+			list = inactive->lru_bufs + i;
+			emp_list_lock(list);
+			BUG_ON(!emp_list_empty(list));
+			BUG_ON(emp_list_len(list) != 0);
+			emp_list_unlock(list);
+		}
+	}
 #endif /* CONFIG_EMP_VM */
 
 	if (inactive->host_mru) {
@@ -2044,31 +2054,14 @@ void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive)
 			emp_list_unlock(list);
 		}
 	}
-
-#ifdef CONFIG_EMP_VM
-	/* Check writeback list here, since it is a part of inactive list */
-	if (emm->vcpus) {
-		int id, len = EMP_KVM_VCPU_LEN(emm);
-		struct vcpu_var *v;
-		for (id = 0; id < len; id++) {
-			v = &emm->vcpus[id];
-			spin_lock(&v->wb_request_lock);
-			BUG_ON(!list_empty(&v->wb_request_list));
-			BUG_ON(v->wb_request_size > 0);
-			spin_unlock(&v->wb_request_lock);
-		}
-	}
-#endif
-
-	if (emm->pcpus) {
-		int id;
-		struct vcpu_var *v;
-		for_each_possible_cpu(id) {
-			v = per_cpu_ptr(emm->pcpus, id);
-			spin_lock(&v->wb_request_lock);
-			BUG_ON(!list_empty(&v->wb_request_list));
-			BUG_ON(v->wb_request_size > 0);
-			spin_unlock(&v->wb_request_lock);
+	if (inactive->host_lru) {
+		int cpu;
+		for_each_possible_cpu(cpu) {
+			list = emp_pc_ptr(inactive->host_lru, cpu);
+			emp_list_lock(list);
+			BUG_ON(!emp_list_empty(list));
+			BUG_ON(emp_list_len(list) != 0);
+			emp_list_unlock(list);
 		}
 	}
 

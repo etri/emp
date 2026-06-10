@@ -216,8 +216,6 @@ static int init_vcpu_var(struct vcpu_var *v, int id)
 {
 	memset(v, 0, sizeof(*v));
 	init_emp_list(&v->local_free_page_list);
-	spin_lock_init(&(v)->wb_request_lock);
-	INIT_LIST_HEAD(&(v)->wb_request_list);
 	(v)->id = id;
 	return emp_pf_history_init(v);
 }

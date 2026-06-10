@@ -1526,7 +1526,6 @@ static void flush_gpa(struct emp_vmr *vmr, struct vcpu_var *cpu,
 			struct vcpu_var *v;
 			debug_assert(head->local_page);
 			v = emp_get_vcpu_from_id(emm, head->local_page->cpu);
-			/* TODO: it would be better that vcpu->wb_request_lock is locked during close_gpas  */
 			debug_progress(head->local_page->w, head);
 			emm->sops.clear_writeback_block(emm, head,
 							head->local_page->w,

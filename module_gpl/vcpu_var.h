@@ -95,10 +95,6 @@ struct emp_pf_history {
 struct vcpu_var {
 	struct task_struct      *tsk;
 
-	spinlock_t              wb_request_lock;
-	struct list_head        wb_request_list;
-	int                     wb_request_size;
-
 	/* list of free pages which is maintained locally */
 	struct emp_list         local_free_page_list;
 
@@ -119,7 +115,4 @@ struct vcpu_var {
 #endif
 };
 
-#define VCPU_WB_REQUEST_EMPTY(v) (list_empty(&(v)->wb_request_list))
-#define VCPU_WB_REQUEST_LE_SINGULAR(v) \
-	(*v->wb_request_list.next == *v->wb_request_list.prev)
 #endif /* __VCPU_VAR_H__ */

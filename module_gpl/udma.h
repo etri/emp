@@ -20,8 +20,6 @@ enum dma_type {
 };
 
 struct work_request {
-	// sibling is for a link to wb_request_list
-	struct list_head            sibling;
 	// subsibling constructs a list for the members in a block
 	struct list_head            subsibling;
 	struct emp_gpa       *gpa;
