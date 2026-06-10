@@ -127,23 +127,19 @@ extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
 #define emp_maybe_mkwrite(pte, vma) maybe_mkwrite((pte), (vma))
 #endif
 
-/* After RHEL 9.4 or kernel 6.5.0, we cannot link pte_offset_map(). */
+/* After RHEL 9.4 or kernel 6.5.0, we cannot link pte_offset_map(), and
+ * pte_unmap() does rcu_read_unlock() (the matching rcu_read_lock() lives in the
+ * unlinkable __pte_offset_map()). EMP validates the pmd at the caller and walks
+ * PTEs under the PTE lock, so that RCU is unnecessary: use the bare __pte_map()
+ * with a no-op counterpart. Do NOT call pte_unmap() here -- it would
+ * rcu_read_unlock() with no matching lock. EMP is 64-bit only. */
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9,4)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
-	// RHEL_RELEASE_VERSION >= 9.4 or 6.5 <= KERNEL_VERSION < 6.8
-#define emp_pte_offset_map(pmd, addr) ({ \
-		pmd_t ____pmdval = pmdp_get_lockless(pmd); \
-		pte_t *____ret; \
-		if (unlikely(pmd_none(____pmdval) \
-				|| pmd_trans_huge(____pmdval) \
-				|| pmd_devmap(____pmdval) \
-				|| pmd_bad(____pmdval))) \
-			____ret = NULL; \
-		else \
-			____ret = __pte_map(&____pmdval, addr); \
-		____ret; })
+#define emp_pte_map(pmd, addr) __pte_map((pmd), (addr))
+#define emp_pte_unmap(pte) do { (void)(pte); } while (0)
 #else
-#define emp_pte_offset_map(pmd, addr) ({ pte_offset_map(pmd, addr); })
+#define emp_pte_map(pmd, addr) pte_offset_map((pmd), (addr))
+#define emp_pte_unmap(pte) pte_unmap((pte))
 #endif
 
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \

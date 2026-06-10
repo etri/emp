@@ -541,7 +541,7 @@ __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
-	pte = emp_pte_offset_map(pmd, addr);
+	pte = emp_pte_map(pmd, addr);
 	emp_set_page_mapping_and_index(vma, addr, page, len);
 
 	spin_lock(ptl);
@@ -569,7 +569,7 @@ __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 		update_mmu_cache(vma, addr, _pte);
 		set_pte_at(vma->vm_mm, addr, _pte, pte_entry);
 	}
-	pte_unmap(pte);
+	emp_pte_unmap(pte);
 	spin_unlock(ptl);
 }
 
@@ -624,7 +624,7 @@ __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
-	pte = emp_pte_offset_map(pmd, addr);
+	pte = emp_pte_map(pmd, addr);
 
 	spin_lock(ptl);
 	/* make ptes writable */
@@ -645,7 +645,7 @@ __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 		}
 	}
 
-	pte_unmap(pte);
+	emp_pte_unmap(pte);
 	spin_unlock(ptl);
 }
 

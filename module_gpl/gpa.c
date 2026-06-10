@@ -901,8 +901,8 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 						DEBUG_RSS_SUB_UNMAP_PTES,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 
-		ptep = emp_pte_offset_map(pmd, hva);
-		ptep_base = ptep; // to pte_unmap() later.
+		ptep = emp_pte_map(pmd, hva);
+		ptep_base = ptep; // to emp_pte_unmap() later.
 		pfn = pte_pfn(*ptep);
 
 		pte_clear_count = 0;
@@ -949,7 +949,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			kernel_page_remove_rmap(page, vma, false);
 		}
 
-		pte_unmap(ptep_base);
+		emp_pte_unmap(ptep_base);
 
 		page_ref_sub(sb_page, pte_clear_count);
 		debug_page_ref_mark(vmr->id, gpa->local_page, -pte_clear_count);
@@ -1193,7 +1193,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	debug_BUG_ON(is_gpa_flags_set(gpa, GPA_LOWMEM_BLOCK_MASK));
 #endif
 
-	ptep = emp_pte_offset_map(pmd, hva);
+	ptep = emp_pte_map(pmd, hva);
 	ptep_base = ptep;
 	pfn = pte_pfn(*ptep);
 	page = gpa->local_page->page;
@@ -1212,7 +1212,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 		kernel_page_remove_rmap(page, vma, false);
 	}
 
-	pte_unmap(ptep_base);
+	emp_pte_unmap(ptep_base);
 
 	/* We do not use wrapper __emp_put_pages_map(),
 	 * since __put_local_page_pmd() will sync the page ref for debug */
