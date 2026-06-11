@@ -1372,7 +1372,6 @@ rdma_post_read(struct connection *conn, struct work_request *w,
 	struct context *context = CONN_GET_CONTEXT(conn, criticality);
 
 	atomic_set(&w->wr_refc, 0);
-	INIT_LIST_HEAD(&w->sibling);
 
 	w->sge.lkey = context->mr->lkey;
 	w->sge.addr = lpage->dma_addr;
@@ -1909,7 +1908,6 @@ static void rdma_wr_ctor(void *opaque)
 	init_waitqueue_head(&(w->wq));
 	w->state = STATE_INIT;
 	w->gpa = NULL;
-	INIT_LIST_HEAD(&w->sibling);
 	INIT_LIST_HEAD(&w->subsibling);
 	INIT_LIST_HEAD(&w->remote_pages);
 
