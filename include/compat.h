@@ -116,15 +116,15 @@ extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
  * (for x86 shadow-stack support) without an EXPORT_SYMBOL. Inline our own
  * variant that uses pte_mkwrite_novma() so the module links. EMP does not use
  * shadow stacks, so skipping that path is safe. */
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 5)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+#define emp_maybe_mkwrite(pte, vma) maybe_mkwrite((pte), (vma))
+#else
 #define emp_maybe_mkwrite(pte, vma) ({ \
 		pte_t ____pte = (pte); \
 		if (likely((vma)->vm_flags & VM_WRITE)) \
 			____pte = pte_mkwrite_novma(____pte); \
 		____pte; })
-#else
-#define emp_maybe_mkwrite(pte, vma) maybe_mkwrite((pte), (vma))
 #endif
 
 /* After RHEL 9.4 or kernel 6.5.0, we cannot link pte_offset_map(), and
