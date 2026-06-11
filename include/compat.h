@@ -153,9 +153,9 @@ extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
 
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 6)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0))
-#define emp_get_user_pages(start, nr_pages, gup_flags, pages) get_user_pages(start, nr_pages, gup_flags, NULL)
+#define emp_get_user_pages(start, nr_pages, gup_flags, pages) get_user_pages(start, nr_pages, gup_flags, pages, NULL)
 #else
-#define emp_get_user_pages(start, nr_pages, gup_flags, pages) get_user_pages(start, nr_pages, gup_flags)
+#define emp_get_user_pages(start, nr_pages, gup_flags, pages) get_user_pages(start, nr_pages, gup_flags, pages)
 #endif
 
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 5)) \

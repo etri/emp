@@ -152,7 +152,7 @@ static long fetch_io_blocks(unsigned long io_base)
 	long nr_pages_pinned;
 	struct page *page;
 
-	nr_pages_pinned = get_user_pages(io_base, 1, FOLL_WRITE, &page);
+	nr_pages_pinned = emp_get_user_pages(io_base, 1, FOLL_WRITE, &page);
 	if (nr_pages_pinned) {
 		put_page(page);
 		debug_page_ref_mark_page(-100, page, -1);
