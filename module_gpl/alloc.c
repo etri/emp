@@ -18,11 +18,11 @@
  * Returns true when vcpu-local free page list is empty.
  */
 static bool 
-is_local_free_pages_list_empty(struct emp_mm *bvma, struct vcpu_var *cpu)
+is_local_free_pages_list_empty(struct emp_mm *bvma, int cpu_id)
 {
 	// We check the length (atomic variable) since this can be called
 	// without locking.
-	return emp_list_len(&cpu->local_free_page_list) == 0;
+	return emp_list_len(get_local_free_list(bvma, cpu_id)) == 0;
 }
 
 /**
@@ -55,7 +55,7 @@ void COMPILER_DEBUG push_free_page_list(struct emp_mm *emm, struct page *page,
 {
 	const int subblock_size = bvma_subblock_size(emm);
 	const int free_lpages_len = emm->ftm.per_vcpu_free_lpages_len;
-	struct emp_list *local_list = cpu ? &cpu->local_free_page_list : NULL;
+	struct emp_list *local_list = cpu ? get_local_free_list(emm, cpu->id) : NULL;
 	struct emp_list *global_list;
 	struct temp_list to_global;
 	int cut;
@@ -144,7 +144,7 @@ static struct page * COMPILER_DEBUG
 pop_free_page_list_local(struct emp_mm *bvma, struct vcpu_var *cpu)
 {
 	struct page *p;
-	struct emp_list *local_list = &cpu->local_free_page_list;
+	struct emp_list *local_list = get_local_free_list(bvma, cpu->id);
 
 	/* returns NULL if the free local page is empty */
 	if (emp_list_len(local_list) == 0)
@@ -247,7 +247,7 @@ static struct page *pop_free_page_list_global(struct emp_mm *emm, struct vcpu_va
 	int num_pull;
 
 	// Always try the local list first
-	local_list = &local_cpu->local_free_page_list;
+	local_list = get_local_free_list(emm, local_cpu->id);
 	if (emp_list_len(local_list) > 0) {
 		emp_list_lock(local_list);
 		page = get_next_free_page(local_list);
@@ -277,7 +277,7 @@ static struct page *pop_free_page_list_global(struct emp_mm *emm, struct vcpu_va
 		for_all_vcpus_from(cpu, cpu_id, local_cpu, emm) {
 			if (cpu == local_cpu)
 				continue;
-			remote_list = &cpu->local_free_page_list;
+			remote_list = get_local_free_list(emm, cpu_id);
 			if (emp_list_len(remote_list) == 0)
 				continue;
 			emp_list_lock(remote_list);
@@ -352,7 +352,7 @@ int wait_pages_available(struct emp_mm *bvma, struct vcpu_var *cpu)
 #endif
 	res = wait_event_interruptible_timeout(
 			bvma->ftm.free_pages_wq, //wait queue
-			is_local_free_pages_list_empty(bvma, cpu) || //condition to wakeup
+			is_local_free_pages_list_empty(bvma, cpu->id) || //condition to wakeup
 			emp_list_len(&bvma->ftm.free_page_list) ||
 			(atomic_read(&bvma->ftm.alloc_pages_len) <
 			 LOCAL_CACHE_MAX(bvma)), HZ/10);
@@ -367,7 +367,7 @@ int wait_pages_available(struct emp_mm *bvma, struct vcpu_var *cpu)
 void flush_local_free_pages(struct emp_mm *bvma, struct vcpu_var *cpu)
 {
 	struct emp_list *global_list = &bvma->ftm.free_page_list;
-	struct emp_list *local_list = &cpu->local_free_page_list;
+	struct emp_list *local_list = get_local_free_list(bvma, cpu->id);
 	debug_assert(spin_is_locked(&global_list->lock));
 	emp_list_lock(local_list);
 	emp_list_splice_tail_emp_list(local_list, global_list);

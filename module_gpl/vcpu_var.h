@@ -95,9 +95,6 @@ struct emp_pf_history {
 struct vcpu_var {
 	struct task_struct      *tsk;
 
-	/* list of free pages which is maintained locally */
-	struct emp_list         local_free_page_list;
-
 #ifdef CONFIG_EMP_STAT
 	/* statistics */
 	struct {

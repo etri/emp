@@ -215,7 +215,6 @@ static inline void set_kvm_emp_mm(struct kvm *kvm, void *emp_mm) {
 static int init_vcpu_var(struct vcpu_var *v, int id)
 {
 	memset(v, 0, sizeof(*v));
-	init_emp_list(&v->local_free_page_list);
 	(v)->id = id;
 	return emp_pf_history_init(v);
 }
@@ -243,6 +242,16 @@ static int get_vcpus_var(struct emp_mm *bvma)
 		ret = -ENOMEM;
 		goto get_vcpus_var_fail;
 	}
+
+	/* per-cpu local free-page lists for KVM threads (contiguous array) */
+	bvma->ftm.local_free_bufs = emp_kmalloc(sizeof(struct emp_list) * vcpus_len,
+						GFP_KERNEL);
+	if (!bvma->ftm.local_free_bufs) {
+		ret = -ENOMEM;
+		goto get_vcpus_var_fail;
+	}
+	for (i = 0; i < vcpus_len; i++)
+		init_emp_list(&bvma->ftm.local_free_bufs[i]);
 
 	for (i = 0; i < vcpus_len; i++) {
 		v = &bvma->vcpus[i];
@@ -281,6 +290,10 @@ static void __put_vcpus_var(struct emp_mm *bvma, int cpus_len)
 	}
 	emp_list_unlock(free_page_list);
 
+	if (bvma->ftm.local_free_bufs) {
+		emp_kfree(bvma->ftm.local_free_bufs);
+		bvma->ftm.local_free_bufs = NULL;
+	}
 	emp_kfree(bvma->vcpus);
 	bvma->vcpus = NULL;
 }
@@ -317,6 +330,15 @@ static int get_pcpus_var(struct emp_mm *emm)
 		goto put_pcpus_var_fail;
 	}
 #endif
+
+	/* per-cpu local free-page lists for IO threads (NUMA-local, contiguous spine) */
+	emm->ftm.host_free_bufs = emp_alloc_pcdata(struct emp_list);
+	if (emm->ftm.host_free_bufs == NULL) {
+		ret = -ENOMEM;
+		goto put_pcpus_var_fail;
+	}
+	for_each_possible_cpu(cpu)
+		init_emp_list(emp_pc_ptr(emm->ftm.host_free_bufs, cpu));
 
 	for_each_possible_cpu(cpu) {
 		v = per_cpu_ptr(emm->pcpus, cpu);
@@ -359,6 +381,9 @@ static void __put_pcpus_var(struct emp_mm *emm, int max_cpu_id)
 #endif
 	}
 	emp_list_unlock(free_page_list);
+
+	emp_free_pcdata(emm->ftm.host_free_bufs);
+	emm->ftm.host_free_bufs = NULL;
 
 	if (emm->pcpus) {
 		emp_free_percpu(emm->pcpus);

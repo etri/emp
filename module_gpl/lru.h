@@ -275,6 +275,18 @@ struct slru {
 #define get_list_ptr_inactive(emm, slru, cpu_id) \
 	(emp_pc_ptr((slru)->host_mru, PCPU_ID(emm, cpu_id)))
 #endif /* !CONFIG_EMP_VM */
+/* per-cpu local free-page list, laid out like the slru per-cpu buffers above
+ * but with a single list per cpu (free pages have no MRU/LRU ordering). */
+#ifdef CONFIG_EMP_VM
+#define get_local_free_list(emm, cpu_id) \
+	(IS_IOTHREAD_VCPU(cpu_id) \
+	   ? emp_pc_ptr((emm)->ftm.host_free_bufs, PCPU_ID(emm, cpu_id)) \
+	   : ((emm)->ftm.local_free_bufs + (cpu_id)))
+#else
+#define get_local_free_list(emm, cpu_id) \
+	emp_pc_ptr((emm)->ftm.host_free_bufs, PCPU_ID(emm, cpu_id))
+#endif
+
 #define read_inactive_list_page_len(emm) \
 		atomic_read(&(emm)->ftm.inactive_list.page_len)
 

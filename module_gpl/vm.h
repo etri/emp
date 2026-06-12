@@ -278,6 +278,11 @@ struct emp_ftm {
 
 	/* list of free pages which is maintained globally */
 	struct emp_list     free_page_list;
+	/* list of free pages for each vcpus or pcpus */
+#ifdef CONFIG_EMP_VM
+	struct emp_list    *local_free_bufs;   /* contiguous [vcpu_len] (KVM threads) */
+#endif
+	struct emp_list   **host_free_bufs;    /* emp_alloc_pcdata (physical cpus, NUMA-local) */
 	wait_queue_head_t   free_pages_wq; //wait queue
 	atomic_t            free_pages_reclaim;
 	int                 per_vcpu_free_lpages_len;

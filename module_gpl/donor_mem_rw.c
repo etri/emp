@@ -75,7 +75,7 @@ int emp_wait_for_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 	int reclaimed_pages; /* total */
 	struct emp_stm_ops *ops = &bvma->sops;
 	
-	reclaimed_pages = emp_list_len(&cpu->local_free_page_list) << bvma_subblock_order(bvma);
+	reclaimed_pages = emp_list_len(get_local_free_list(bvma, cpu->id)) << bvma_subblock_order(bvma);
 	if (reclaimed_pages >= pressure)
 		return reclaimed_pages;
 
