@@ -344,6 +344,7 @@ static ssize_t initial_subblock_size_write(struct file *file, const char __user 
 }
 
 EMP_PROC_INITIAL_BOOLEAN(use_compound_page)
+EMP_PROC_INITIAL_BOOLEAN(remote_reuse)
 EMP_PROC_INITIAL_BOOLEAN(critical_subblock_first)
 EMP_PROC_INITIAL_BOOLEAN_READ(critical_page_first)
 static ssize_t initial_critical_page_first_write(struct file *file, const char __user *buf,
@@ -1007,6 +1008,7 @@ EMP_PROC_STAT_VM(blk_prefetch_remote)
 
 static struct emp_proc_entry emp_proc_global[] = {
 	emp_proc_entry_initial_rw(local_cache_size),
+	emp_proc_entry_initial_rw(remote_reuse),
 #ifdef CONFIG_EMP_BLOCK
 	emp_proc_entry_initial_rw(block_size),
 	emp_proc_entry_initial_rw(subblock_size),
