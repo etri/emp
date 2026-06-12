@@ -34,6 +34,7 @@ unsigned int seed;
 unsigned long region_size;
 unsigned long stride; // multiple of sizeof(u64)
 unsigned long num_rand_acc; // number of random access per thread
+unsigned int num_repeat; // number of times to repeat the sequential read sweep
 
 enum mode {
 	MODE_SEQ,
@@ -443,12 +444,16 @@ int integrity_check() {
 	
 	update_seed();
 	if (mode == MODE_SEQ) {
+		int rep;
 		printf("Step1: write values sequentially\n");
 		do_threads(threads, num_thread, sequential_write);
 		debug_num_acc_show(MODE_SEQ);
-		printf("Step2: check the values sequentially\n");
-		do_threads(threads, num_thread, sequential_read);
-		debug_num_acc_show(MODE_SEQ);
+		for (rep = 0; rep < num_repeat; rep++) {
+			printf("Step2 (%d/%d): check the values sequentially\n",
+					rep + 1, num_repeat);
+			do_threads(threads, num_thread, sequential_read);
+			debug_num_acc_show(MODE_SEQ);
+		}
 	} else if (mode == MODE_RAND) {
 		printf("Step1: write values sequentially\n");
 		do_threads(threads, num_thread, sequential_write);
@@ -527,7 +532,7 @@ out:
 }
 
 void usage(char *argv0) {
-	fprintf(stderr, "usage: %s -t [#thread] -s [size(GB)] -m [mode] -n [#random access] -d [distribution] -r [stride size]\n"
+	fprintf(stderr, "usage: %s -t [#thread] -s [size(GB)] -m [mode] -n [#random access] -c [#repeat] -d [distribution] -r [stride size]\n"
 			"       -t number of threads. [default: number of processors]\n"
 			"       -s total memory size in GB. [default: 16]\n"
 			"       -m mode: seq, rand, rand_rw [default: seq]\n"
@@ -537,6 +542,8 @@ void usage(char *argv0) {
 			"                elastic: sequential_write + sequantial_read with varying stide.\n"
 			"       -n number of accesses for each thread. \n"
 			"          only for random_read and random_read_write. [default: 1000000000]\n"
+			"       -c number of times to repeat the sequential read sweep. \n"
+			"          only for seq mode. [default: 1]\n"
 			"       -d define distribution of accesses: size_in_bytes,percent\n"
 			"          this option can be given multiple times.\n"
 			"          e.g. -d 4096,50 => 50%% of accesses are on the first 4KB\n"
@@ -629,12 +636,13 @@ int main(int argc, char **argv) {
 	region_size = 1UL << 30;
 	num_region = 16;
 	num_rand_acc = 1000000000UL;
+	num_repeat = 1;
 	stride = 8;
 	alloc_mode = ALLOC_MALLOC;
 	multi_mode = MULTI_PTHREAD;
 	share_mode = SHARE_SHARED;
 
-	while ((opt = getopt(argc, argv, "t:s:m:n:d:r:a:p:i:")) != -1) {
+	while ((opt = getopt(argc, argv, "t:s:m:n:c:d:r:a:p:i:")) != -1) {
 		switch(opt) {
 		case 't':
 			num_thread = atoi(optarg);
@@ -661,6 +669,11 @@ int main(int argc, char **argv) {
 			break;
 		case 'n':
 			num_rand_acc = strtol(optarg, NULL, 0);
+			break;
+		case 'c':
+			num_repeat = atoi(optarg);
+			if (num_repeat == 0)
+				num_repeat = 1;
 			break;
 		case 'd':
 			if (insert_dist_list(&dist_head, optarg)) {
