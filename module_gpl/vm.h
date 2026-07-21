@@ -723,6 +723,14 @@ emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 #endif
 }
 
+/* Refer to module_gpl/hva.h:emp_set_page_mapping_and_index().
+ * It sets VM_SHARED mappings as a file-backed memory, and
+ * non-shared mappings as a anonymous memory.
+ */
+#define EMP_RSS_MM_COUNTER(vmr) \
+	(((vmr)->host_vma && ((vmr)->host_vma->vm_flags & VM_SHARED)) \
+		? MM_FILEPAGES : MM_ANONPAGES)
+
 static inline void
 __emp_update_rss_add(struct emp_vmr *vmr, unsigned long val)
 {
@@ -738,20 +746,20 @@ __emp_update_rss_sub(struct emp_vmr *vmr, unsigned long val)
 static inline void
 __emp_update_rss_add_force(struct emp_vmr *vmr, unsigned long val)
 {
-	emp_add_mm_counter(vmr->host_mm, MM_FILEPAGES, val);
+	emp_add_mm_counter(vmr->host_mm, EMP_RSS_MM_COUNTER(vmr), val);
 }
 
 static inline void
 __emp_update_rss_sub_force(struct emp_vmr *vmr, unsigned long val)
 {
-	emp_add_mm_counter(vmr->host_mm, MM_FILEPAGES, -val);
+	emp_add_mm_counter(vmr->host_mm, EMP_RSS_MM_COUNTER(vmr), -val);
 }
 
 static inline void emp_update_rss_cached(struct emp_vmr *vmr)
 {
 	long val = atomic_long_xchg(&vmr->rss_cache, 0);
 	if (likely(val != 0))
-		emp_add_mm_counter(vmr->host_mm, MM_FILEPAGES, val);
+		emp_add_mm_counter(vmr->host_mm, EMP_RSS_MM_COUNTER(vmr), val);
 }
 
 static inline unsigned int emp_smp_processor_id(void)

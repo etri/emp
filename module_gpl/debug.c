@@ -241,7 +241,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 			rss_add_total, rss_sub_total,
 			rss_add_kernel_total, rss_sub_kernel_total,
 			rss_add_total + rss_add_kernel_total - rss_sub_total - rss_sub_kernel_total,
-			get_mm_counter(vmr->host_mm, MM_FILEPAGES));
+			get_mm_counter(vmr->host_mm, EMP_RSS_MM_COUNTER(vmr)));
 	for (i = 0; i < NUM_DEBUG_RSS_ADD_ID; i++)
 		dprintk("DEBUG_RSS: (%s) vmr: %d pid: %d mm: %p rss_add[%02d]: %8ld (%s)\n",
 				func,
