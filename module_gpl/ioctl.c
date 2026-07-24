@@ -5,6 +5,7 @@
 #include "iov.h"
 #include "donor_mgmt.h"
 #include "emp_madvise.h"
+#include "reclaim.h"
 #include "ioctl.h"
 
 /**

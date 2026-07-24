@@ -1161,7 +1161,7 @@ static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr 
 #ifdef CONFIG_EMP_EXT
 		emp_ops.update_lru_lists(emm, cpu, &back_gpa, 1, gpa_block_size(back_gpa));
 #else
-		update_lru_lists(emm, cpu, &back_gpa, 1, gap_block_size(back_gpa));
+		update_lru_lists(emm, cpu, &back_gpa, 1, gpa_block_size(back_gpa));
 #endif
 		break;
 	case GPA_INACTIVE:
