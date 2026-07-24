@@ -16,9 +16,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
-#define TEST_MAP_SHARED
-
-#define MEMSIZE (8ULL << 30)
+#define MEMSIZE (64ULL << 30)
 
 #define ITER_UNIT (4*1024/sizeof(unsigned long long))
 #define REPEAT 10
@@ -136,10 +134,10 @@ void check_data(unsigned long long *mem, char *label, int re, int subre,
 		if (mem[curr] == pred_value) {
 			(*checked)++;
 		} else {
-			fprintf(stderr, "[%s-%04d-%d]MEMORY_ERROR at %llx (@%lldMB) addr: 0x%p value: %lld expected: %ld base: %ld gen: %d\n",
+			fprintf(stderr, "[%s-%04d-%d]MEMORY_ERROR at %llx (@%lldMB) (0x%p %llx)\n",
 					label, re, subre, curr,
 					(curr * sizeof(unsigned long long)) >> 20,
-					&mem[curr], mem[curr], pred_value, base, gen);
+					&mem[curr], mem[curr]);
 			fprintf(stderr, "continue");
 			scanf("%c", &dummy);
 		}
@@ -178,22 +176,12 @@ unsigned long long *mem_alloc(char *label, unsigned long long size)
 	unsigned long long *mem;
 
 	if (mem_alloc_type == MEM_ALLOC_MALLOC)
-#ifdef TEST_MAP_SHARED
-	{
-		fprintf(stderr, "ERROR: malloc() cannot test MAP_SHARED");
-		return 0;
-	}
-#else
 		return malloc(size);
-#endif
 
 	mem = (unsigned long long *)mmap(NULL, size,
 			PROT_READ|PROT_WRITE,
-#ifdef TEST_MAP_SHARED
+			/*MAP_ANONYMOUS|MAP_PRIVATE,*/
 			MAP_ANONYMOUS|MAP_SHARED,
-#else
-			MAP_ANONYMOUS|MAP_PRIVATE,
-#endif
 			-1, 0);
 	if (mem == MAP_FAILED) {
 		fprintf(stderr, "exit: %s\n", strerror(errno));
@@ -316,11 +304,8 @@ int main(int argc, char **argv)
 	/*fill_data(mem, end_idx, label, 0, 0ul);*/
 	total = 0;
 	checked = 0;
-#ifdef TEST_MAP_SHARED
+	/*check_data(mem, label, 0, 0, &checked, &total, 0, end_idx, 0, 0ul, SHOW_UNIT);*/
 	check_data(mem, label, 0, 0, &checked, &total, 0, end_idx, 0, 100ul, SHOW_UNIT);
-#else
-	check_data(mem, label, 0, 0, &checked, &total, 0, end_idx, 0, 0ul, SHOW_UNIT);
-#endif
 
 	fprintf(stderr, "this is a parent process pid:%d\n", getpid());
 
