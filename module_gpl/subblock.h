@@ -26,20 +26,9 @@ static inline unsigned int offset_in_subblock(struct emp_gpa *sbh, unsigned long
  */
 static inline void __emp_get_subblock(struct emp_gpa *g)
 {
-	struct page *p, *e;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	if (PageCompound(p)) {
-		p = compound_head(p);
-		page_ref_add(p, 1);
-		return;
-	} else {
-		e = p + gpa_subblock_size(g);
-	}
-
-	for (; p < e; p++)
-		get_page(p);
+	debug_check_head(g->local_page->page);
+	get_page(g->local_page->page);
 }
 
 #define emp_get_subblock(g) do { \
@@ -59,14 +48,9 @@ static inline void __emp_get_subblock(struct emp_gpa *g)
  */
 static inline void __emp_put_subblock(struct emp_gpa *g)
 {
-	struct page *p, *e;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	e = p + (PageCompound(p)? 1: gpa_subblock_size(g));
-
-	for (; p < e; p++)
-		put_page(p);
+	debug_check_head(g->local_page->page);
+	put_page(g->local_page->page);
 }
 
 #define emp_put_subblock(g) do { \
@@ -80,14 +64,9 @@ static inline void __emp_put_subblock(struct emp_gpa *g)
  */
 static inline void emp_lock_subblock(struct emp_gpa *g)
 {
-	struct page *p, *e;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	e = p + (PageCompound(p)? 1: gpa_subblock_size(g));
-
-	for (; p < e; p++)
-		lock_page(p);
+	debug_check_head(g->local_page->page);
+	lock_page(g->local_page->page);
 }
 
 /**
@@ -96,60 +75,10 @@ static inline void emp_lock_subblock(struct emp_gpa *g)
  */
 static inline void emp_unlock_subblock(struct emp_gpa *g)
 {
-	struct page *p, *e;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	e = p + (PageCompound(p)? 1: gpa_subblock_size(g));
-
-	for (; p < e; p++)
-		unlock_page(p);
+	debug_check_head(g->local_page->page);
+	unlock_page(g->local_page->page);
 }
-
-/**
- * emp_put_subblock_except - Decrease reference count of the pages in a sub-block
- * 			     except a specific page
- * @param g head of the sub-block
- * @param except_idx except page index (-1: No exception)
- *
- * TODO: Can be merged with emp_put_subblock
- */
-static inline void __emp_put_subblock_except(struct emp_gpa *g, int except_idx)
-{
-	struct page *p, *e, *except = NULL;
-
-	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	if (PageCompound(p)) {
-		/* EPT: do not put when PageHead(p + except_idx)
-		 * HPT: do not put */
-		if (PageHead(p + except_idx))
-			return;
-		p = compound_head(p);
-		put_page(p);
-		return;
-	} else {
-		e = p + gpa_subblock_size(g);
-	}
-
-	if (except_idx == -1)
-		return;
-
-	except = p + except_idx;
-	for (; p < e; p++) {
-		if (p == except)
-			continue;
-		put_page(p);
-	}
-}
-
-#define emp_put_subblock_except(g, except_idx) do { \
-	__emp_put_subblock_except(g, except_idx); \
-	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page,  \
-		((PageCompound((g)->local_page->page) && PageHead((g)->local_page->page + (except_idx))) \
-		|| (!PageCompound((g)->local_page->page)  && ((except_idx) == -1 || (except_idx) == 0))) \
-		 ? 0 : - 1); \
-} while (0)
 
 #else /* !CONFIG_EMP_BLOCK */
 /**
@@ -158,17 +87,8 @@ static inline void __emp_put_subblock_except(struct emp_gpa *g, int except_idx)
  */
 static inline void __emp_get_subblock(struct emp_gpa *g)
 {
-	struct page *p;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	if (PageCompound(p)) {
-		p = compound_head(p);
-		page_ref_add(p, 1);
-	} else {
-		get_page(p);
-	}
-
+	get_page(g->local_page->page);
 }
 
 #define emp_get_subblock(g, compound) do { \
@@ -189,11 +109,8 @@ static inline void __emp_get_subblock(struct emp_gpa *g)
  */
 static inline void __emp_put_subblock(struct emp_gpa *g)
 {
-	struct page *p;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	put_page(p);
+	put_page(g->local_page->page);
 }
 
 #define emp_put_subblock(g) do { \
@@ -207,11 +124,8 @@ static inline void __emp_put_subblock(struct emp_gpa *g)
  */
 static inline void emp_lock_subblock(struct emp_gpa *g)
 {
-	struct page *p;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	lock_page(p);
+	lock_page(g->local_page->page);
 }
 
 /**
@@ -220,21 +134,8 @@ static inline void emp_lock_subblock(struct emp_gpa *g)
  */
 static inline void emp_unlock_subblock(struct emp_gpa *g)
 {
-	struct page *p;
-
 	debug_check_null_pointer(g->local_page);
-	p = g->local_page->page;
-	unlock_page(p);
-}
-
-static inline void emp_get_subblock_except(struct emp_gpa *g, bool compound, int except_idx)
-{
-	/* except_idx is always -1. nothing to do. */
-}
-
-static inline void emp_put_subblock_except(struct emp_gpa *g, int except_idx)
-{
-	/* nothing to do */
+	unlock_page(g->local_page->page);
 }
 #endif /* !CONFIG_EMP_BLOCK */
 

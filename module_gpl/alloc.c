@@ -26,25 +26,6 @@ is_local_free_pages_list_empty(struct emp_mm *bvma, int cpu_id)
 }
 
 /**
- * clear_page_state - Clear the state of a page
- * @param bvma bvma data structure
- * @param page page to clear state
- */
-void clear_page_state(struct emp_mm *bvma, struct page *page)
-{
-#ifdef CONFIG_EMP_BLOCK
-	if (bvma->config.use_compound_page == false) {
-		page->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP);
-		return;
-	}
-
-	page->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP & ~PG_head_mask);
-#else
-	page->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP);
-#endif
-}
-
-/**
  * push_free_page_list - Push a free page into free page list
  * @param bvma bvma data structure
  * @param page page
@@ -65,10 +46,9 @@ void COMPILER_DEBUG push_free_page_list(struct emp_mm *emm, struct page *page,
 	if (atomic_read(&emm->ftm.free_pages_reclaim) >= subblock_size) {
 		if (atomic_sub_return(subblock_size,
 				&emm->ftm.free_pages_reclaim) >= 0) {
-			int subblock_order = bvma_subblock_order(emm);
-			_emp_unlock_page(page, subblock_order);
-			emp_clear_page_mapping_and_index(page, subblock_order);
-			emp_free_pages(page, subblock_order);
+			_emp_unlock_page(page);
+			emp_clear_page_mapping_and_index(page);
+			emp_free_pages(page);
 
 			atomic_sub(subblock_size, &emm->ftm.alloc_pages_len);
 			return;
@@ -161,12 +141,12 @@ pop_free_page_list_local(struct emp_mm *bvma, struct vcpu_var *cpu)
 }
 
 /**
- * __alloc_page - Allocate pages with the given order
+ * __alloc_subblock - Allocate a subblock from host
  * @param emm emp_mm data structure
  *
- * @return allocated page
+ * @return allocated subblock
  */
-static struct page *__alloc_page(struct emp_mm *emm)
+static struct page *__alloc_subblock(struct emp_mm *emm)
 {
 	gfp_t gfp;
 	struct page *page;
@@ -175,12 +155,8 @@ static struct page *__alloc_page(struct emp_mm *emm)
 	/* setup get free page flags */
 	gfp = GFP_HIGHUSER_MOVABLE; //allocated pages will be used by user
 #ifdef CONFIG_EMP_BLOCK
-	if (emm->config.use_compound_page) 
+	if (page_order)
 		gfp |= __GFP_COMP;
-	else
-		gfp &= ~__GFP_COMP; //compound page must not be used here
-#else
-	gfp &= ~__GFP_COMP; //compound page must not be used here
 #endif
 
 	/* allocate pages with the given order */
@@ -195,29 +171,11 @@ static struct page *__alloc_page(struct emp_mm *emm)
 	if (!page || PageHWPoison(page)) {
 		printk("failed to allocated memory\n");
 		if (page)
-			emp_free_pages(page, page_order);
+			emp_free_pages(page);
 		return NULL;
 	}
 
-	/* Clear page states and increase reference counts.
-	 *
-	 * When pages are allocated, the first page is the only page with
-	 * the increased reference count value. 
-	 *
-	 * This loop increases the reference counts of following pages.
-	 * We have to increase reference counts of following pages because
-	 * kernel will try to release the pages with reference count zero. */
-	clear_page_state(emm, page);
-#ifdef CONFIG_EMP_BLOCK
-	/* without CONFIG_EMP_BLOCK, page_order is always 0 */
-	if (page_order && emm->config.use_compound_page == false) {
-		int i;
-		for (i = 1; i < (1 << page_order); i++) {
-			page_ref_inc(page + i);
-			clear_page_state(emm, page + i);
-		}
-	}
-#endif
+	clear_page_state(page);
 
 	/* Acquire locks for all page descriptors in allocated pages.
 	 * The locks will be released when the pages are popped from free list.
@@ -225,13 +183,15 @@ static struct page *__alloc_page(struct emp_mm *emm)
 	 * <Purpose>
 	 *  (1) To check whether it is in free page list or not.
 	 *  (2) To detect code blocks which access the page in free page list. */
-	_emp_lock_page(page, page_order);
+	_emp_lock_page(page);
 
 	/* update the length of allocated pages */
 	atomic_add(1 << page_order, &emm->ftm.alloc_pages_len);
 
 	return page;
 }
+
+
 
 /**
  * pop_free_page_list_global - Returns a free page from global free page list of emm
@@ -331,7 +291,7 @@ static struct page *__alloc_page_from_host(struct emp_mm *emm)
 	if (check_alloc_pages_available(emm) == false)
 		return NULL;
 
-	return __alloc_page(emm);
+	return __alloc_subblock(emm);
 }
 
 /**
@@ -381,7 +341,6 @@ void flush_local_free_pages(struct emp_mm *bvma, struct vcpu_var *cpu)
 void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 {
 	struct page *page;
-	int subblock_order = bvma_subblock_order(emm);
 	int subblock_size = bvma_subblock_size(emm);
 	struct list_head *cur, *n;
 	struct emp_list *free_page_list = &emm->ftm.free_page_list;
@@ -390,54 +349,6 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 	might_sleep();
 
 	emp_list_lock(free_page_list);
-#ifdef CONFIG_EMP_BLOCK
-	if (subblock_order && emm->config.use_compound_page == false) {
-		int i;
-		int remained;
-		emp_list_for_each_safe(cur, n, free_page_list) {
-			/* To prevent CPU stuck, breathe every 4GB */
-			num_subblock++;
-			if ((num_subblock & 0x3ff) == 0)
-				cond_resched();
-
-			page = get_free_page_from_list(cur);
-			emp_list_del_init(cur, free_page_list);
-			_emp_unlock_page(page, subblock_order);
-#ifdef CONFIG_EMP_BLOCK
-			remained = 0;
-			/* without CONFIG_EMP_BLOCK, subblock_order is always 0. */
-			for (i = 1; i < subblock_size; i++) {
-				page_ref_dec(page + i);
-				remained += page_ref_count(page + i);
-				INIT_LIST_HEAD(&(page + i)->lru);
-			}
-
-			page_ref_add(page, remained);
-			debug_page_ref_mark_page(-100, page, remained);
-#endif
-
-			if (PageUnevictable(page))
-				ClearPageUnevictable(page);
-			emp_clear_page_mapping_and_index(page, subblock_order);
-			emp_free_pages(page, subblock_order);
-		}
-	} else {
-		emp_list_for_each_safe(cur, n, free_page_list) {
-			/* To prevent CPU stuck, breathe every 4GB */
-			num_subblock++;
-			if ((num_subblock & 0x3ff) == 0)
-				cond_resched();
-
-			page = get_free_page_from_list(cur);
-			emp_list_del_init(cur, free_page_list);
-			_emp_unlock_page(page, subblock_order);
-			if (PageUnevictable(page))
-				ClearPageUnevictable(page);
-			emp_clear_page_mapping_and_index(page, subblock_order);
-			emp_free_pages(page, subblock_order);
-		}
-	}
-#else /* !CONFIG_EMP_BLOCK */
 	emp_list_for_each_safe(cur, n, free_page_list) {
 		/* To prevent CPU stuck, breathe every 4GB */
 		num_subblock++;
@@ -446,13 +357,12 @@ void COMPILER_DEBUG alloc_exit(struct emp_mm *emm)
 
 		page = get_free_page_from_list(cur);
 		emp_list_del_init(cur, free_page_list);
-		_emp_unlock_page(page, subblock_order);
+		_emp_unlock_page(page);
 		if (PageUnevictable(page))
 			ClearPageUnevictable(page);
-		emp_clear_page_mapping_and_index(page, subblock_order);
-		emp_free_pages(page, subblock_order);
+		emp_clear_page_mapping_and_index(page);
+		emp_free_pages(page);
 	}
-#endif /* !CONFIG_EMP_BLOCK */
 	debug_assert(emp_list_empty(free_page_list));
 	atomic_sub(num_subblock * subblock_size, &emm->ftm.alloc_pages_len);
 	emp_list_unlock(free_page_list);
@@ -518,7 +428,7 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 
 	/* (1) try to get a free page from thread-local free page list */
 	page = pop_free_page_list_local(bvma, cpu);
-	if (page) _emp_unlock_page(page, page_order);
+	if (page) _emp_unlock_page(page);
 	
 	while (!page) {
 #ifdef CONFIG_EMP_DEBUG
@@ -527,13 +437,13 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 		/* allocate free pages in free page list
 		 * if its length is below predefined threshold. */
 		if ((page = __alloc_page_from_host(bvma))) {
-			_emp_unlock_page(page, page_order);
+			_emp_unlock_page(page);
 			break;
 		}
 
 		/* (2) get a free page from global free page list */
 		if ((page = pop_free_page_list_global(bvma, cpu))) {
-			_emp_unlock_page(page, page_order);
+			_emp_unlock_page(page);
 			break;
 		}
 

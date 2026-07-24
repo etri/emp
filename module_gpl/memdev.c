@@ -386,7 +386,6 @@ static int destroy_conn(struct emp_mm *emm, struct connection *conn)
 	struct memreg *mr = (struct memreg *)conn->memreg;
 	struct context *context = conn->contexts[0];
 	unsigned long i;
-	unsigned int sb_order = bvma_subblock_order(emm);
 	struct page *page;
 
 
@@ -405,7 +404,7 @@ static int destroy_conn(struct emp_mm *emm, struct connection *conn)
 			page = context->memdev_map[i];
 			if (page == NULL)
 				continue;
-			emp_free_pages(page, sb_order);
+			emp_free_pages(page);
 			context->memdev_map[i] = NULL;
 #ifdef CONFIG_EMP_DEBUG
 			allocated++;

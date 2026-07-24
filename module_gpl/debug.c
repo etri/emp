@@ -1429,10 +1429,6 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 }
 EXPORT_SYMBOL(debug_emp_unlock_block);
 
-void debug_check_head(struct page *page) {
-	BUG_ON(PageCompound(page) && !PageHead(page));
-}
-
 static int __debug_page_count_eq(struct emp_mm *emm, struct emp_gpa *gpa,
 						int expected, const char *func)
 {
@@ -1480,36 +1476,14 @@ static int __debug_page_count_lt(struct emp_mm *emm, struct emp_gpa *gpa,
 	struct page *p;
 	BUG_ON(!gpa->local_page);
 	p = gpa->local_page->page;
-	if (PageCompound(p)) {
-		if (page_count(p) < expected) {
-			printk(KERN_ERR "WARN: %s page count is not matched. "
-					"page_count(%016lx): %d < %d\n",
-					func, (unsigned long)(p),
-					page_count(p), expected);
-			debug_page_ref_check(gpa);
-			return -1;
-		}
-	} else {
-		int i;
-		int page_len;
-		struct local_page *lp = gpa->local_page;
-		if (lp->vmr_id >= 0 && lp->vmr_id < EMP_VMRS_MAX
-				&& emm->vmrs[lp->vmr_id] != NULL) {
-			struct emp_vmr *vmr = emm->vmrs[lp->vmr_id];
-			page_len = __local_gpa_to_page_len(vmr, gpa);
-		} else {
-			page_len = gpa_subblock_size(gpa);
-		}
-		for (i = 0; i < page_len; i++) {
-			if (page_count(p + i) < expected) {
-				printk(KERN_ERR "WARN: %s page count is not matched. "
-						"page_count(%016lx): %d < %d\n",
-						__func__, (unsigned long)(p + i),
-						page_count(p + i), expected);
-				debug_page_ref_check(gpa);
-				return -1;
-			}
-		}
+	debug_check_head(p);
+	if (page_count(p) < expected) {
+		printk(KERN_ERR "WARN: %s page count is not matched. "
+				"page_count(%016lx): %d < %d\n",
+				func, (unsigned long)(p),
+				page_count(p), expected);
+		debug_page_ref_check(gpa);
+		return -1;
 	}
 	return 0;
 }
@@ -1741,7 +1715,7 @@ void COMPILER_DEBUG debug_set_gpa_remote(struct emp_mm *bvma, struct emp_gpa *g)
 
 	page = g->local_page->page;
 
-	BUG_ON(emp_page_count_max(page, gpa_subblock_size(g)) != 1);
+	BUG_ON(emp_page_count(page) != 1);
 }
 
 void debug_clear_and_map_pages(struct emp_mm *emm, struct emp_gpa *head)
@@ -1772,9 +1746,9 @@ void debug___emp_page_fault_hva2(struct emp_mm *emm, struct emp_gpa *head)
 	}
 }
 
-void debug_pte_install(struct page *page, int page_compound_len)
+void debug_pte_install(struct page *page)
 {
-	if (emp_page_count_min(page, page_compound_len) >= 1)
+	if (emp_page_count(page) >= 1)
 		return;
 	printk("%s[%d] page count should be positive\n", __func__, __LINE__);
 }
@@ -2080,10 +2054,12 @@ void debug_push_free_page_list(struct page *page) {
 }
 
 void debug_pop_free_page_list_local(struct page *page) {
-	int cnt = page ? page_count(page) : INT_MIN;
-	WARN(cnt != 1,
-		"reference count of page is not 1 at pop_local_free_page(). page_count: %d\n",
-		cnt);
+	if (page) {
+		int c = page_count(page);
+		WARN(c != 1,
+			"reference count of page is not 1 at pop_local_free_page(). page_count: %d\n",
+			c);
+	}
 }
 
 void debug_alloc_exit(struct emp_mm *emm) {

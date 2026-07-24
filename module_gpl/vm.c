@@ -39,7 +39,6 @@ size_t  initial_local_cache_pages; // counts in 4kb
 #ifdef CONFIG_EMP_BLOCK
 int     initial_block_order;
 int     initial_subblock_order;
-int     initial_use_compound_page;
 int     initial_critical_subblock_first;
 int     initial_critical_page_first;
 int     initial_mark_empty_page;
@@ -999,7 +998,7 @@ static void split_update_pte(struct vm_area_struct *vma, struct page *page,
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
 	pte = emp_pte_map(pmd, addr);
-	emp_set_page_mapping_and_index(vma, addr, page, len);
+	emp_set_page_mapping_and_index(vma, addr, page);
 
 	spin_lock(ptl);
 	/* change the pages */
@@ -2266,8 +2265,6 @@ static struct emp_mm *create_emm(void)
 	bvma->config.subblock_order = initial_subblock_order;
 	bvma->config.block_order = max(initial_block_order,
 			initial_subblock_order);
-	bvma->config.use_compound_page = bvma->config.subblock_order?
-					initial_use_compound_page: false;
 	bvma->config.critical_subblock_first = initial_critical_subblock_first;
 	bvma->config.critical_page_first = initial_critical_page_first;
 	bvma->config.enable_transition_csf = initial_enable_transition_csf;
@@ -2643,7 +2640,6 @@ static int __init emp_init(void)
 #ifdef CONFIG_EMP_BLOCK
 	initial_block_order = BLOCK_MAX_ORDER;
 	initial_subblock_order = 0;
-	initial_use_compound_page = true;
 	initial_critical_subblock_first = true;
 	initial_critical_page_first = false;
 	initial_mark_empty_page = false;

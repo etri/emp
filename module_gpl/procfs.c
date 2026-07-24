@@ -343,7 +343,6 @@ static ssize_t initial_subblock_size_write(struct file *file, const char __user 
 	return count;
 }
 
-EMP_PROC_INITIAL_BOOLEAN(use_compound_page)
 EMP_PROC_INITIAL_BOOLEAN(remote_reuse)
 EMP_PROC_INITIAL_BOOLEAN(critical_subblock_first)
 EMP_PROC_INITIAL_BOOLEAN_READ(critical_page_first)
@@ -553,7 +552,6 @@ static ssize_t enable_transition_csf_write(struct file *file, const char __user 
 
 EMP_PROC_VM_CONFIG_BOOLEAN(mark_empty_page);
 EMP_PROC_VM_CONFIG_BOOLEAN(mem_poll);
-EMP_PROC_VM_CONFIG_BOOLEAN_READ(use_compound_page);
 #endif
 #ifdef CONFIG_EMP_OPT
 EMP_PROC_VM_CONFIG_BOOLEAN(next_pt_premapping)
@@ -1012,7 +1010,6 @@ static struct emp_proc_entry emp_proc_global[] = {
 #ifdef CONFIG_EMP_BLOCK
 	emp_proc_entry_initial_rw(block_size),
 	emp_proc_entry_initial_rw(subblock_size),
-	emp_proc_entry_initial_rw(use_compound_page),
 	emp_proc_entry_initial_rw(critical_subblock_first),
 	emp_proc_entry_initial_rw(critical_page_first),
 	emp_proc_entry_initial_rw(enable_transition_csf),
@@ -1041,7 +1038,6 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_rw(enable_transition_csf),
 	emp_proc_entry_rw(mark_empty_page),
 	emp_proc_entry_rw(mem_poll),
-	emp_proc_entry_ro(use_compound_page),
 #endif
 #ifdef CONFIG_EMP_OPT
 	emp_proc_entry_rw(next_pt_premapping),

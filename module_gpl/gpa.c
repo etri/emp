@@ -671,25 +671,22 @@ static inline bool is_head_page(struct page *page, int page_order) {
 // free_gpa must be called in reverse order
 static void free_gpa(struct emp_mm *bvma, struct emp_gpa *gpa, struct vcpu_var *cpu)
 {
-	int gpa_order;
 	struct page *gpa_page;
 
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 	if (gpa->local_page)
 		debug_page_ref_mark(-100, gpa->local_page, 0);
 #endif
-	gpa_order = gpa_subblock_order(gpa);
 	gpa_page = cleanup_gpa(bvma, gpa);
 	if (gpa_page) {
-		int i;
-		for (i = 0; i < gpa_subblock_size(gpa); i++)
-			clear_page_state(bvma, gpa_page + i);
-		_emp_lock_page(gpa_page, gpa_order);
+		clear_page_state(gpa_page);
+		_emp_lock_page(gpa_page);
 	}
 
-	if (!gpa_page || !is_head_page(gpa_page, bvma_subblock_order(bvma)))
+	if (!gpa_page)
 		return;
 
+	debug_check_head(gpa_page);
 	push_free_page_list(bvma, gpa_page, cpu);
 }
 
@@ -1772,7 +1769,7 @@ cleanup_gpa(struct emp_mm *bvma, struct emp_gpa *gpa)
 		gpa_page = local_page->page;
 		bvma->lops.free_local_page(bvma, local_page);
 		gpa_page->private = 0;
-		emp_clear_pg_mlocked(gpa_page, gpa_subblock_order(gpa));
+		emp_clear_pg_mlocked(gpa_page);
 	} else {
 		gpa_page = NULL;
 	}

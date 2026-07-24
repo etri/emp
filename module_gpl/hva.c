@@ -174,8 +174,8 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 	struct page *_page;
 	int i;
 
-	debug_pte_install(page, page_len);
-	emp_set_page_mapping_and_index(vma, haddr, page, page_len);
+	debug_pte_install(page);
+	emp_set_page_mapping_and_index(vma, haddr, page);
 
 	pte = emp_pte_map(pmd, haddr);
 	// now, empty pte is guaranteed
@@ -231,7 +231,7 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 	emp_pte_unmap(pte);
 
 	if (is_write)
-		emp_set_page_dirty(page, page_len);
+		emp_set_page_dirty(page);
 
 	return VM_FAULT_NOPAGE;
 }

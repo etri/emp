@@ -175,8 +175,13 @@ void emp_debug_alloc_exit(void);
 #define emp_alloc_pages_node(nid, gfp, page_order) __emp_alloc(alloc_pages_node, PAGE_SIZE << (page_order), nid, gfp, page_order)
 #define emp_alloc_pages(gfp, page_order) __emp_alloc(alloc_pages, PAGE_SIZE << (page_order), gfp, page_order)
 #define emp_alloc_page(gfp) emp_alloc_pages(gfp, 0)
-#define emp_free_pages(page, page_order) __emp_free(__free_pages, page, page, page_order)
-#define emp_free_page(page) emp_free_pages(page, 0)
+#define emp_free_pages(page) do { \
+	debug_BUG_ON(PageCompound(page) && !PageHead(page));\
+	debug_BUG_ON(page_ref_count(page) != 1); \
+	emp_put_page(page); \
+} while (0)
+#define emp_free_page(page) emp_free_pages(page)
+#define emp_put_page(page) __emp_free(put_page, page, page)
 
 #define emp_kmem_cache_create(name, size, align, flags, ctor) __emp_cache_create(name, size, align, flags, ctor)
 #define emp_kmem_cache_destroy(cachep) __emp_cache_destroy(cachep)
@@ -214,9 +219,9 @@ static inline void debug_generate_tag(struct emp_gpa *gpa) {}
 #define debug_check_notequal(a, b) do {	BUG_ON(a != b); } while(0)
 #define debug_check_lessthan(a, b) do {	BUG_ON(a < b); } while(0)
 #define debug_check_notlocked(g) do { BUG_ON(!____emp_gpa_is_locked(g)); } while(0)
+#define debug_check_head(page) do { BUG_ON(PageCompound(page) && !PageHead(page)); } while(0)
 
 void debug_emp_unlock_block(struct emp_gpa *head);
-void debug_check_head(struct page *page);
 void debug__handle_gpa_on_inactive_fault(struct emp_mm *emm, struct emp_gpa *);
 void debug_fetch_block(struct emp_mm *emm, struct emp_gpa *g, int fip);
 void debug_map_spte(struct page *p);
@@ -240,7 +245,7 @@ void debug_set_gpa_remote(struct emp_mm *, struct emp_gpa *);
 void debug_clear_and_map_pages(struct emp_mm *emm, struct emp_gpa *);
 void debug___emp_page_fault_hva(struct emp_gpa *head);
 void debug___emp_page_fault_hva2(struct emp_mm *, struct emp_gpa *);
-void debug_pte_install(struct page *, int);
+void debug_pte_install(struct page *);
 void debug_select_victims_al(struct list_head *, int);
 void debug_evict_block(struct emp_mm *, struct emp_gpa *);
 void debug_update_inactive_list(struct emp_gpa *head, struct emp_gpa *g);
@@ -269,8 +274,8 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_check_notequal(a, b) do{}while(0)
 #define debug_check_lessthan(a, b) do{}while(0)
 #define debug_check_notlocked(g) do{}while(0)
-#define debug_emp_unlock_block(head) do{}while(0)
 #define debug_check_head(page) do{}while(0)
+#define debug_emp_unlock_block(head) do{}while(0)
 #define debug__handle_gpa_on_inactive_fault(emm, g) do{}while(0)
 #define debug_fetch_block(emm, g, fip) do{}while(0)
 #define debug_map_spte(p) do{}while(0)
@@ -293,7 +298,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_clear_and_map_pages(emm, head) do{}while(0)
 #define debug___emp_page_fault_hva(head) do{}while(0)
 #define debug___emp_page_fault_hva2(emm, head) do{}while(0)
-#define debug_pte_install(p, pl) do{}while(0)
+#define debug_pte_install(p) do{}while(0)
 #define debug_select_victims_al(h, l) do{}while(0)
 #define debug_evict_block(emm, head) do{}while(0)
 #define debug_update_inactive_list(head, g) do{}while(0)

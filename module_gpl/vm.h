@@ -84,7 +84,6 @@ extern size_t initial_local_cache_pages; // counts in 4kb
 #ifdef CONFIG_EMP_BLOCK
 extern int    initial_block_order;
 extern int    initial_subblock_order;
-extern int    initial_use_compound_page;
 extern int    initial_critical_subblock_first;
 extern int    initial_critical_page_first;
 extern int    initial_mark_empty_page;
@@ -108,7 +107,6 @@ struct emp_config {
 	int     enable_transition_csf;
 	int     mark_empty_page;
 	int     mem_poll;
-	int     use_compound_page;
 #endif
 #ifdef CONFIG_EMP_STAT
 	int     reset_after_read; /* reset statistics after reading them */

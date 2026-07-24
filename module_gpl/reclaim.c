@@ -309,9 +309,8 @@ gpa_acquire(struct emp_vmr *vmr, struct vcpu_var *cpu, struct emp_gpa *head)
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
 
-		count_page = emp_page_count_max(p, page_size);
-		count_max = count_def + (PageCompound(p) ? page_size : 1)
-					* emp_lp_count_pmd(g->local_page);
+		count_page = emp_page_count(p);
+		count_max = count_def + page_size * emp_lp_count_pmd(g->local_page);
 
 		// prefetched subblock in CSF has been handled its I/O
 		if (g == pf_sb)
@@ -526,12 +525,11 @@ static bool check_block_free(struct emp_mm *bvma, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
 	struct page *p;
-	int subblock_size = gpa_subblock_size(head);
 	bool not_free = false;
 
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
-		if (emp_page_count_max(p, subblock_size) != 1) {
+		if (emp_page_count(p) != 1) {
 			not_free = true;
 			break;
 		}

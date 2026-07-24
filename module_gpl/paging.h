@@ -18,6 +18,7 @@
 
 #define set_pg_mlocked(p) { SetPageMlocked(p); }
 #define clear_pg_mlocked(p) { ClearPageMlocked(p); }
+#define clear_page_state(p) do { p->flags &= ~(PAGE_FLAGS_CHECK_AT_PREP & ~PG_head_mask); } while (0) // clear PAGE_FLAGS_CHECK_AT_PREP but keeps PG_head_mask
 
 static inline unsigned long 
 __hva_to_gfn(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long hva)
@@ -212,15 +213,8 @@ static inline void
 ____emp_get_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 {
 	struct page *page = gpa->local_page->page;
-
-	if (PageCompound(page)) {
-		page = compound_head(page);
-		page_ref_add(page, page_len);
-		return;
-	}
-
-	while (page_len-- > 0)
-		get_page(page++);
+	debug_check_head(page);
+	page_ref_add(page, page_len);
 }
 
 #define __emp_get_pages_map(vmr, gpa, page_len) do { \
@@ -239,15 +233,8 @@ static inline void
 ____emp_put_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 {
 	struct page *page = gpa->local_page->page;
-
-	if (PageCompound(page)) {
-		page = compound_head(page);
-		page_ref_sub(page, page_len);
-		return;
-	}
-
-	while (page_len-- > 0)
-		put_page(page++);
+	debug_check_head(page);
+	page_ref_sub(page, page_len);
 }
 
 #define __emp_put_pages_map(vmr, gpa, page_len) do { \

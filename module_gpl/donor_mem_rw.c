@@ -165,7 +165,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 		if (IS_ERR_OR_NULL(w)) { // failed to fetch page
 			bvma->lops.free_local_page(bvma, local_page);
 			page->private = 0;
-			emp_clear_pg_mlocked(page, page_order);
+			emp_clear_pg_mlocked(page);
 			gpa->local_page = NULL;
 			emp_update_rss_sub(vmr, __gpa_to_page_len(vmr, gpa, gpa_idx),
 						DEBUG_RSS_SUB_ALLOC_FETCH_ERR,
@@ -735,7 +735,7 @@ void clear_in_flight_fetching_block(struct emp_vmr *vmr,
 		page = lp->page;
 		emm->lops.free_local_page(emm, lp);
 		page->private = 0;
-		emp_clear_pg_mlocked(page, gpa_subblock_order(g));
+		emp_clear_pg_mlocked(page);
 		g->local_page = NULL;
 		push_free_page_list(emm, page, cpu);
 		cnt_lp++;

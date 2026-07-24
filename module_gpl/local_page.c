@@ -204,7 +204,7 @@ alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
 	 * the allocated pages. */
 	debug_page_ref_mark(vmr_id, local_page, 1);
 
-	emp_set_pg_mlocked(page, page_order);
+	emp_set_pg_mlocked(page);
 	page->private = (unsigned long) gpa;
 #ifdef CONFIG_EMP_DEBUG_LRU_LIST
 	spin_lock(&bvma->ftm.local_page_list_lock);

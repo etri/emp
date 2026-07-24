@@ -542,7 +542,7 @@ __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
 	pte = emp_pte_map(pmd, addr);
-	emp_set_page_mapping_and_index(vma, addr, page, len);
+	emp_set_page_mapping_and_index(vma, addr, page);
 
 	spin_lock(ptl);
 	/* change the pages */
@@ -832,7 +832,7 @@ error:
 		debug_assert(page);
 		emm->lops.free_local_page(emm, dst->local_page);
 		page->private = 0;
-		emp_clear_pg_mlocked(page, gpa_subblock_order(dst));
+		emp_clear_pg_mlocked(page);
 		push_free_page_list(emm, page, cpu);
 		dst->local_page = NULL;
 	}

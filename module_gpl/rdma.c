@@ -1809,7 +1809,7 @@ static int COMPILER_DEBUG test_read_latency(struct connection *c)
 
 	page = emp_alloc_pages(GFP_HIGHUSER_MOVABLE, 0);
 	if (!page || PageHWPoison(page)) {
-		if (page) emp_free_pages(page, 0);
+		if (page) emp_free_pages(page);
 		pr_info("%s: conn%d-%d insufficient memory\n", __func__,
 				conn_get_mr_id(c), context->id);
 		return -ENOMEM;
@@ -1819,7 +1819,7 @@ static int COMPILER_DEBUG test_read_latency(struct connection *c)
 			page_address(page), PAGE_SIZE,
 			DMA_FROM_DEVICE);
 	if (!dma_addr) {
-		emp_free_pages(page, 0);
+		emp_free_pages(page);
 		return -ENOMEM;
 	}
 
@@ -1889,7 +1889,7 @@ static int COMPILER_DEBUG test_read_latency(struct connection *c)
 out:
 	ib_dma_unmap_single(context->cm_id->device, dma_addr, 4096,
 			DMA_BIDIRECTIONAL);
-	emp_free_pages(page, 0);
+	emp_free_pages(page);
 
 	return sum;
 }
