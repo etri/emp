@@ -738,6 +738,107 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func);
 #define emp_update_rss_show(vmr) do {} while (0)
 #endif
 
+#ifdef CONFIG_EMP_EXT
+enum emp_op_type {
+	EMP_OP_REMOTE,
+	EMP_OP_LOCAL,
+	EMP_OP_PREFETCH,
+};
+
+struct emp_ops {
+	int (*handle_active_fault)(struct emp_vmr *, struct emp_gpa *,
+				   struct emp_gpa *, struct vcpu_var *,
+				   struct vm_fault *, int *);
+	void (*handle_inactive_fault)(struct emp_vmr *, struct emp_gpa **,
+				      struct emp_gpa *, struct vcpu_var *);
+	int (*handle_writeback_fault)(struct emp_vmr *, struct emp_gpa **,
+				       struct emp_gpa *, struct vcpu_var *);
+	int (*handle_remote_fault)(struct emp_vmr *, struct emp_gpa **,
+				   unsigned long, struct emp_gpa *, pgoff_t,
+				   struct vcpu_var *, bool);
+	int (*reclaim_emp_pages)(struct emp_mm *, struct vcpu_var *, int, bool);
+	void (*reclaim_set)(struct emp_mm *);
+	int (*update_lru_lists)(struct emp_mm *, struct vcpu_var *,
+				struct emp_gpa **, int, int);
+	int (*add_gpas_to_inactive)(struct emp_mm *, struct vcpu_var *,
+					struct emp_gpa **, int);
+	int (*emp_writeback_block)(struct emp_mm *, struct emp_gpa *,
+							struct vcpu_var *);
+	void (*remove_gpa_from_lru)(struct emp_mm *emm, struct emp_gpa *head);
+};
+
+struct emp_ext {
+	int installed;
+	char *name;
+	size_t bvma_size; /* size of struct emp_mm with extension */
+	size_t memreg_size; /* size of struct memreg with extension */
+
+	/* emp operations (struct emp_ops) */
+	struct emp_ops ops;
+
+	/* extensions */
+	int (*emp_open)(struct emp_mm *);
+	int (*emp_release)(struct emp_mm *);
+	int (*emp_mmap)(struct emp_vmr *);
+	void (*emp_vma_open)(struct emp_vmr *);
+	void (*emp_vma_close)(struct emp_vmr *);
+	int (*emp_unlocked_ioctl)(struct emp_mm *, unsigned int, unsigned long);
+	int (*emp_fsync)(struct emp_mm *, loff_t, loff_t, int);
+	void (*create_mr)(struct memreg *);
+	void (*disconnect_mr)(struct memreg *);
+	void (*alloc_remote_page_notifier)(struct emp_mm *, struct remote_page *);
+	void (*free_remote_page_notifier)(struct emp_mm *, struct remote_page *);
+	void (*emp_set_block_dirty_notifier)(struct emp_gpa *);
+	void (*init_gpa)(struct emp_mm *, struct emp_gpa *, unsigned long);
+#ifdef CONFIG_EMP_USER
+	void (*dup_cow_gpa)(struct emp_mm *, unsigned long, struct emp_gpa *, struct emp_gpa *);
+	void (*migrate_local_page)(struct emp_vmr *, struct emp_gpa *, struct emp_gpa *);
+#endif
+	void (*cleanup_gpa)(struct emp_mm *, struct emp_gpa *);
+#ifdef CONFIG_EMP_USER
+	void (*cleanup_cow_gpa)(struct emp_gpa *);
+#endif
+	int (*waiting_writeback_notifier)(struct emp_mm *, struct vcpu_var *);
+	void (*flush_gpa)(struct emp_vmr *, struct vcpu_var *, struct emp_gpa *, unsigned long, unsigned long);
+
+	/* profiling */
+	void (*drop_inactive_notifier)(struct emp_mm *, struct emp_gpa *);
+	void (*finish_page_fault_notifier)(struct emp_mm *, cycles_t, int,
+					   struct vcpu_var *);
+
+#ifdef CONFIG_EMP_VM
+	/* extensions for emp_page_fault_gpa */
+	bool (*prepare_map_gpa)(struct emp_mm *, struct kvm_vcpu *, 
+				const unsigned long, bool, bool,
+				struct emp_gpa *, const gva_t );
+	bool (*early_handle_fault_gpa)(struct emp_mm *, struct kvm_vcpu *, 
+			struct emp_vmr *, const unsigned long, bool, bool,
+			struct emp_gpa *, unsigned long, const gva_t, int, u32);
+	int (*prepare_install_sptes)(struct emp_mm *, struct kvm_vcpu *,
+			struct emp_vmr *, const unsigned long, bool, bool *,
+			bool, struct emp_gpa *, struct emp_gpa *, unsigned long,
+			struct emp_gpa *, struct emp_gpa *, const gva_t);
+#endif
+
+	/* extensions for emp_page_fault_hva */
+	bool (*prepare_map_hva)(struct emp_mm *, struct vm_area_struct *, 
+			struct vm_fault *);
+	bool (*early_handle_fault_hva)(struct emp_mm *, struct vm_area_struct *, 
+			struct vm_fault *, struct emp_gpa *, unsigned long);
+	bool (*prepare_install_hptes)(struct emp_mm *, struct emp_gpa *,
+			struct emp_gpa *, unsigned long, struct emp_gpa *,
+			struct emp_gpa *, struct emp_gpa *, bool fetch);
+
+#ifdef CONFIG_EMP_VM
+	bool (*register_kvm)(struct emp_mm *, int);
+#endif
+};
+
+extern struct emp_ops emp_ops;
+extern struct emp_ext emp_ext;
+int register_emp_ext(struct emp_ext *);
+int unregister_emp_ext(void);
+#endif /* CONFIG_EMP_EXT */
 
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))

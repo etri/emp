@@ -537,8 +537,13 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 			/* (3)-2 generate a writeback requests.
 			 * By triggering pressure hadling routines for inactive lists,
 			 * try to retrieve free pages. */ 
+#ifdef CONFIG_EMP_EXT
+			res = emp_ops.reclaim_emp_pages(bvma, cpu,
+					(1 << bvma_block_order(bvma)), true);
+#else
 			res = reclaim_emp_pages(bvma, cpu,
 					(1 << bvma_block_order(bvma)), true);
+#endif
 			if (res > 0)
 				break;
 			else if (unlikely(res < 0)) /* error */

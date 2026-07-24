@@ -67,7 +67,13 @@ unsigned long               emp_mm_arr_len;
 spinlock_t                  emp_mm_arr_lock;
 /* ----- local variables ----- */
 
+#ifdef CONFIG_EMP_EXT
+struct emp_ext emp_ext;
+struct emp_ops emp_ops;
+#define BVMA_SIZE (emp_ext.bvma_size ? emp_ext.bvma_size : sizeof(struct emp_mm))
+#else
 #define BVMA_SIZE (sizeof(struct emp_mm))
+#endif
 
 /* ----- functions from procfs.c ----- */
 int emp_procfs_add(struct emp_mm *bvma, int id);
@@ -75,6 +81,117 @@ void emp_procfs_del(struct emp_mm *bvma);
 int emp_procfs_init(void);
 void emp_procfs_exit(void);
 	
+#ifdef CONFIG_EMP_EXT
+/**
+ * init_emp_ops - initialize emp_ops with default functions
+ */
+static void init_emp_ops(void) {
+	emp_ops.handle_active_fault = handle_active_fault;
+	emp_ops.handle_inactive_fault = handle_inactive_fault;
+	emp_ops.handle_writeback_fault = handle_writeback_fault;
+	emp_ops.handle_remote_fault = handle_remote_fault;
+	emp_ops.reclaim_emp_pages = reclaim_emp_pages;
+	emp_ops.reclaim_set = reclaim_set;
+	emp_ops.update_lru_lists = update_lru_lists;
+	emp_ops.add_gpas_to_inactive = add_gpas_to_inactive;
+	emp_ops.emp_writeback_block = emp_writeback_block;
+	emp_ops.remove_gpa_from_lru = remove_gpa_from_lru;
+}
+
+/**
+ * unregister_emp_ext - Unregister EMP extension module
+ * 
+ * @retval 0: Success
+ * @retval n: Error
+ *
+ */
+int unregister_emp_ext() {
+	if (!emp_ext.installed) {
+		printk(KERN_ERR "[emp_ext] ERROR: no extension module installed\n");
+		return -1;
+	}
+
+	init_emp_ops();
+	
+	/* installed = 0, name = NULL, bvma_size = 0, funcionts = NULL */
+	memset(&emp_ext, 0, sizeof(struct emp_ext));
+	return 0;
+}
+EXPORT_SYMBOL(unregister_emp_ext);
+
+/**
+ * register_emp_ext - Register EMP extension module
+ * @param func advanced function pointers
+ * @param ext  extension module information
+ * 
+ * @retval 0: Success
+ * @retval n: Error
+ *
+ */
+int register_emp_ext(struct emp_ext *ext) {
+	if (emp_ext.installed) {
+		printk(KERN_ERR "[emp_ext] ERROR: duplicated extension module\n");
+		return -1;
+	}
+	
+	emp_ext.name = ext->name;
+	emp_ext.bvma_size = ext->bvma_size;
+	emp_ext.memreg_size = ext->memreg_size;
+#define APPLY_OPS(func) do { if (ext->ops.func) emp_ops.func = ext->ops.func; } while (0)
+	APPLY_OPS(handle_active_fault);
+	APPLY_OPS(handle_inactive_fault);
+	APPLY_OPS(handle_writeback_fault);
+	APPLY_OPS(handle_remote_fault);
+	APPLY_OPS(reclaim_emp_pages);
+	APPLY_OPS(reclaim_set);
+	APPLY_OPS(update_lru_lists);
+	APPLY_OPS(add_gpas_to_inactive);
+	APPLY_OPS(emp_writeback_block);
+	APPLY_OPS(remove_gpa_from_lru);
+#undef APPLY
+#define APPLY(func) do { if (ext->func) emp_ext.func = ext->func; } while (0)
+	APPLY(emp_open);
+	APPLY(emp_release);
+	APPLY(emp_mmap);
+	APPLY(emp_vma_open);
+	APPLY(emp_vma_close);
+	APPLY(emp_unlocked_ioctl);
+	APPLY(emp_fsync);
+	APPLY(create_mr);
+	APPLY(disconnect_mr);
+	APPLY(alloc_remote_page_notifier);
+	APPLY(free_remote_page_notifier);
+	APPLY(emp_set_block_dirty_notifier);
+	APPLY(init_gpa);
+#ifdef CONFIG_EMP_USER
+	APPLY(dup_cow_gpa);
+	APPLY(migrate_local_page);
+#endif
+	APPLY(cleanup_gpa);
+#ifdef CONFIG_EMP_USER
+	APPLY(cleanup_cow_gpa);
+#endif
+	APPLY(waiting_writeback_notifier);
+	APPLY(flush_gpa);
+
+#ifdef CONFIG_EMP_VM
+	APPLY(prepare_map_gpa);
+	APPLY(early_handle_fault_gpa);
+	APPLY(prepare_install_sptes);
+#endif
+	APPLY(prepare_map_hva);
+	APPLY(early_handle_fault_hva);
+	APPLY(prepare_install_hptes);
+#ifdef CONFIG_EMP_VM
+	APPLY(register_kvm);
+#endif
+#undef APPLY
+
+	emp_ext.installed = 1;
+	return 0;
+}
+EXPORT_SYMBOL(register_emp_ext);
+#endif
 
 /**
  * get_emp_mm_arr - Get the whole bvma array
@@ -263,6 +380,10 @@ static void emp_vma_close(struct vm_area_struct *vma)
 		emp_put_mmu_notifier(vmr);
 #endif /* CONFIG_EMP_USER */
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_vma_close)
+		emp_ext.emp_vma_close(vmr);
+#endif
 
 	/* gpas_close() may have been called by mmu notifier.
 	 * In such case, vmr->descs == NULL and nothing happens by gpas_close().
@@ -464,6 +585,10 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 	new_vma->vm_flags |= VM_NOHUGEPAGE;
 	new_vma->vm_flags |= VM_DONTEXPAND;
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_vma_open)
+		emp_ext.emp_vma_open(new_vmr);
+#endif /* CONFIG_EMP_EXT */
 
 	/* Actually, after duplication, gpa states of two vmrs are identical.
 	 * Thus, we only print out new's. */
@@ -640,6 +765,12 @@ vm_start_aligned:
 	if (gpas_open(vmr))
 		goto mmap_fail;
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_mmap) {
+		ret = emp_ext.emp_mmap(vmr);
+		if (ret) goto mmap_fail;
+	}
+#endif
 	bvma->ftm.local_cache_pages_headroom = LOCAL_CACHE_BUFFER_SIZE(bvma);
 
 	// prevent numa from relocating the related pages
@@ -792,6 +923,11 @@ register_kvm(struct emp_mm *bvma, int kvm_fd, int kvm_max_vcpus)
 				goto reg_kvm_get_vcpus_err;
 			if (reclaim_init(bvma))
 				goto reg_kvm_reclaim_init_err;
+#ifdef CONFIG_EMP_EXT
+			if (emp_ext.register_kvm &&
+				!emp_ext.register_kvm(bvma, prev_vcpus_len))
+				goto reg_kvm_reg_kvm_ext_err;
+#endif
 		}
 	}
 
@@ -803,6 +939,10 @@ register_kvm(struct emp_mm *bvma, int kvm_fd, int kvm_max_vcpus)
 
 	return true;
 
+#ifdef CONFIG_EMP_EXT
+reg_kvm_reg_kvm_ext_err:
+	reclaim_exit(bvma);
+#endif
 reg_kvm_reclaim_init_err:
 	put_vcpus_var(bvma);
 reg_kvm_get_vcpus_err:
@@ -838,6 +978,11 @@ static long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
 		return -ENODEV;
 
 	bvma = (struct emp_mm *)file->private_data;
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_unlocked_ioctl
+			&& emp_ext.emp_unlocked_ioctl(bvma, ioctl_num, ioctl_param) == 0)
+		return 0;
+#endif
 	switch (ioctl_num) {
 		unsigned int uret;
 		struct donor_info _donor, *donor;
@@ -904,7 +1049,11 @@ static long emp_unlocked_ioctl(struct file *file, unsigned int ioctl_num,
 			donor = &_donor;
 			atomic_set(&bvma->ftm.local_cache_pages,
 					MB_TO_PAGE(donor->size));
+#ifdef CONFIG_EMP_EXT
+			emp_ops.reclaim_set(bvma);
+#else
 			reclaim_set(bvma);
+#endif
 			printk(KERN_INFO "set dram capacity: %ld MiB\n",
 					donor->size);
 			break;
@@ -1188,6 +1337,13 @@ static int emp_open(struct inode *inode, struct file *filp)
 		goto open_lp_init_err;
 	gpa_init(bvma);
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_open) {
+		ret = emp_ext.emp_open(bvma);
+		if (ret) 
+			goto open_procfs_err;
+	}
+#endif
 	bvma->pid = current->pid;
 
 	mutex_unlock(&emp_open_mutex);
@@ -1248,6 +1404,10 @@ static int emp_release(struct inode *inode, struct file *filp)
 	mutex_lock(&emp_open_mutex);
 
 	cleanup_emm(bvma);
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_release)
+		emp_ext.emp_release(bvma);
+#endif
 	reclaim_exit(bvma);
 	gpa_exit(bvma);
 
@@ -1311,7 +1471,14 @@ int emp_fsync(struct file *filp, loff_t s, loff_t e, int datasync)
 #ifdef CONFIG_EMP_STAT
 	bvma->stat.fsync_count++;
 #endif
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.emp_fsync)
+		return emp_ext.emp_fsync(bvma, s, e, datasync);
+	else
+		return 0;
+#else
 	return 0;
+#endif
 }
 
 static const struct file_operations emp_fops = {
@@ -1372,6 +1539,9 @@ static int __init emp_init(void)
 
 	emp_debug_alloc_init();
 
+#ifdef CONFIG_EMP_EXT
+	init_emp_ops();
+#endif
 	kernel_symbol_init();
 #ifdef CONFIG_EMP_VM
 	register_emp_mod(&emp_mod);

@@ -180,7 +180,15 @@ static inline void set_gpa_block_order(struct emp_gpa *g, int order) {
 #define set_gpa_block_order(g, o) do {} while(0)
 #endif
 
+#ifdef CONFIG_EMP_EXT
+static inline void 
+emp_ext_init_gpa(struct emp_mm *e, struct emp_gpa *g, unsigned long i) {
+	if (emp_ext.init_gpa)
+		emp_ext.init_gpa(e, g, i);
+}
+#else
 #define emp_ext_init_gpa(e, g, i) do {} while(0)
+#endif
 
 static inline void
 __set_gpadesc(struct emp_mm *emm, unsigned long idx, struct emp_gpa *g,
@@ -1415,8 +1423,13 @@ next_vmr_found:
 				DEBUG_RSS_ADD_PUT_MAX_BLOCK,
 				head, DEBUG_UPDATE_RSS_BLOCK);
 			if (head->r_state == GPA_ACTIVE) {
+#ifdef CONFIG_EMP_EXT
+				emp_ops.remove_gpa_from_lru(emm, head);
+				emp_ops.add_gpas_to_inactive(emm, cpu, &head, 1);
+#else
 				remove_gpa_from_lru(emm, head);
 				add_gpas_to_inactive(emm, cpu, &head, 1);
+#endif
 			}
 			continue;
 		}
@@ -1426,7 +1439,11 @@ next_vmr_found:
 		debug_lru_progress_mark(head->local_page, head->flags);
 		debug_lru_progress_mark(head->local_page, head->local_page->flags);
 		/* For GPA_ACTIVE and GPA_INACTIVE, remove from the list */
+#ifdef CONFIG_EMP_EXT
+		emp_ops.remove_gpa_from_lru(emm, head);
+#else
 		remove_gpa_from_lru(emm, head);
+#endif
 
 		debug_lru_progress_mark(head->local_page, head->flags);
 		debug_lru_progress_mark(head->local_page, head->local_page->flags);
@@ -1442,7 +1459,11 @@ next_vmr_found:
 		 * Move it to writeback lists which does not require the owner.
 		 */
 
+#ifdef CONFIG_EMP_EXT
+		emp_ops.emp_writeback_block(emm, head, cpu);
+#else
 		emp_writeback_block(emm, head, cpu);
+#endif
 		if (head->r_state == GPA_WB)
 			add_inactive_list_page_len(emm, head);
 #endif /* CONFIG_EMP_USER */
@@ -1582,6 +1603,10 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 		}
 
 		__wait_for_prefetch_max_block(emm, cpu, max_head, step);
+#ifdef CONFIG_EMP_EXT
+		if (emp_ext.flush_gpa)
+			emp_ext.flush_gpa(vmr, cpu, max_head, i, step);
+#endif
 		flush_gpa(vmr, cpu, max_head, i, step);
 		remote_page_release(emm, max_head, step);
 		emp_kmem_cache_free(cachep, max_head);
@@ -1693,6 +1718,10 @@ cleanup_gpa(struct emp_mm *bvma, struct emp_gpa *gpa)
 	struct local_page *local_page = gpa->local_page;
 	struct page *gpa_page;
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.cleanup_gpa)
+		emp_ext.cleanup_gpa(bvma, gpa);
+#endif
 	gpa->local_page = NULL;
 	clear_gpa_flags_if_set(gpa, GPA_CLEANUP_MASK);
 	if (local_page) {

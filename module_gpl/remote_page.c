@@ -79,6 +79,10 @@ bool free_remote_page(struct emp_mm *emm,
 				__func__, do_free ? 1 : 0))
 		return false;
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.free_remote_page_notifier)
+		emp_ext.free_remote_page_notifier(emm, remote_page);
+#endif
 
 	/* if some other process share this remote page, don't free it */
 	if (is_remote_page_cow(remote_page))
@@ -331,6 +335,16 @@ alloc:
 	if (unlikely(!__alloc_remote_page(emm, head)))
 		goto error;
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.alloc_remote_page_notifier) {
+		for_each_gpas(gpa, head) {
+			emp_ext.alloc_remote_page_notifier(emm,
+							&gpa->remote_page);
+			if (unlikely(is_gpa_remote_page_free(gpa)))
+				goto error;
+		}
+	}
+#endif
 	debug_alloc_remote_page2(emm, head);
 	return true;
 

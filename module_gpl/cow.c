@@ -183,8 +183,24 @@ __get_pte_lockptr_single(struct emp_mm *emm, struct emp_gpa *head)
 	return pte_lockptr(prev_vmr->host_mm, p->pmd);
 }
 
+#ifdef CONFIG_EMP_EXT
+static inline void
+emp_ext_dup_cow_gpa(struct emp_mm *e, unsigned long i, struct emp_gpa *o, struct emp_gpa *n)
+{
+	if (emp_ext.dup_cow_gpa)
+		emp_ext.dup_cow_gpa(e, i, o, n);
+}
+
+static inline void
+emp_ext_migrate_local_page(struct emp_vmr *v, struct emp_gpa *o, struct emp_gpa *n)
+{
+	if (emp_ext.migrate_local_page)
+		emp_ext.migrate_local_page(v, o, n);
+}
+#else
 #define emp_ext_dup_cow_gpa(e, i, o, n) do {} while(0)
 #define emp_ext_migrate_local_page(v, o, n) do {} while(0)
+#endif
 
 static inline void __copy_pages(struct page *dst, struct page *src, int len)
 {
@@ -250,6 +266,10 @@ __set_gpa_remote(struct emp_gpa *gpa)
 {
 	/* From free_gpa() and cleanup_gpa()
 	 * Note that we already remove gpa->local_page */
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.cleanup_cow_gpa)
+		emp_ext.cleanup_cow_gpa(gpa);
+#endif
 	clear_gpa_flags_if_set(gpa, GPA_CLEANUP_MASK);
 	debug_assert(gpa->local_page == NULL);
 
@@ -276,7 +296,11 @@ static inline void __set_block_state(struct emp_gpa *head, int state) {
 static inline int ____add_to_inactive(struct emp_mm *emm,
 				struct vcpu_var *cpu, struct emp_gpa *gpa)
 {
+#ifdef CONFIG_EMP_EXT
+	return emp_ops.add_gpas_to_inactive(emm, cpu, &gpa, 1);
+#else
 	return add_gpas_to_inactive(emm, cpu, &gpa, 1);
+#endif
 }
 
 static inline int __add_to_inactive(struct emp_mm *emm,
@@ -305,7 +329,11 @@ __add_to_writeback(struct emp_mm *emm, struct emp_gpa *gpa)
 	// inactive_list.page_len, but it is not actually inserted to
 	// inactive_list.
 	add_inactive_list_page_len(emm, gpa);
+#ifdef CONFIG_EMP_EXT
+	ret = emp_ops.emp_writeback_block(emm, gpa, cpu);
+#else
 	ret = emp_writeback_block(emm, gpa, cpu);
+#endif
 #ifdef CONFIG_EMP_BLOCKDEV
 	if (emm->mrs.blockdev_used)
 		io_schedule();
@@ -1385,7 +1413,11 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 		debug_assert(new_head->local_page->vmr_id >= 0
 			&& new_head->local_page->vmr_id < EMP_VMRS_MAX
 			&& emm->vmrs[new_head->local_page->vmr_id] != NULL);
+#ifdef CONFIG_EMP_EXT
+		emp_ops.update_lru_lists(emm, cpu, &new_head, 1, block_size);
+#else
 		update_lru_lists(emm, cpu, &new_head, 1, block_size);
+#endif
 	}
 
 	return 1;

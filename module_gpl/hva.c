@@ -259,6 +259,11 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	emp_hpt_fetch_barrier(emm, head, demand, demand_idx, fs, fe,
 				prefetched_sb, fetch);
 	
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.prepare_install_hptes)
+		emp_ext.prepare_install_hptes(emm, head, demand, demand_idx, fs, fe,
+						prefetched_sb, fetch);
+#endif	
 	ret = emp_install_hptes(emm, vmr, head, demand, fs, fe, prefetched_sb,
 						fetch, vmf, pmd, orig_pmd);
 
@@ -296,6 +301,11 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	unsigned long head_idx;
 	struct vcpu_var *cpu;
 	bool fetch = false;
+#ifdef CONFIG_EMP_EXT
+	bool skip_fetch = true;
+	u64 ts_start;
+	int ts_type;
+#endif
 	unsigned int sb_order, demand_sb_off;
 	int rss_count;
 #ifdef CONFIG_EMP_SHOW_FAULT_PROGRESS
@@ -318,6 +328,11 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 				emm->id, vmr->id, vmf->address);
 #endif
 
+#ifdef CONFIG_EMP_EXT
+	// record start of gpa handling
+	ts_start = get_ts_in_ns();
+	ts_type = EMP_OP_LOCAL;
+#endif
 
 	cpu = emp_this_cpu_ptr(emm->pcpus);
 #ifdef CONFIG_EMP_STAT
@@ -337,7 +352,18 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		goto _emp_page_fault_hva_out_unlocked;
 	}
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.prepare_map_hva)
+		skip_fetch = emp_ext.prepare_map_hva(emm, vma, vmf);
+	
+	if (!skip_fetch)
+	/* if the gpa->local_page is NULL,
+	 * pages for local cache should be allocated and page contents
+	 * should be fetched from remote(or local) donor. */
+		emp_wait_for_writeback(emm, cpu, gpa_block_size(demand));
+#else
 	emp_wait_for_writeback(emm, cpu, gpa_block_size(demand));
+#endif
 
 	/*
 	 * file-backed page does not support thp currently.
@@ -412,6 +438,15 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	}
 #endif /* CONFIG_EMP_BLOCK */
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.early_handle_fault_hva) {
+		if (emp_ext.early_handle_fault_hva(emm, vma, vmf,
+						demand, demand_sb_off)) {
+			debug_progress(head, 0);
+			goto _emp_page_fault_hva_out;
+		}
+	}
+#endif
 #ifdef CONFIG_EMP_IO
 	// following must be cleared
 	if (is_gpa_flags_set(head, GPA_IO_IP_MASK)) {
@@ -448,8 +483,15 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		/* if the gpa->local_page is NULL, alloc a page for local cache
 		 * and fetch the data from remote(or local) donor.
 		 */
+#ifdef CONFIG_EMP_EXT
+		r = emp_ops.handle_remote_fault(vmr, &head, head_idx, demand,
+						    demand_off, cpu, false);
+		if (r > 0)
+			ts_type = EMP_OP_REMOTE;
+#else
 		r = handle_remote_fault(vmr, &head, head_idx, demand,
 					demand_off, cpu, false);
+#endif
 		debug_progress(head, r);
 		if (likely(r >= 0)) {
 			fetch = r > 0 ? true : false;
@@ -486,7 +528,16 @@ _emp_page_fault_hva_fetch_posted:
 		debug_progress(head, ret);
 	}
 
+#ifdef CONFIG_EMP_EXT
+	// XXX we must set the block as dirty???
+	if (!set_gpa_flags_if_unset(head, GPA_DIRTY_MASK)) {
+		/* if the previous value is DIRTY, do not notify. */
+		if (emp_ext.emp_set_block_dirty_notifier)
+			emp_ext.emp_set_block_dirty_notifier(head);
+	}
+#else
 	set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
+#endif
 
 	debug___emp_page_fault_hva2(head);
 
@@ -506,6 +557,11 @@ _emp_page_fault_hva_out:
 	emp_unlock_block(head);
 _emp_page_fault_hva_out_unlocked:
 
+#ifdef CONFIG_EMP_EXT
+	if (likely(ret == VM_FAULT_NOPAGE || ret == VM_FAULT_RETRY)
+		&& emp_ext.finish_page_fault_notifier)
+		emp_ext.finish_page_fault_notifier(emm, ts_start, ts_type, cpu);
+#endif
 	set_vmf_pgoff(vmf, orig_pgoff);
 	if (unlikely(ret == VM_FAULT_SIGBUS))
 		printk(KERN_ERR "%s returns SIGBUS. code: %d"

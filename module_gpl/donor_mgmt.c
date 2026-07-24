@@ -15,7 +15,11 @@
 #endif
 #include "donor_mgmt.h"
 
+#ifdef CONFIG_EMP_EXT
+#define MEMREG_SIZE (emp_ext.memreg_size ? emp_ext.memreg_size : sizeof(struct memreg))
+#else
 #define MEMREG_SIZE (sizeof(struct memreg))
+#endif
 
 /**
  * create_mr - Create memory regions according to the type of donor
@@ -137,6 +141,10 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 	}
 	init_waitqueue_head(&mr->wr_wq);
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.create_mr)
+		emp_ext.create_mr(mr);
+#endif
 	// end of initialization
 	if (mr_id)
 		*mr_id = mr->id;
@@ -226,6 +234,10 @@ int check_creation_mrs(struct emp_mm* bvma)
  */
 static void disconnect_mr(struct memreg *mr)
 {
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.disconnect_mr)
+		emp_ext.disconnect_mr(mr);
+#endif
 	if (mr->conn) {
 		struct dma_ops *ops = mr->ops;
 

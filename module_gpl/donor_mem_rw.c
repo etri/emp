@@ -348,6 +348,10 @@ static int clear_writeback_work_request(struct emp_mm *bvma,
 
 	reclaimed_pages = gpa_block_size(head);
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.drop_inactive_notifier)
+		emp_ext.drop_inactive_notifier(bvma, head);
+#endif
 
 	free_work_requests(bvma, w);
 

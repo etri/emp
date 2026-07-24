@@ -680,7 +680,17 @@ wait_for_wc(struct emp_mm *bvma, struct vcpu_var *cpu, struct work_request *w)
 	} else {
 		unsigned long hang_check;
 
+#ifdef CONFIG_EMP_EXT
+		if (!completion_done(&w->wait) && w->type == TYPE_WB
+				&& bvma && cpu
+				&& emp_ext.waiting_writeback_notifier) {
+			int ret = emp_ext.waiting_writeback_notifier(bvma, cpu);
+			if (unlikely(ret < 0))
+				return ret;
+		}
+#else
 		completion_done(&w->wait);
+#endif
 
 		// w->req is handled by the interrupt handler (dma_end_sync_rq)
 		// the existence of w->req means that there have not been interrupted on

@@ -225,16 +225,29 @@ int handle_local_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 
 	switch ((*head)->r_state) {
 		case GPA_ACTIVE:
+#ifdef CONFIG_EMP_EXT
+			ret = emp_ops.handle_active_fault(vmr, *head, gpa, cpu,
+					vmf, vmf_ret);
+#else
 			ret = handle_active_fault(vmr, *head, gpa, cpu,
 					vmf, vmf_ret);
+#endif
 			break;
 
 		case GPA_INACTIVE:
+#ifdef CONFIG_EMP_EXT
+			emp_ops.handle_inactive_fault(vmr, head, gpa, cpu);
+#else
 			handle_inactive_fault(vmr, head, gpa, cpu);
+#endif
 			break;
 
 		case GPA_WB:
+#ifdef CONFIG_EMP_EXT
+			ret = emp_ops.handle_writeback_fault(vmr, head, gpa, cpu);
+#else
 			ret = handle_writeback_fault(vmr, head, gpa, cpu);
+#endif
 			/* inserting to page table is required */
 			if (ret > 0)
 				ret = 0;
@@ -1421,6 +1434,11 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	unsigned long sb_mask;
 	unsigned int sb_order;
 	bool read_only_mapping;
+#ifdef CONFIG_EMP_EXT
+	bool skip_fetch = true;
+	u64 ts_start;
+	enum emp_op_type ts_type;
+#endif
 	bool fetch;
 	int ret = RET_PF_RETRY, r;
 #ifdef CONFIG_EMP_SHOW_FAULT_PROGRESS
@@ -1445,6 +1463,11 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 				bvma->id, vmr->id, hva, gva);
 #endif
 
+#ifdef CONFIG_EMP_EXT
+	// record start of gpa handling
+	ts_start = get_ts_in_ns();
+	ts_type = EMP_OP_LOCAL;
+#endif
 
 #ifdef CONFIG_EMP_STAT
 	/* update stat */
@@ -1460,7 +1483,20 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 
 	sb_mask = gpa_subblock_mask(demand);
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.prepare_map_gpa)
+		skip_fetch = emp_ext.prepare_map_gpa(bvma, kvm_vcpu, hva,
+					write_fault, *writable, demand, gva);
+	
+	if (!skip_fetch) { 
+		/* if the gpa->local_page is NULL,
+		 * pages for local cache should be allocated and page contents
+		 * should be fetched from remote(or local) donor. */
+		emp_wait_for_writeback(bvma, cpu, gpa_block_size(demand));
+	}
+#else
 	emp_wait_for_writeback(bvma, cpu, gpa_block_size(demand));
+#endif
 
 	// gpa lock will be released by barr_fetch
 	head = emp_lock_block(vmr, &demand, demand_sb_off);
@@ -1516,6 +1552,14 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 
 	debug_emp_page_fault_gpa2(head);
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.early_handle_fault_gpa
+			&& emp_ext.early_handle_fault_gpa(bvma, kvm_vcpu, vmr,
+						hva, write_fault, *writable,
+						demand, demand_sb_off,
+						gva, level, error_code))
+		goto return_to_fault_inst;
+#endif
 #ifdef CONFIG_EMP_IO
 	// wait for completion of hva fault handling
 	if (is_gpa_flags_set(head, GPA_IO_IP_MASK)) {
@@ -1553,9 +1597,17 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 			goto skip_install_sptes;
 		}
 	} else {
+#ifdef CONFIG_EMP_EXT
+		r = emp_ops.handle_remote_fault(vmr, &head, head_idx,
+						demand, demand_off, cpu,
+						read_only_mapping);
+		if (r > 0)
+			ts_type = EMP_OP_REMOTE;
+#else
 		r = handle_remote_fault(vmr, &head, head_idx,
 					demand, demand_off,
 					cpu, read_only_mapping);
+#endif
 		if (unlikely(r < 0)) {
 			clear_in_flight_fetching_block(vmr, cpu, head);
 			ret = r;
@@ -1574,14 +1626,36 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	/* calibrating page reference counts by calling get_page or put_page */
 	calibrate_block_count(head, fs, fe);
 
+#ifdef CONFIG_EMP_EXT
+	if (emp_ext.prepare_install_sptes) {
+		r = emp_ext.prepare_install_sptes(bvma, kvm_vcpu, vmr,
+					hva, write_fault, writable,
+					read_only_mapping,
+					head, demand, demand_sb_off,
+					fs, fe, gva);
+		if (unlikely(r < 0))
+			ret = r;
+		if (r != 0)
+			goto skip_install_sptes;
+	}
+#else
 	/* set all the pages writable in GPL version */
 	*writable = true;
+#endif
 
 	if (head->r_state == GPA_FETCHING)
 		head->r_state = GPA_ACTIVE;
 
 	if (*writable) {
+#ifdef CONFIG_EMP_EXT
+		if (!set_gpa_flags_if_unset(head, GPA_DIRTY_MASK)) {
+			/* if the previous value is DIRTY, do not notify. */
+			if (emp_ext.emp_set_block_dirty_notifier)
+				emp_ext.emp_set_block_dirty_notifier(head);
+		}
+#else
 		set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
+#endif
 	}
 
 	debug_emp_install_sptes(head);
@@ -1606,6 +1680,10 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 skip_install_sptes:
 	emp_unlock_block(head);
 
+#ifdef CONFIG_EMP_EXT
+	if (likely(ret >= 0) && emp_ext.finish_page_fault_notifier)
+		emp_ext.finish_page_fault_notifier(bvma, ts_start, ts_type, cpu);
+#endif
 	if (unlikely(ret < 0))
 		printk(KERN_ERR "%s returns error. code: %d"
 				" pgoff: %lx last_mr: %d local: %c remote: %llx\n",
