@@ -25,7 +25,7 @@ BLOCKDEV_SUPPORT := yes
 # remote memory using memory-like device support (EXPERIMENTAL)
 MEMDEV_SUPPORT := yes
 # remote memory using rdma support
-RDMA_SUPPORT := yes
+RDMA_SUPPORT := no
 #  depend on RDMA_SUPPORT
 USE_MLNX_OFED := no
 # wss estimator support
