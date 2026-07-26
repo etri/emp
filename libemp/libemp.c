@@ -13,7 +13,6 @@
 
 #include <emp_ioctl.h>
 #include <libemp.h>
-#include <libemp_cuda.h>
 #include <env.h>
 
 #define MADV_EMP_PINNING 30  //parameters of MADV_* is in linux [0,24]
@@ -128,7 +127,6 @@ void __attribute__((constructor)) libemp_init()
 		verbose = atoi(param_emp_verbose);
 
 	mem_alloc_init();
-	emp_cuda_runtime_init();
 
 	if (param_emp_path[0] == '!') {
 		// empfd was opened at parent process
