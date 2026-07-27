@@ -36,10 +36,12 @@ enum gpa_flags {
 	GPA_io_in_progress = 16,
 #endif
 	GPA_promote = 17,
-	NUM_GPA_FLAGS = 18,
+	GPA_proactive = 18,
+	NUM_GPA_FLAGS = 19,
 };
 
 #define GPA_TOUCHED_MASK    (1 << GPA_touched)
+#define GPA_PROACTIVE_MASK  (1 << GPA_proactive)
 #define GPA_DIRTY_MASK      (1 << GPA_dirty)
 #define GPA_ACCESS_MASK     (1 << GPA_access)
 #ifdef CONFIG_EMP_VM

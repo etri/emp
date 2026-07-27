@@ -48,6 +48,9 @@ int     initial_enable_transition_csf;
 #ifdef CONFIG_EMP_OPT
 int     initial_eval_media;
 int	initial_chained_ops;
+int     initial_async_invlept;
+EXPORT_SYMBOL(initial_async_invlept); /* TODO: remove this after move initial_eager_writeback to here */
+int     initial_writeback_optimization_disable;
 #endif
 int     initial_remote_reuse;
 int     initial_remote_policy_subblock;
@@ -2278,6 +2281,8 @@ static struct emp_mm *create_emm(void)
 	bvma->config.next_pt_premapping = 0; /* TODO: test this feature */
 	bvma->config.eval_media = initial_eval_media;
 	bvma->config.chained_ops = initial_chained_ops;
+	bvma->config.async_invlept = initial_async_invlept;
+	bvma->config.writeback_optimization_disable = initial_writeback_optimization_disable;
 #endif
 	bvma->config.remote_reuse = initial_remote_reuse;
 	bvma->config.remote_policy_subblock = initial_remote_policy_subblock;
@@ -2649,6 +2654,8 @@ static int __init emp_init(void)
 #ifdef CONFIG_EMP_OPT
 	initial_eval_media = false;
 	initial_chained_ops = DEFAULT_CHAINED_OPERATION;
+	initial_async_invlept = 0;
+	initial_writeback_optimization_disable = false;
 #endif
 	initial_remote_reuse = DEFAULT_REMOTE_REUSE;
 	initial_remote_policy_subblock = DEFAULT_REMOTE_POLICY_SUBBLOCK;

@@ -21,6 +21,17 @@
 		atomic_read(&(bvma)->ftm.free_pages.len) < BLOCK_MAX_SIZE && \
 		bvma->vcpus[(c)].local_free_pages_len < BLOCK_MAX_SIZE)
 
+#ifndef CONFIG_EMP_SEQUENTIAL
+#define PROACTIVE_FILTER(emm) \
+	((atomic_add_return(1, &((emm)->ftm.epsilon)) % ((emm)->ftm.divider)) == 0)
+#endif
+
+enum lru_list_type {
+	PROACTIVE_LIST,
+	ACTIVE_LIST,
+	INACTIVE_LIST
+};
+
 #ifdef CONFIG_EMP_VM
 static inline void lock_kvm_mmu_lock(struct kvm *kvm) {
 	if (!kvm)
@@ -59,12 +70,22 @@ static inline void unlock_kvm_mmu_lock(struct kvm *kvm) {
 
 int update_lru_lists(struct emp_mm *, struct vcpu_var *, struct emp_gpa **, int,
 		     int);
+static inline struct emp_gpa *
+__get_gpa_from_local_page(struct emp_mm *emm, struct local_page *lp)
+{
+#ifdef CONFIG_EMP_DEBUG
+	return lp->gpa;
+#else
+	return get_exist_gpadesc(emm->vmrs[lp->vmr_id], lp->gpa_index);
+#endif
+}
+
 int update_lru_lists_reref(struct emp_mm *, struct vcpu_var *,
 			   struct emp_gpa **, int, int);
 int update_lru_lists_lru(struct emp_mm *, struct vcpu_var *, struct emp_gpa **,
 			 int, int);
-int add_gpas_to_active_list(struct emp_mm *, struct vcpu_var *,
-			    struct emp_gpa **, int);
+int add_gpas_to_active_list(enum lru_list_type, struct emp_mm *,
+			    struct vcpu_var *, struct emp_gpa **, int);
 int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				struct emp_gpa **gpas, int n_new);
 int emp_writeback_block(struct emp_mm *, struct emp_gpa *, struct vcpu_var *);

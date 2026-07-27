@@ -246,6 +246,7 @@ void debug_clear_and_map_pages(struct emp_mm *emm, struct emp_gpa *);
 void debug___emp_page_fault_hva(struct emp_gpa *head);
 void debug___emp_page_fault_hva2(struct emp_mm *, struct emp_gpa *);
 void debug_pte_install(struct page *);
+void debug_select_victims_pl(struct emp_gpa **, int);
 void debug_select_victims_al(struct list_head *, int);
 void debug_evict_block(struct emp_mm *, struct emp_gpa *);
 void debug_update_inactive_list(struct emp_gpa *head, struct emp_gpa *g);
@@ -254,7 +255,7 @@ void debug_add_gpas_to_inactive(struct emp_gpa **gpas, int n_new);
 void debug_add_gpas_to_inactive2(struct emp_gpa *head, struct emp_gpa *g);
 void debug_flush_direct_pages(struct emp_gpa *g);
 void debug_unregister_bvma(struct emp_mm *);
-void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new);
+void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new, int type);
 void debug_add_list_count(struct slru *target_list, int count);
 void debug_sub_list_count(struct slru *target_list, int count);
 void debug_free_local_page(struct local_page *local_page);
@@ -263,6 +264,7 @@ void debug_alloc_remote_page(struct emp_mm *emm, struct emp_gpa *head);
 void debug_alloc_remote_page2(struct emp_mm *emm, struct emp_gpa *head);
 void debug_free_gpa_dir_region(struct emp_gpa *head, int desc_order);
 void debug_emp_lp_count_pmd(struct local_page *lp);
+void debug_reclaim_exit_proactive(struct emp_mm *emm, struct slru *proactive);
 void debug_reclaim_exit_active(struct emp_mm *emm, struct slru *active);
 void debug_reclaim_exit_inactive(struct emp_mm *emm, struct slru *inactive);
 void debug_push_free_page_list(struct page *page);
@@ -299,6 +301,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug___emp_page_fault_hva(head) do{}while(0)
 #define debug___emp_page_fault_hva2(emm, head) do{}while(0)
 #define debug_pte_install(p) do{}while(0)
+#define debug_select_victims_pl(vs, n_vs) do {} while (0)
 #define debug_select_victims_al(h, l) do{}while(0)
 #define debug_evict_block(emm, head) do{}while(0)
 #define debug_update_inactive_list(head, g) do{}while(0)
@@ -307,7 +310,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_add_gpas_to_inactive2(head, g) do{}while(0)
 #define debug_flush_direct_pages(g) do{}while(0)
 #define debug_unregister_bvma(bvma) do{}while(0)
-#define debug_add_gpas_to_active_list(gpas, n_new) do{}while(0)
+#define debug_add_gpas_to_active_list(gpas, n_new, type) do{}while(0)
 #define debug_add_list_count(target_list, count) do{}while(0)
 #define debug_sub_list_count(target_list, count) do{}while(0)
 #define debug_free_local_page(lp) do {} while(0)
@@ -316,6 +319,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_alloc_remote_page2(emm, head) do {} while (0)
 #define debug_free_gpa_dir_region(head, desc_order) do {} while (0)
 #define debug_emp_lp_count_pmd(lp) do {} while (0)
+#define debug_reclaim_exit_proactive(emm, slru) do {} while (0)
 #define debug_reclaim_exit_active(emm, active) do {} while (0)
 #define debug_reclaim_exit_inactive(emm, inactive) do {} while (0)
 #define debug_push_free_page_list(page) do {} while (0)

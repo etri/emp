@@ -167,7 +167,7 @@ void handle_inactive_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 
 	_handle_gpa_on_inactive_fault(vmr, phead, cpu);
 
-	add_gpas_to_active_list(vmr->emm, cpu, head, 1);
+	add_gpas_to_active_list(PROACTIVE_LIST, vmr->emm, cpu, head, 1);
 }
 
 /**

@@ -12,6 +12,7 @@
 #include "block-flag.h"
 #include "paging.h"
 #include "udma.h"
+#include "reclaim.h"	/* enum lru_list_type */
 #include "remote_page.h"
 #include "lru.h"
 #include "pcalloc.h"
@@ -1354,10 +1355,12 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		return;
 	}
 
+#ifdef CONFIG_EMP_EXT
 	if (emp_ext.debug_emp_unlock_block) {
 		emp_ext.debug_emp_unlock_block(head);
 		return;
 	}
+#endif
 
 	if (head->r_state == GPA_ACTIVE
 			|| head->r_state == GPA_INACTIVE) {
@@ -1753,6 +1756,17 @@ void debug_pte_install(struct page *page)
 	printk("%s[%d] page count should be positive\n", __func__, __LINE__);
 }
 
+void debug_select_victims_pl(struct emp_gpa **vs, int n_vs)
+{
+	int i;
+	struct emp_gpa *v;
+	for (i = 0; i < n_vs; i++) {
+		v = *(vs + i);
+		BUG_ON(__is_gpa_flags_set(v, GPA_PROACTIVE_MASK));
+	}
+}
+EXPORT_SYMBOL(debug_select_victims_pl);
+
 void debug_select_victims_al(struct list_head *to_lru_head, int to_lru_len)
 {
 	BUG_ON(to_lru_len && list_empty(to_lru_head));
@@ -1803,9 +1817,10 @@ void debug_unregister_bvma(struct emp_mm *bvma)
 		BUG_ON(emp_mm_arr[i] == bvma);
 }
 
-void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new) {
+void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new, int type) {
 	BUG_ON(gpas && n_new == 0);
 	BUG_ON(gpas == NULL && n_new != 0);
+	BUG_ON(type != PROACTIVE_LIST && type != ACTIVE_LIST);
 }
 
 void debug_add_list_count(struct slru *target_list, int count) {
@@ -1935,6 +1950,61 @@ void debug_emp_lp_count_pmd(struct local_page *lp)
 	BUG_ON(lp->num_pmds != count);
 }
 EXPORT_SYMBOL(debug_emp_lp_count_pmd);
+
+void debug_reclaim_exit_proactive(struct emp_mm *emm, struct slru *proactive)
+{
+	struct emp_list *list;
+#ifdef CONFIG_EMP_VM
+	if (proactive->mru_bufs) {
+		int i;
+		for (i = 0; i < proactive->abuf_len; i++) {
+			list = proactive->mru_bufs + i;
+			emp_list_lock(list);
+			BUG_ON(!emp_list_empty(list));
+			BUG_ON(emp_list_len(list) != 0);
+			emp_list_unlock(list);
+		}
+	}
+
+	if (proactive->lru_bufs) {
+		int i;
+		for (i = 0; i < proactive->abuf_len; i++) {
+			list = proactive->lru_bufs + i;
+			emp_list_lock(list);
+			BUG_ON(!emp_list_empty(list));
+			BUG_ON(emp_list_len(list) != 0);
+			emp_list_unlock(list);
+		}
+	}
+#endif /* CONFIG_EMP_VM */
+
+	if (proactive->host_mru) {
+		int cpu;
+		for_each_possible_cpu(cpu) {
+			list = emp_pc_ptr(proactive->host_mru, cpu);
+			emp_list_lock(list);
+			BUG_ON(!emp_list_empty(list));
+			BUG_ON(emp_list_len(list) != 0);
+			emp_list_unlock(list);
+		}
+	}
+
+	if (proactive->host_lru) {
+		int cpu;
+		for_each_possible_cpu(cpu) {
+			list = emp_pc_ptr(proactive->host_lru, cpu);
+			emp_list_lock(list);
+			BUG_ON(!emp_list_empty(list));
+			BUG_ON(emp_list_len(list) != 0);
+			emp_list_unlock(list);
+		}
+	}
+
+	BUG_ON(!emp_list_empty(&proactive->list));
+	BUG_ON(emp_list_len(&proactive->list) > 0);
+	BUG_ON(atomic_read(&proactive->page_len) != 0);
+}
+
 
 void debug_reclaim_exit_active(struct emp_mm *emm, struct slru *active)
 {

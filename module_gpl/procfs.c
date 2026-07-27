@@ -405,6 +405,8 @@ EMP_PROC_INITIAL_BOOLEAN(mem_poll)
 #endif
 #ifdef CONFIG_EMP_OPT
 EMP_PROC_INITIAL_BOOLEAN(eval_media)
+EMP_PROC_INITIAL_BOOLEAN(async_invlept)
+EMP_PROC_INITIAL_BOOLEAN(writeback_optimization_disable)
 #endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_aggr);
@@ -556,6 +558,8 @@ EMP_PROC_VM_CONFIG_BOOLEAN(mem_poll);
 #ifdef CONFIG_EMP_OPT
 EMP_PROC_VM_CONFIG_BOOLEAN(next_pt_premapping)
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(eval_media);
+EMP_PROC_VM_CONFIG_BOOLEAN(async_invlept);
+EMP_PROC_VM_CONFIG_BOOLEAN(writeback_optimization_disable);
 #endif
 #ifdef CONFIG_EMP_STAT
 EMP_PROC_VM_CONFIG_BOOLEAN(reset_after_read)
@@ -865,6 +869,9 @@ __EMP_PROC_STAT_PER_IOTHREAD(hva_remote_fault, remote_fault)
 /* for pure vcpu threads */
 __EMP_PROC_STAT_PER_KVM_THREAD(gpa_local_fault, local_fault)
 __EMP_PROC_STAT_PER_KVM_THREAD(gpa_remote_fault, remote_fault)
+EMP_PROC_STAT_PER_VCPU(dbit_count)
+EMP_PROC_STAT_PER_VCPU(cbit_count)
+EMP_PROC_STAT_PER_VCPU(wb_count)
 
 static ssize_t donor_reqs_read(struct file *file, char __user *buf,
 									size_t count, loff_t *ppos)
@@ -1018,6 +1025,8 @@ static struct emp_proc_entry emp_proc_global[] = {
 #endif
 #ifdef CONFIG_EMP_OPT
 	emp_proc_entry_initial_rw(eval_media),
+	emp_proc_entry_initial_rw(async_invlept),
+	emp_proc_entry_initial_rw(writeback_optimization_disable),
 #endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 	emp_proc_entry_ro(emp_debug_alloc_size_aggr),
@@ -1043,6 +1052,8 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_rw(next_pt_premapping),
 	emp_proc_entry_ro(eval_media),
 	emp_proc_entry_rw(read_poll),
+	emp_proc_entry_rw(async_invlept),
+	emp_proc_entry_rw(writeback_optimization_disable),
 #endif
 #ifdef CONFIG_EMP_STAT
 	emp_proc_entry_rw(reset_after_read),
@@ -1061,6 +1072,9 @@ static struct emp_proc_entry emp_proc_stat[] = {
 	emp_proc_entry_rw(hva_remote_fault),
 	emp_proc_entry_rw(gpa_local_fault),
 	emp_proc_entry_rw(gpa_remote_fault),
+	emp_proc_entry_rw(dbit_count),
+	emp_proc_entry_rw(cbit_count),
+	emp_proc_entry_rw(wb_count),
 	emp_proc_entry_ro(donor_reqs),
 	emp_proc_entry_rw(reclaim),
 	emp_proc_entry_rw(post_write),

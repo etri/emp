@@ -95,13 +95,18 @@ struct emp_pf_history {
 struct vcpu_var {
 	struct task_struct      *tsk;
 
+	u64                     t_tlb_flush;
+
 #ifdef CONFIG_EMP_STAT
 	/* statistics */
 	struct {
-	    u64 vma_fault;
+		u64 vma_fault;
 		u64 local_fault;
 		u64 remote_fault;
-	    u64 alloc_pages_wait_count;
+		u64 dbit_count;
+		u64 cbit_count;
+		u64 wb_count;
+		u64 alloc_pages_wait_count;
 	} stat;
 #endif
 

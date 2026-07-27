@@ -93,6 +93,8 @@ extern int    initial_enable_transition_csf;
 #ifdef CONFIG_EMP_OPT
 extern int    initial_eval_media;
 extern int    initial_chained_ops;
+extern int    initial_async_invlept;
+extern int    initial_writeback_optimization_disable;
 #endif
 extern int    initial_remote_reuse;
 extern int    initial_remote_policy_subblock;
@@ -119,6 +121,8 @@ struct emp_config {
 	int     remote_reuse; /* reuse remote page: remote inclusive policy */
 	int     remote_policy_subblock;
 	int     remote_policy_block;
+	int     async_invlept;
+	int     writeback_optimization_disable;
 };
 
 /* variables for collecting stats */
@@ -285,7 +289,15 @@ struct emp_ftm {
 	atomic_t            free_pages_reclaim;
 	int                 per_vcpu_free_lpages_len;
 
+#ifndef CONFIG_EMP_SEQUENTIAL
+	/* variables to fully utilize proactive list */
+	atomic_t            epsilon;
+	u8                  divider;
+#endif
+
 	/* lists of pages maintained to use local DRAM efficiently */
+	struct slru proactive_list;
+	size_t      proactive_pages_len;
 	struct slru         active_list;
 	size_t              active_pages_len;
 	struct slru         inactive_list;
