@@ -43,4 +43,4 @@ clean: $(SUBDIRS)
 install: $(SUBDIRS)
 
 tags: FORCE
-	ctags -R
+	ctags -R include module_kvm module_gpl vmd
