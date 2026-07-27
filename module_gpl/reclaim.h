@@ -32,6 +32,8 @@ enum lru_list_type {
 	INACTIVE_LIST
 };
 
+#define D_HEADS_SIZE 16 /* eager_writeback */
+
 #ifdef CONFIG_EMP_VM
 static inline void lock_kvm_mmu_lock(struct kvm *kvm) {
 	if (!kvm)
@@ -88,6 +90,9 @@ int add_gpas_to_active_list(enum lru_list_type, struct emp_mm *,
 			    struct vcpu_var *, struct emp_gpa **, int);
 int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				struct emp_gpa **gpas, int n_new);
+void check_eager_wbr(struct emp_mm *, struct vcpu_var *, struct emp_gpa *);
+struct eager_wbr *alloc_eager_wbr(struct vcpu_var *);
+void free_eager_wbr(struct emp_mm *, struct eager_wbr *);
 int emp_writeback_block(struct emp_mm *, struct emp_gpa *, struct vcpu_var *);
 int reclaim_gpa(struct emp_mm *, struct emp_gpa *, bool *);
 int reclaim_emp_pages(struct emp_mm *, struct vcpu_var *, int);

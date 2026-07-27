@@ -49,8 +49,8 @@ int     initial_enable_transition_csf;
 int     initial_eval_media;
 int	initial_chained_ops;
 int     initial_async_invlept;
-EXPORT_SYMBOL(initial_async_invlept); /* TODO: remove this after move initial_eager_writeback to here */
 int     initial_writeback_optimization_disable;
+int     initial_eager_writeback;
 #endif
 int     initial_remote_reuse;
 int     initial_remote_policy_subblock;
@@ -78,6 +78,18 @@ struct emp_ops emp_ops;
 #else
 #define BVMA_SIZE (sizeof(struct emp_mm))
 #endif
+
+#ifdef CONFIG_EMP_OPT
+/**
+ * eager_wbr_ctor - Constructor for eager writeback list
+ * @param opaque eager writeback entry
+ */
+static void eager_wbr_ctor(void *opaque)
+{
+	struct eager_wbr *w = (struct eager_wbr *)opaque;
+	INIT_LIST_HEAD(&w->list);
+}
+#endif /* CONFIG_EMP_OPT */
 
 #ifdef CONFIG_EMP_USER
 static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked);
@@ -216,9 +228,23 @@ static inline void set_kvm_emp_mm(struct kvm *kvm, void *emp_mm) {
 
 static int init_vcpu_var(struct vcpu_var *v, int id)
 {
+	int ret;
 	memset(v, 0, sizeof(*v));
 	(v)->id = id;
-	return emp_pf_history_init(v);
+	ret = emp_pf_history_init(v);
+	if (ret)
+		return ret;
+
+#ifdef CONFIG_EMP_OPT
+	v->eager_wbr_cache = 
+		emp_kmem_cache_create("eager_wbr",
+				sizeof(struct eager_wbr), 0, 0,
+				eager_wbr_ctor);
+	if (v->eager_wbr_cache == NULL)
+		return -ENOMEM;
+#endif /* CONFIG_EMP_OPT */
+
+	return 0;
 }
 
 #ifdef CONFIG_EMP_VM
@@ -289,6 +315,10 @@ static void __put_vcpus_var(struct emp_mm *bvma, int cpus_len)
 		if (v->pf_history)
 			emp_kfree(v->pf_history);
 #endif
+#ifdef CONFIG_EMP_OPT
+		if (v->eager_wbr_cache)
+			emp_kmem_cache_destroy(v->eager_wbr_cache);
+#endif /* CONFIG_EMP_OPT */
 	}
 	emp_list_unlock(free_page_list);
 
@@ -381,6 +411,10 @@ static void __put_pcpus_var(struct emp_mm *emm, int max_cpu_id)
 		if (v->pf_history)
 			emp_kfree(v->pf_history);
 #endif
+#ifdef CONFIG_EMP_OPT
+		if (v->eager_wbr_cache)
+			emp_kmem_cache_destroy(v->eager_wbr_cache);
+#endif /* CONFIG_EMP_OPT */
 	}
 	emp_list_unlock(free_page_list);
 
@@ -2283,6 +2317,7 @@ static struct emp_mm *create_emm(void)
 	bvma->config.chained_ops = initial_chained_ops;
 	bvma->config.async_invlept = initial_async_invlept;
 	bvma->config.writeback_optimization_disable = initial_writeback_optimization_disable;
+	bvma->config.eager_writeback = initial_eager_writeback;
 #endif
 	bvma->config.remote_reuse = initial_remote_reuse;
 	bvma->config.remote_policy_subblock = initial_remote_policy_subblock;
@@ -2656,6 +2691,7 @@ static int __init emp_init(void)
 	initial_chained_ops = DEFAULT_CHAINED_OPERATION;
 	initial_async_invlept = 0;
 	initial_writeback_optimization_disable = false;
+	initial_eager_writeback = false;
 #endif
 	initial_remote_reuse = DEFAULT_REMOTE_REUSE;
 	initial_remote_policy_subblock = DEFAULT_REMOTE_POLICY_SUBBLOCK;

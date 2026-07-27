@@ -1772,6 +1772,26 @@ void debug_select_victims_al(struct list_head *to_lru_head, int to_lru_len)
 	BUG_ON(to_lru_len && list_empty(to_lru_head));
 }
 
+void debug_check_eager_wbr(struct emp_gpa *head, struct emp_gpa *g) {
+	BUG_ON(!____emp_gpa_is_locked(head));
+	BUG_ON(head != g);
+}
+
+void debug_do_eager_writeback(struct emp_gpa *head) {
+	printk("%s target block %lx not free yet. "
+			"not writeback eagerly",
+			__func__, head->local_page->gpa_index);
+}
+
+void debug_check_eager_wbr2(struct emp_mm *emm, struct emp_gpa *head)
+{
+	struct emp_gpa *g;
+	for_each_gpas(g, head) {
+		if (__debug_page_count_eq(emm, g, 1, __func__))
+			break;
+	}
+}
+
 void debug_evict_block(struct emp_mm *emm, struct emp_gpa *head)
 {
 	struct emp_gpa *g;

@@ -407,6 +407,27 @@ EMP_PROC_INITIAL_BOOLEAN(mem_poll)
 EMP_PROC_INITIAL_BOOLEAN(eval_media)
 EMP_PROC_INITIAL_BOOLEAN(async_invlept)
 EMP_PROC_INITIAL_BOOLEAN(writeback_optimization_disable)
+EMP_PROC_INITIAL_BOOLEAN_READ(eager_writeback)
+static ssize_t initial_eager_writeback_write(struct file *file, const char __user *buf,
+							size_t count, loff_t *ppos) {
+	extern int initial_eager_writeback;
+	extern int initial_async_invlept;
+	int eager_writeback = initial_eager_writeback;
+	ssize_t ret = __integer_write(file, buf, count, ppos,
+							&eager_writeback, 0, 1);
+
+	if (ret < 0) return ret;
+
+	if (eager_writeback == 1 && initial_async_invlept == 0) {
+		printk(KERN_ERR "async_invlept must be enabled for eager_writeback\n");
+		return -EINVAL;
+	}
+
+	initial_eager_writeback = eager_writeback;
+	printk(KERN_INFO "initial_eager_writeback: %d\n", initial_eager_writeback);
+
+	return ret;
+}
 #endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_aggr);
@@ -560,6 +581,30 @@ EMP_PROC_VM_CONFIG_BOOLEAN(next_pt_premapping)
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(eval_media);
 EMP_PROC_VM_CONFIG_BOOLEAN(async_invlept);
 EMP_PROC_VM_CONFIG_BOOLEAN(writeback_optimization_disable);
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(eager_writeback);
+static ssize_t eager_writeback_write(struct file *file, const char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	ssize_t ret;
+	int eager_writeback;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	eager_writeback = bvma->config.eager_writeback;
+
+	ret = __integer_write(file, buf, count, ppos,
+						&eager_writeback, 0, 1);
+	if (ret < 0) return ret;
+
+	if (eager_writeback == 1 && bvma->config.async_invlept == 0) {
+		printk(KERN_ERR "ERROR: [emp_id: %d] async_invlept must be enabled for eager_writeback\n",
+						bvma->id);
+		return -EINVAL;
+	}
+
+	bvma->config.eager_writeback = eager_writeback;
+	printk(KERN_INFO "eager_writeback: emp_id: %d value: %d\n", bvma->id,  eager_writeback);
+	return ret;
+}
 #endif
 #ifdef CONFIG_EMP_STAT
 EMP_PROC_VM_CONFIG_BOOLEAN(reset_after_read)
@@ -1027,6 +1072,7 @@ static struct emp_proc_entry emp_proc_global[] = {
 	emp_proc_entry_initial_rw(eval_media),
 	emp_proc_entry_initial_rw(async_invlept),
 	emp_proc_entry_initial_rw(writeback_optimization_disable),
+	emp_proc_entry_initial_rw(eager_writeback),
 #endif
 #ifdef CONFIG_EMP_DEBUG_ALLOC
 	emp_proc_entry_ro(emp_debug_alloc_size_aggr),
@@ -1054,6 +1100,7 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_rw(read_poll),
 	emp_proc_entry_rw(async_invlept),
 	emp_proc_entry_rw(writeback_optimization_disable),
+	emp_proc_entry_rw(eager_writeback),
 #endif
 #ifdef CONFIG_EMP_STAT
 	emp_proc_entry_rw(reset_after_read),

@@ -92,10 +92,22 @@ struct emp_pf_history {
 };
 #endif /* CONFIG_EMP_DEBUG_PF_HISTORY */
 
+#ifdef CONFIG_EMP_OPT
+struct eager_wbr {
+	struct list_head        list;
+	int                     cpu;
+	struct work_request     *w;
+	struct emp_gpa          *g;
+} __attribute__((aligned(8)));
+#endif /* CONFIG_EMP_OPT */
+
 struct vcpu_var {
 	struct task_struct      *tsk;
 
 	u64                     t_tlb_flush;
+#ifdef CONFIG_EMP_OPT
+	struct kmem_cache       *eager_wbr_cache;
+#endif /* CONFIG_EMP_OPT */
 
 #ifdef CONFIG_EMP_STAT
 	/* statistics */

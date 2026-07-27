@@ -117,12 +117,13 @@ struct emp_config {
 	int     next_pt_premapping;
 	int     eval_media;
 	int	chained_ops;
+	int     async_invlept;
+	int     writeback_optimization_disable;
+	int     eager_writeback;
 #endif
 	int     remote_reuse; /* reuse remote page: remote inclusive policy */
 	int     remote_policy_subblock;
 	int     remote_policy_block;
-	int     async_invlept;
-	int     writeback_optimization_disable;
 };
 
 /* variables for collecting stats */

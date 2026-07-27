@@ -248,6 +248,9 @@ void debug___emp_page_fault_hva2(struct emp_mm *, struct emp_gpa *);
 void debug_pte_install(struct page *);
 void debug_select_victims_pl(struct emp_gpa **, int);
 void debug_select_victims_al(struct list_head *, int);
+void debug_check_eager_wbr(struct emp_gpa *head, struct emp_gpa *g);
+void debug_do_eager_writeback(struct emp_gpa *head);
+void debug_check_eager_wbr2(struct emp_mm *emm, struct emp_gpa *);
 void debug_evict_block(struct emp_mm *, struct emp_gpa *);
 void debug_update_inactive_list(struct emp_gpa *head, struct emp_gpa *g);
 void debug_update_inactive_list2(struct emp_mm *, struct emp_gpa *);
@@ -303,6 +306,9 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_pte_install(p) do{}while(0)
 #define debug_select_victims_pl(vs, n_vs) do {} while (0)
 #define debug_select_victims_al(h, l) do{}while(0)
+#define debug_check_eager_wbr(head, g) do {} while(0)
+#define debug_check_eager_wbr2(emm, head) do {} while(0)
+#define debug_do_eager_writeback(head) do {} while(0)
 #define debug_evict_block(emm, head) do{}while(0)
 #define debug_update_inactive_list(head, g) do{}while(0)
 #define debug_update_inactive_list2(emm, head) do{}while(0)

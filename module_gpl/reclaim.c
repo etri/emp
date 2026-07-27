@@ -736,6 +736,38 @@ update_active_list(struct emp_mm *emm, struct vcpu_var *local_cpu,
 }
 
 /**
+ * check_eager_wbr - Check eager writeback block and handle the writeback
+ * @param bvma bvma data structure
+ * @param cpu working vcpu ID
+ * @param head head of the block
+ */
+void check_eager_wbr(struct emp_mm *bvma, struct vcpu_var *cpu,
+		     struct emp_gpa *head)
+{
+	struct work_request *w;
+	struct eager_wbr *e;
+
+	if (!clear_gpa_flags_if_set(head, GPA_EAGER_WBR_MASK))
+		return;
+
+	e = (struct eager_wbr *) head->local_page->w;
+	debug_check_eager_wbr(head, e->g);
+
+	w = e->w;
+	e->w = NULL;
+	head->local_page->w = w;
+	debug_progress(w, head);
+	bvma->sops.clear_writeback_block(bvma, head, w, cpu,
+					 false, false);
+	head->local_page->w = NULL;
+	free_eager_wbr(bvma, e);
+
+	debug_check_eager_wbr2(bvma, head);
+	/* Clear GPA_DIRTY_MASK to prevent duplicated writebacks. */
+	clear_gpa_flags_if_set(head, GPA_DIRTY_MASK);
+}
+
+/**
  * check_block_free - Check if the block will be freed
  * @param bvma bvma data structure
  * @param head head of the block
@@ -750,17 +782,20 @@ static bool check_block_free(struct emp_mm *bvma, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
 	struct page *p;
-	bool not_free = false;
+	int pc;
+	bool is_free = true;
+
+	pc = is_gpa_flags_set(head, GPA_EAGER_WBR_MASK)? 2: 1;
 
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
-		if (emp_page_count(p) != 1) {
-			not_free = true;
+		if (emp_page_count(p) != pc) {
+			is_free = false;
 			break;
 		}
 	}
 
-	return !not_free;
+	return is_free;
 }
 
 
@@ -772,6 +807,7 @@ static bool check_block_free(struct emp_mm *bvma, struct emp_gpa *head)
  * @param vs_len the number of victims in a list
  * @param ctime current time
  * @param need_tlb_flush
+ * @param pressure the remaining pressure in terms of pages
  *
  * @return the number of victims
  */
@@ -1157,6 +1193,7 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 		debug_update_inactive_list(head,
 				emp_get_block_head(victims[i]));
 
+		check_eager_wbr(bvma, local_cpu, head);
 		debug_update_inactive_list2(bvma, head);
 
 		n_victim_pages += gpa_block_size(head);
@@ -1189,6 +1226,72 @@ error:
 }
 
 /**
+ * do_eager_writeback - Do writeback unmapped dirty block eagerly
+ * @param bvma bvma data structure
+ * @param cpu working vcpu ID
+ * @param d_heads dirty block heads
+ * @param n_d_heads the number of dirty blocks
+ *
+ * Eager writeback makes a headroom for the local memory. \n
+ * It allocates eager writeback request & writeback unmapped dirty block
+ */
+static int do_eager_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
+			       struct emp_gpa *d_heads[], int n_d_heads)
+{
+	int i;
+	struct emp_gpa *head;
+	bool not_free;
+	struct work_request *w;
+	struct eager_wbr *e;
+
+	for (i = 0; i < n_d_heads; i++) {
+		head = d_heads[i];
+
+		not_free = !check_block_free(bvma, head);
+		if (not_free) {
+			debug_do_eager_writeback(head);
+			continue;
+		}
+
+		e = alloc_eager_wbr(cpu);
+		debug_check_null_pointer(e);
+		w = evict_block(bvma, cpu, head, true);
+		if (!w) {
+			free_eager_wbr(bvma, e);
+			continue;
+		} else if (unlikely(IS_ERR(w)))
+			goto error;
+
+		e->g = head;
+		e->w = w;
+		head->local_page->w = (struct work_request *) e;
+		set_gpa_flags_if_unset(head, GPA_EAGER_WBR_MASK);
+	}
+
+	return 0;
+
+error:
+	free_eager_wbr(bvma, e);
+	return (int) PTR_ERR(w);
+}
+
+struct eager_wbr *
+alloc_eager_wbr(struct vcpu_var *cpu)
+{
+	struct eager_wbr *w;
+	w = emp_kmem_cache_alloc(cpu->eager_wbr_cache, GFP_ATOMIC);
+	w->cpu = cpu->id;
+	return w;
+}
+
+void free_eager_wbr(struct emp_mm *emm, struct eager_wbr *w)
+{
+	struct vcpu_var *v;
+	v = emp_get_vcpu_from_id(emm, w->cpu);
+	emp_kmem_cache_free(v->eager_wbr_cache, w);
+}
+
+/**
  * add_gpas_to_inactive - Add blocks to inactive list
  * @param bvma bvma data structure
  * @param cpu working vcpu ID
@@ -1206,6 +1309,7 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 	struct slru *slru;
 	struct emp_list *list;
 	int i, cpu_id;
+	int ret;
 	struct emp_gpa *head;
 
 	debug_add_gpas_to_inactive(gpas, n_new);
@@ -1232,6 +1336,10 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 	if (new_pages_len)
 		__add_inactive_list_page_len(new_pages_len, bvma);
 
+	ret = do_eager_writeback(bvma, cpu, gpas, n_new);
+	if (unlikely(ret < 0))
+		return ret;
+
 	return new_pages_len;
 }
 
@@ -1240,7 +1348,6 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
  * @param bvma bvma data structure
  * @param vcpu working vcpu ID
  * @param pressure pressure
- * @param verbose need to show debug msg?
  *
  * Check the number of pages in LRU lists and move the pages among the lists
  * if the lists are full
@@ -1267,7 +1374,6 @@ static int _update_lru_lists(struct emp_mm *bvma, struct vcpu_var *cpu,
 				emp_unlock_block(victims[i]);
 		}
 	}
-
 
 	// for active queue
 	n_unmap_pages = 0;
