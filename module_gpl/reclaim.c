@@ -14,7 +14,7 @@
 #endif
 #include "pcalloc.h"
 
-// we assume that TLB valid period without TLB shootdown is 20ms
+// we assume that TLB valid period without TLB shootdown is 10ms
 #define TLB_VALID_PERIOD (10ULL * MS_TO_NS)
 #define MRU_BUF_FULL(size, len) ((len) >= (size))
 
