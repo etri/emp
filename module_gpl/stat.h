@@ -1,6 +1,7 @@
 #ifndef __STAT_H__
 #define __STAT_H__
 #ifdef CONFIG_EMP_STAT
+/* macros for global statistics */
 #define emp_stat_inc(emm, name) do { \
 		atomic64_inc(&(emm)->stat.name); \
 } while (0)
@@ -17,6 +18,7 @@
 		memset(&(emm)->stat, 0, sizeof(struct emp_stat)); \
 } while (0)
 
+/* macros for per-cpu statistics */
 #define emp_vcpu_stat_inc(cpu, name) do { \
 		(cpu)->stat.name += 1; \
 } while (0)
@@ -32,6 +34,31 @@
 #define emp_vcpu_stat_init(cpu) do { \
 		memset(&(cpu)->stat, 0, sizeof(struct emp_vcpu_stat)); \
 } while (0)
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+/* macros for elastic block statistics */
+#define emp_els_stat_inc(emm, gpa, name) do { \
+	atomic64_inc(&(emm)->stat.els_##name[gpa_block_order(gpa)]); \
+} while (0)
+#define emp_els_stat_add(emm, gpa, name, val) do { \
+	atomic64_add((val), &(emm)->stat.els_##name[gpa_block_order(gpa)]); \
+} while (0)
+#define __emp_els_stat_add(emm, order, name, val) do { \
+	atomic64_add((val), &(emm)->stat.els_##name[order]); \
+} while (0)
+#define emp_els_stat_read(emm, name, order) ({ \
+	atomic64_read(&(emm)->stat.els_##name[order]); \
+})
+#define emp_els_stat_reset(emm, name, order) do { \
+	atomic64_set(&(emm)->stat.els_##name[order], 0); \
+} while (0)
+#else /* !CONFIG_EMP_ELASTIC_BLOCK */
+#define emp_els_stat_inc(emm, gpa, name) do {} while (0)
+#define emp_els_stat_add(emm, gpa, name, val) do {} while (0)
+#define __emp_els_stat_add(emm, order, name, val) do {} while (0)
+#define emp_els_stat_read(emm, name, order) (0)
+#define emp_els_stat_reset(emm, name, order) do {} while (0)
+#endif /* !CONFIG_EMP_ELASTIC_BLOCK */
 
 /* variables for collecting stats */
 struct emp_stat {
@@ -56,6 +83,21 @@ struct emp_stat {
 	atomic64_t      post_read_mempoll;
 
 	atomic64_t      fsync_count;
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	atomic64_t els_block_count[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_block_stretch[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_block_reduce[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_block_reduce_complete[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_fetch[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_writeback[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_noref_count[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_ref_count[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_clean_count[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_dirty_count[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_complete_noref_count[BLOCK_MAX_ORDER + 1];
+	atomic64_t els_complete_clean_count[BLOCK_MAX_ORDER + 1];
+#endif
 
 	atomic64_t      blk_prefetch_try;
 	atomic64_t      blk_prefetch_active;
@@ -82,14 +124,20 @@ struct emp_vcpu_stat {
 #else /* !CONFIG_EMP_STAT */
 #define emp_stat_inc(emm, name) do {} while (0)
 #define emp_stat_add(emm, name, val) do {} while (0)
-#define emp_stat_read(emm, name) do {} while (0)
+#define emp_stat_read(emm, name) (0)
 #define emp_stat_reset(emm, name) do {} while (0)
 #define emp_stat_init(emm) do {} while (0)
 
 #define emp_vcpu_stat_inc(cpu, name) do {} while (0)
 #define emp_vcpu_stat_add(cpu, name, val) do {} while (0)
-#define emp_vcpu_stat_read(cpu, name) do {} while (0)
+#define emp_vcpu_stat_read(cpu, name) (0)
 #define emp_vcpu_stat_reset(cpu, name) do {} while (0)
 #define emp_vcpu_stat_init(cpu) do {} while (0)
+
+#define emp_els_stat_inc(emm, gpa, name) do {} while (0)
+#define emp_els_stat_add(emm, gpa, name, val) do {} while (0)
+#define __emp_els_stat_add(emm, order, name, val) do {} while (0)
+#define emp_els_stat_read(emm, name, order) (0)
+#define emp_els_stat_reset(emm, name, order) do {} while (0)
 #endif /* !CONFIG_EMP_STAT */
 #endif /* __STAT_H__ */

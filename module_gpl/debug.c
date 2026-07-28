@@ -9,6 +9,7 @@
 #include "kvm_mmu.h"
 #include "page_mgmt.h"
 #include "block.h"
+#include "els_block.h"
 #include "block-flag.h"
 #include "paging.h"
 #include "udma.h"
@@ -2255,5 +2256,128 @@ void debug_emp_list_del_init(struct list_head *pos, struct emp_list *list)
 }
 EXPORT_SYMBOL(debug_emp_list_del_init);
 #endif /* CONFIG_EMP_DEBUG_LRU_LIST_DEL */
+
+#ifdef CONFIG_EMP_DEBUG_LRU_LIST
+void __debug_reduce_inactive_list_page_len(struct emp_mm *emm,
+			struct emp_gpa **gpa_list, int gpa_list_len,
+			char *file, int line)
+{
+	int i;
+	struct emp_gpa *gpa;
+	int block_order = -1;
+
+	if (gpa_list_len == 1)
+		return;
+
+	gpa = gpa_list[0];
+	if (gpa->contrib_inactive_len != gpa_block_size(gpa) * gpa_list_len) {
+		printk(KERN_ERR "%s: ERROR: contrib != block_size * len. "
+				"contrib: %d block_size: %ld len: %d at %s:%d "
+				"last_contrib: %d at %s:%d\n",
+				__func__, gpa->contrib_inactive_len,
+				gpa_block_size(gpa), gpa_list_len, file, line,
+				gpa->contrib_last_val,
+				gpa->contrib_last_file ? gpa->contrib_last_file
+						       : "(null)",
+				gpa->contrib_last_line);
+		//BUG();
+	}
+
+	for (i = 0; i < gpa_list_len; i++) {
+		gpa = gpa_list[i];
+		if (block_order == -1)
+			block_order = gpa_block_order(gpa);
+		else
+			BUG_ON(gpa_block_order(gpa) != block_order);
+		if (i != 0) {
+			// for i == 0, already checked.
+			BUG_ON(gpa->contrib_inactive_len != 0);
+		}
+		// We have checked the current value. Just assign the new value.
+		gpa->contrib_inactive_len = gpa_block_size(gpa);
+		gpa->contrib_last_file = file;
+		gpa->contrib_last_line = line;
+		gpa->contrib_last_val = gpa_block_size(gpa);
+	}
+}
+EXPORT_SYMBOL(__debug_reduce_inactive_list_page_len);
+#endif /* CONFIG_EMP_DEBUG_LRU_LIST */
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+void debug_els_update_gpa_flags(struct emp_gpa *g) {
+	BUG_ON(__is_gpa_flags_set(g, GPA_STRETCHED_MASK));
+}
+
+void debug_els_stretch_rep(struct emp_gpa *chead, int cpu, u32 flag) 
+{
+	BUG_ON((flag & BLOCK_FETCH_IN_PROGRESS) &&
+		(chead->r_state != 
+		 (IS_IOTHREAD_VCPU(cpu)? GPA_ACTIVE: GPA_FETCHING)));
+}
+
+void debug_els_stretch_rep2(struct emp_gpa *new_primary,
+		struct emp_gpa *prev_linked) {
+	BUG_ON(list_empty(&prev_linked->local_page->lru_list));
+}
+
+void debug_els_stretch_rep3(struct emp_gpa *new_primary, struct emp_gpa *chead,
+		int cpu) {
+	BUG_ON(!____emp_gpa_is_locked(new_primary));
+	BUG_ON(chead->local_page->w && (new_primary->r_state !=
+			(IS_IOTHREAD_VCPU(cpu)? GPA_ACTIVE: GPA_FETCHING)));
+}
+
+void debug_els_stretch_rep4(struct emp_gpa *new_primary)
+{
+	struct emp_gpa *p;
+	for_each_gpas(p, new_primary) {
+		struct local_page *local_page = p->local_page;
+		if (p == new_primary) {
+			BUG_ON(list_empty(&local_page->lru_list));
+			continue;
+		}
+		BUG_ON(!list_empty(&local_page->lru_list));
+	}
+}
+
+void debug_els_stretch_rep5(struct emp_mm *bvma, struct emp_vmr *vmr,
+		struct emp_gpa *new_primary, struct emp_gpa *chead, int cpu)
+{
+	BUG_ON(!__is_gpa_flags_set(new_primary, GPA_STRETCHED_MASK));
+	BUG_ON(__is_gpa_flags_set(new_primary, GPA_PREFETCHED_MASK));
+	BUG_ON(new_primary != emp_get_block_head(chead));
+	BUG_ON(IS_IOTHREAD_VCPU(cpu) && !ACTIVE_BLOCK(new_primary));
+	BUG_ON(!IS_IOTHREAD_VCPU(cpu) && !FETCHING_BLOCK(new_primary));
+}
+
+void debug___els_reduce(struct emp_gpa *buddy, struct emp_gpa *s) {
+	buddy->gfn_offset_order = s->gfn_offset_order;
+}
+
+void debug___els_tryreduce_complete(struct emp_gpa *s) {
+	if (!__is_gpa_flags_same(s, (GPA_nPT_MASK |
+					GPA_PROMOTE_MASK | GPA_PROACTIVE_MASK |
+					GPA_STRETCHED_MASK |
+					GPA_EAGER_WBR_MASK |
+					GPA_PREFETCHED_MASK), 0)) {
+		printk(KERN_ERR "[ERROR] %s: s->flags: 0x%x", __func__,
+						__get_gpa_flags(s));
+		BUG();
+	}
+#ifdef CONFIG_EMP_IO
+	BUG_ON(__is_gpa_flags_set(s, GPA_IO_MASK));
+#endif
+}
+
+void debug___els_tryreduce_complete2(struct emp_gpa *g, struct emp_gpa *s) {
+	g->gfn_offset_order = s->gfn_offset_order;
+}
+
+void debug___els_stretch(struct emp_gpa *g, int next_order)
+{
+	BUG_ON(gpa_block_order(g) > BLOCK_MAX_ORDER);
+	BUG_ON(gpa_block_order(g) != next_order);
+}
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 
 #endif

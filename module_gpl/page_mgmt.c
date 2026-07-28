@@ -11,6 +11,7 @@
 #ifdef CONFIG_EMP_STAT
 #include "stat.h"
 #endif
+#include "els_block.h"
 #include "debug.h"
 #include "paging.h"
 #include "hva.h"
@@ -46,6 +47,26 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 							: NULL;
 	int prev_vmr_id = head->local_page->vmr_id;
 
+	/* TODO: do not wait the completion of writeback.
+	 * In the paper [1], we discuss how to skip waiting the completion of
+	 * writeback request when handling writeback fault. We set
+	 * gpa->local_page->w = NULL and the work request is solely linked
+	 * to the writeback request list. Then, when someone traverses the
+	 * writeback request list and finds such request that
+	 * w != w->gpa->local->w, we just clear the work request.
+	 *
+	 * However, this increases the complexity especially for user-level EMP
+	 * with support of fork and copy-on-write (CoW). Thus, we remove the
+	 * optimization. This decision makes EMP slightly slow but robust.
+	 *
+	 * In the future, for performance, we can reconsider the optimization
+	 * discussed above. Good luck the future.
+	 *
+	 * [1] Kwangwon Koh, Kangho Kim, Seunghyub Jeon, and Jaehyuk Huh,
+	 *     "Disaggregated Cloud Memory with Elastic Block Management",
+	 *     IEEE Transactions on Computers (TC), 68 (1), January 2019
+	 */
+
 	debug_assert(head->local_page && head->local_page->w);
 
 	debug_progress(head_wr, head);
@@ -68,7 +89,8 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 				DEBUG_RSS_SUB_WRITEBACK_PREV,
 				head, DEBUG_UPDATE_RSS_BLOCK);
 		}
-		emp_update_rss_add_force(vmr, __local_block_to_page_len(vmr, head),
+		emp_update_rss_add_force(vmr,
+				__local_block_to_page_len(vmr, head),
 				DEBUG_RSS_ADD_WRITEBACK_CURR,
 				head, DEBUG_UPDATE_RSS_BLOCK);
 	}
@@ -85,11 +107,24 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
  * Update LRU list since the page is re-referenced
  */
 int handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa **head,
-			    struct emp_gpa *gpa, struct vcpu_var *cpu)
+				struct emp_gpa *gpa, struct vcpu_var *cpu)
 {
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	int block_size = vmr->emm->config.els_disabled
+						? gpa_block_size(*head)
+						: BLOCK_MAX_SIZE;
+#else
+	const int block_size = gpa_block_size(*head);
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
+
+	debug_BUG_ON(is_gpa_flags_set(*head, GPA_EAGER_WBR_MASK));
+
 	_handle_writeback_fault(vmr, *head, cpu);
 
-	return update_lru_lists_reref(vmr->emm, cpu, head, 1, gpa_block_size(*head));
+	// success to stretch the block means that the block is linked to
+	// (pro)active list thanks to  buddy block. if then we do not need to
+	// insert the block to any list.
+	return update_lru_lists_reref(vmr->emm, cpu, head, 1, block_size);
 }
 
 /**
@@ -115,6 +150,7 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	gpa_cpu = get_local_page_cpu(head->local_page);
 	list = get_list_ptr_inactive(emm, slru, gpa_cpu);
+
 	emp_list_lock(list);
 	emp_list_del(&head->local_page->lru_list, list);
 	clear_local_page_on_mru(head->local_page);
@@ -129,22 +165,23 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		}
 	}
 
-	debug__handle_gpa_on_inactive_fault(emm, head);
+	check_eager_wbr(emm, cpu, head);
 
-	sub_inactive_list_page_len(emm, head);
+	debug__handle_gpa_on_inactive_fault(emm, head);
 
 	head->r_state = GPA_INIT;
 
+	sub_inactive_list_page_len(emm, head);
+
 	if (prev_vmr_id != vmr->id) {
+		long page_len = __local_block_to_page_len(vmr, head);
 		if (prev_vmr_id >= 0) {
 			struct emp_vmr *prev_vmr = emm->vmrs[prev_vmr_id];
-			emp_update_rss_sub_force(prev_vmr,
-				__local_block_to_page_len(prev_vmr, head),
+			emp_update_rss_sub_force(prev_vmr, page_len,
 				DEBUG_RSS_SUB_INACTIVE_PREV,
 				head, DEBUG_UPDATE_RSS_BLOCK);
 		}
-		emp_update_rss_add_force(vmr,
-				__local_block_to_page_len(vmr, head),
+		emp_update_rss_add_force(vmr, page_len,
 				DEBUG_RSS_ADD_INACTIVE_CURR,
 				head, DEBUG_UPDATE_RSS_BLOCK);
 	}
@@ -152,13 +189,13 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 
 /**
  * handle_inactive_fault - Handle local inactive page fault
- * @param bvma bvma data structure
+ * @param vmr emp vmr data structure
  * @param head heads of faulted blocks
  * @param dma_head gpa for faulted addr
  * @param cpu working vcpu ID
  *
  * Handle page fault when the page is in inactive list.
- * The handled page is promoted to active list
+ * The handled page is promoted to proactive list
  */
 void handle_inactive_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 			   struct emp_gpa *dma_head, struct vcpu_var *cpu)
@@ -167,6 +204,9 @@ void handle_inactive_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 
 	_handle_gpa_on_inactive_fault(vmr, phead, cpu);
 
+	// success to stretch the block means that the block is linked to
+	// (pro)active list thanks to  buddy block. if then we do not need to
+	// insert the block to any list.
 	add_gpas_to_active_list(PROACTIVE_LIST, vmr->emm, cpu, head, 1);
 }
 
@@ -290,8 +330,8 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 			int demand_offset, struct vcpu_var *cpu,
 			bool no_fetch, bool is_stale, bool io_read_mask)
 {
-	int ret, fip;
 	unsigned int sb_order;
+	int fip, ret;
 	int no_fetching_count = 0;
 	struct emp_gpa *g, *demand;
 	unsigned long offset;
@@ -303,16 +343,19 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	offset = demand_offset >> sb_order;
 	demand = head + offset;
 
-	
 	// for the first touch on a block
 	if (unlikely(!is_gpa_flags_set(head, GPA_TOUCHED_MASK))) {
 		set_gpa_flags_if_unset(head, GPA_TOUCHED_MASK);
 		no_fetch = true;
+
+		// increase block count
+		emp_els_stat_inc(bvma, head, block_count);
 	}
 	
 	ret = bvma->sops.alloc_and_fetch_pages(vmr, demand, head_idx + offset,
 						sb_order, demand_offset, cpu,
-						NULL, NULL, 1, no_fetch,
+						NULL, NULL, 1,
+						no_fetch,
 						is_stale, io_read_mask);
 	if (ret == 0)
 		no_fetching_count++;
@@ -369,50 +412,57 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
  *
  * @retval 1: fetching in progress
  * @retval 0: do not need fetching
- * @retval -1: error
+ * @retval -1: error occurs
  *
- * It calls $fetch_block, and decides increase or shrink the size of block
+ * It calls $fetch_block, and decides increase or shrink the size of block (elastic block)
  */
-int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
-			unsigned long head_idx, struct emp_gpa *gpa,
-			pgoff_t demand_off, struct vcpu_var *cpu,
-			bool read_only_mapping)
+int handle_remote_fault(struct emp_vmr *vmr,
+			struct emp_gpa **head, unsigned long head_idx,
+			struct emp_gpa *gpa, pgoff_t demand_off,
+			struct vcpu_var *cpu, bool read_only_mapping)
 {
-	int fip, r;
-	bool no_fetch = false, is_stale = false, io_read_mask = false;
-	int block_size, block_order;
 	struct emp_mm *bvma = vmr->emm;
+	int ret, r;
+	bool no_fetch = false, is_stale = false, io_read_mask = false;
+	int n_new_gpa = 1, block_size, block_order;
 	int demand_offset = emp_get_block_offset(*head, gpa, demand_off);
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	bool els_stretched;
+	unsigned int flag = 0;
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 
 	block_size = gpa_block_size(*head);
 	block_order = gpa_block_order(*head);
 
 #if defined(GPA_IO_READ_MASK)
 	if (clear_gpa_flags_if_set(*head, GPA_IO_READ_MASK)) {
+		els_stretch_flag_add(flag, BLOCK_NO_FETCH);
 		no_fetch = true;
 		io_read_mask = true;
 	}
 #endif
 #ifdef CONFIG_EMP_OPT
 	if (clear_gpa_flags_if_set(*head, GPA_STALE_BLOCK_MASK)) {
+		els_stretch_flag_add(flag, BLOCK_NO_FETCH | BLOCK_STALE);
 		no_fetch = true;
 		is_stale = true;
 	}
 #endif
 
 	// fetching a page on demand
-	fip = fetch_block(bvma, vmr, *head, head_idx, demand_offset, cpu, no_fetch,
-				is_stale, io_read_mask);
-	debug_progress(*head, fip);
-	if (unlikely(fip < 0))
-		return fip;
+	ret = fetch_block(bvma, vmr, *head, head_idx, demand_offset, cpu,
+				no_fetch, is_stale, io_read_mask);
+	debug_progress(*head, ret);
+	if (unlikely(ret < 0))
+		return ret;
 
-	debug_fetch_block(bvma, *head, fip);
+	debug_fetch_block(bvma, *head, ret);
 
 #ifdef CONFIG_EMP_STAT
 	/* update stats - increase fetch num counters for the block order */
-	if (fip) {
+	if (ret) {
 		emp_vcpu_stat_inc(cpu, remote_fault);
+		emp_els_stat_inc(bvma, *head, fetch);
 	} else {
 		emp_vcpu_stat_inc(cpu, local_fault);
 		if (!IS_IOTHREAD_VCPU(cpu->id)) {
@@ -438,21 +488,53 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 #endif
 	}
 #else /* !CONFIG_EMP_STAT */
-	if (!fip && !IS_IOTHREAD_VCPU(cpu->id)) {
+	if (!ret && !IS_IOTHREAD_VCPU(cpu->id)) {
 		/* update gpa info */
 		(*head)->r_state = GPA_ACTIVE;
 	}
 #endif
 
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	if (read_only_mapping)
+		els_stretch_flag_add(flag, BLOCK_READ_ONLY);
+	/*  it tries to stretch the block to exploit the spatial locality.
+	 *  if the operation succeeds, the fault block is merged to
+	 *  the existing one. 
+	 *  however, the block is zero, ignore this time */
+	if (ret)
+		els_stretch_flag_add(flag, BLOCK_FETCH_IN_PROGRESS);
+	els_stretched = els_stretch_rep(bvma, cpu, *head, flag, 1);
+	if (els_stretched) {
+		// the block is stretched, head and it's order must be updated
+		*head = emp_get_block_head(gpa);
+
+		/* stretched block is linked with link node which is
+		 * already included in a queue so we don't need to
+		 * reinsert the elastic block. and follwing is enough
+		 * to prevent the gpa from being re-inserted          */
+		n_new_gpa = 0;
+
+		/* victim selector need to know the memory block_size,
+		 * so that allocation counter should be passed to it */
+		/*block_size = gpa_block_size(*head);*/
+	} else {
+		n_new_gpa = 1;
+	}
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
+
 	/* update_lru_lists() selects and evicts a victim by updating lru lists.
 	 * This function requires the size of a block to determine the block_size
 	 * on cache systems. */
-	r = update_lru_lists(bvma, cpu, head, 1, block_size);
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	if (!bvma->config.els_disabled)
+		block_size = BLOCK_MAX_SIZE;
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
+	r = update_lru_lists(bvma, cpu, head, n_new_gpa, block_size);
 	debug_progress(*head, r);
 	if (unlikely(r < 0))
 		return r;
 
-	return fip;
+	return ret;
 }
 
 #ifdef CONFIG_EMP_VM
@@ -1670,6 +1752,9 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	/* set all the pages writable in GPL version */
 	*writable = true;
 #endif
+
+	/* stretching is done */
+	clear_gpa_flags_if_set(head, GPA_STRETCHED_MASK);
 
 	if (head->r_state == GPA_FETCHING)
 		head->r_state = GPA_ACTIVE;

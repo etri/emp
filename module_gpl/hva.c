@@ -403,7 +403,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	emp_hpt_fetch_barrier(emm, vmr, head, demand, demand_off,
 				prefetched_sb, fetch);
 
-	if (prefetch_hit)
+	if (clear_gpa_flags_if_set(head, GPA_STRETCHED_MASK) || prefetch_hit)
 		sync_hpt_map_in_block(emm, head, is_write);
 	
 #ifdef CONFIG_EMP_EXT
@@ -411,6 +411,10 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 		emp_ext.prepare_install_hptes(emm, vmr, head, demand,
 							prefetch_hit, is_write);
 #endif	
+
+	/* stretching is done */
+	clear_gpa_flags_if_set(head, GPA_STRETCHED_MASK);
+
 	ret = emp_install_hptes(emm, vmr, head, demand, pmd,
 							prefetch_hit, is_write);
 	vmf->page = demand->local_page->page

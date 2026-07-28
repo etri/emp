@@ -343,6 +343,9 @@ static ssize_t initial_subblock_size_write(struct file *file, const char __user 
 	return count;
 }
 
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+EMP_PROC_INITIAL_BOOLEAN(els_disabled)
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 EMP_PROC_INITIAL_BOOLEAN(remote_reuse)
 EMP_PROC_INITIAL_BOOLEAN(critical_subblock_first)
 EMP_PROC_INITIAL_BOOLEAN_READ(critical_page_first)
@@ -509,6 +512,9 @@ static ssize_t online_read(struct file *file, char __user *buf,
 #ifdef CONFIG_EMP_BLOCK
 EMP_PROC_VM_CONFIG_INTEGER_READ(block_order)
 EMP_PROC_VM_CONFIG_INTEGER_READ(subblock_order)
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(els_disabled)
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 EMP_PROC_VM_CONFIG_BOOLEAN(critical_subblock_first)
 
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(critical_page_first);
@@ -906,6 +912,55 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 #define EMP_PROC_STAT_PER_VCPU(x) __EMP_PROC_STAT_PER_VCPU(x, x)
 #define EMP_PROC_STAT_VM(x) __EMP_PROC_STAT_VM(x, x)
 
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+#define EMP_PROC_ELS_STAT_READ(x) \
+	static ssize_t ____concat3(els_, x, _read) \
+				(struct file *file, char __user *buf, size_t count, loff_t *ppos) \
+	{ \
+		ssize_t buf_size = PROC_BUF_SIZE * (BLOCK_MAX_ORDER + 1); \
+		char buffer[buf_size]; \
+		ssize_t len = 0; \
+		int i; \
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+	\
+		if (bvma->close) { \
+			return 0; \
+		} \
+		len += snprintf(buffer+len, buf_size-len, "%lld", \
+						emp_els_stat_read(bvma, x, 0)); \
+		if (bvma->config.reset_after_read) \
+			emp_els_stat_reset(bvma, x, 0); \
+		for (i = 1; i <= BLOCK_MAX_ORDER; i++) { \
+			len += snprintf(buffer+len, buf_size-len, " %lld", \
+							emp_els_stat_read(bvma, x, i)); \
+			if (bvma->config.reset_after_read) \
+				emp_els_stat_reset(bvma, x, i); \
+		} \
+		len += snprintf(buffer+len, buf_size-len, "\n"); \
+		return simple_read_from_buffer(buf, count, ppos, buffer, len); \
+	}
+
+#define EMP_PROC_ELS_STAT_WRITE(x) \
+	static ssize_t ____concat3(els_, x, _write) \
+					(struct file *file, const char __user *buf, size_t count, loff_t *ppos) \
+	{ \
+		int i; \
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+	\
+		if (bvma->close == 0) { \
+			for (i = 0; i <= BLOCK_MAX_ORDER; i++) \
+				emp_els_stat_reset(bvma, x, i); \
+		} \
+		return count; \
+	}
+
+#define EMP_PROC_ELS_STAT(x) \
+		EMP_PROC_ELS_STAT_READ(x) \
+		EMP_PROC_ELS_STAT_WRITE(x)
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
+
 /* for all vcpus (io threads + pure vcpu threads) */
 EMP_PROC_STAT_PER_VCPU(vma_fault)
 /* for io threads (qemu) */
@@ -967,6 +1022,21 @@ EMP_PROC_STAT_VM(blk_prefetch_active)
 EMP_PROC_STAT_VM(blk_prefetch_inactive)
 EMP_PROC_STAT_VM(blk_prefetch_writeback)
 EMP_PROC_STAT_VM(blk_prefetch_remote)
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+EMP_PROC_ELS_STAT(block_count)
+EMP_PROC_ELS_STAT(block_stretch)
+EMP_PROC_ELS_STAT(block_reduce)
+EMP_PROC_ELS_STAT(block_reduce_complete)
+EMP_PROC_ELS_STAT(fetch)
+EMP_PROC_ELS_STAT(writeback)
+EMP_PROC_ELS_STAT(noref_count)
+EMP_PROC_ELS_STAT(ref_count)
+EMP_PROC_ELS_STAT(clean_count)
+EMP_PROC_ELS_STAT(dirty_count)
+EMP_PROC_ELS_STAT(complete_noref_count)
+EMP_PROC_ELS_STAT(complete_clean_count)
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 #endif /* CONFIG_EMP_STAT */
 
 /**************************************************/
@@ -985,6 +1055,17 @@ EMP_PROC_STAT_VM(blk_prefetch_remote)
 					.llseek = default_llseek, \
 		}, \
 	}
+
+#define emp_proc_entry_els_rw(x) \
+    { \
+		.name = __stringify(____concat2(els_, x)), \
+		.mode = 0664, \
+		.ops = { \
+					.read =  ____concat3(els_, x, _read), \
+					.write = ____concat3(els_, x, _write), \
+					.llseek = default_llseek, \
+		}, \
+    }
 
 #define emp_proc_entry_rw(x) \
 	{ \
@@ -1024,6 +1105,18 @@ EMP_PROC_STAT_VM(blk_prefetch_remote)
 		.ops = { \
 					.proc_read =  ____concat3(initial_, x, _read), \
 					.proc_write = ____concat3(initial_, x, _write), \
+					.proc_lseek = default_llseek, \
+		}, \
+	}
+
+
+#define emp_proc_entry_els_rw(x) \
+	{ \
+		.name = __stringify(____concat2(els_, x)), \
+		.mode = 0664, \
+		.ops = { \
+					.proc_read =  ____concat3(els_, x, _read), \
+					.proc_write = ____concat3(els_, x, _write), \
 					.proc_lseek = default_llseek, \
 		}, \
 	}
@@ -1068,6 +1161,9 @@ static struct emp_proc_entry emp_proc_global[] = {
 #ifdef CONFIG_EMP_BLOCK
 	emp_proc_entry_initial_rw(block_size),
 	emp_proc_entry_initial_rw(subblock_size),
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	emp_proc_entry_initial_rw(els_disabled),
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 	emp_proc_entry_initial_rw(critical_subblock_first),
 	emp_proc_entry_initial_rw(critical_page_first),
 	emp_proc_entry_initial_rw(enable_transition_csf),
@@ -1094,6 +1190,9 @@ static struct emp_proc_entry emp_proc_vm[] = {
 #ifdef CONFIG_EMP_BLOCK
 	emp_proc_entry_ro(block_order),
 	emp_proc_entry_ro(subblock_order),
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	emp_proc_entry_ro(els_disabled),
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 	emp_proc_entry_rw(critical_subblock_first),
 	emp_proc_entry_rw(critical_page_first),
 	emp_proc_entry_rw(enable_transition_csf),
@@ -1142,6 +1241,20 @@ static struct emp_proc_entry emp_proc_stat[] = {
 	emp_proc_entry_rw(cpf_to_csf_transition),
 	emp_proc_entry_rw(post_read_mempoll),
 	emp_proc_entry_rw(fsync),
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	emp_proc_entry_els_rw(block_count),
+	emp_proc_entry_els_rw(block_stretch),
+	emp_proc_entry_els_rw(block_reduce),
+	emp_proc_entry_els_rw(block_reduce_complete),
+	emp_proc_entry_els_rw(fetch),
+	emp_proc_entry_els_rw(writeback),
+	emp_proc_entry_els_rw(noref_count),
+	emp_proc_entry_els_rw(ref_count),
+	emp_proc_entry_els_rw(clean_count),
+	emp_proc_entry_els_rw(dirty_count),
+	emp_proc_entry_els_rw(complete_noref_count),
+	emp_proc_entry_els_rw(complete_clean_count),
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 	emp_proc_entry_rw(blk_prefetch_try),
 	emp_proc_entry_rw(blk_prefetch_active),
 	emp_proc_entry_rw(blk_prefetch_inactive),

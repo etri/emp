@@ -91,6 +91,9 @@ extern int    initial_mark_empty_page;
 extern int    initial_mem_poll;
 extern int    initial_enable_transition_csf;
 #endif
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+extern int    initial_els_disabled;
+#endif
 #ifdef CONFIG_EMP_OPT
 extern int    initial_eval_media;
 extern int    initial_chained_ops;
@@ -110,6 +113,9 @@ struct emp_config {
 	int     enable_transition_csf;
 	int     mark_empty_page;
 	int     mem_poll;
+#endif
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	int     els_disabled;
 #endif
 #ifdef CONFIG_EMP_STAT
 	int     reset_after_read; /* reset statistics after reading them */

@@ -10,6 +10,8 @@ EMP_VM := yes
 EMP_EXT := no
 # block and subblock support
 EMP_BLOCK := yes
+# elastic block management
+EMP_ELASTIC_BLOCK := yes
 # add optimizations
 EMP_OPT := yes
 # io optimization for VM
@@ -77,10 +79,20 @@ ifneq ($(EMP_VM), yes)
 	endif
 endif
 
+# Check requirements of EMP_ELASTIC_BLOCK
+ifeq ($(EMP_ELASTIC_BLOCK), yes)
+	ifneq ($(EMP_BLOCK), yes)
+		$(error EMP_ELASTIC_BLOCK requires EMP_BLOCK)
+	endif
+endif
+
 # Check requirements of EMP_EXT
 ifeq ($(EMP_EXT), yes)
 	ifneq ($(EMP_BLOCK), yes)
 		$(error EMP_EXT requires EMP_BLOCK)
+	endif
+	ifneq ($(EMP_ELASTIC_BLOCK), yes)
+		$(error EMP_EXT requires EMP_ELASTIC_BLOCK)
 	endif
 	ifneq ($(EMP_OPT), yes)
 		$(error EMP_EXT requires EMP_OPT)
@@ -108,6 +120,9 @@ EXTRA_CFLAGS += -DCONFIG_EMP_EXT
 endif
 ifeq ($(EMP_BLOCK), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_BLOCK
+endif
+ifeq ($(EMP_ELASTIC_BLOCK), yes)
+EXTRA_CFLAGS += -DCONFIG_EMP_ELASTIC_BLOCK
 endif
 ifeq ($(EMP_OPT), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_OPT

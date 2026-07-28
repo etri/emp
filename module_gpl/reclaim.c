@@ -5,6 +5,7 @@
 #include "gpa.h"
 #include "alloc.h"
 #include "reclaim.h"
+#include "els_block.h"
 #include "block-flag.h"
 #include "donor_mem_rw.h"
 #include "debug.h"
@@ -706,7 +707,7 @@ retry_start:
  * Select victims and reclaim the victims with moving it to the inactive list \n
  * If there are remained victims, the victims are rolled back to the active list
  */
-static int 
+static int
 update_active_list(struct emp_mm *emm, struct vcpu_var *local_cpu,
 		   struct emp_gpa **vs, int vs_max)
 {
@@ -1119,6 +1120,128 @@ int emp_writeback_block(struct emp_mm *emm, struct emp_gpa *head,
 	return ret;
 }
 
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+/**
+ * reduce_and_writeback - Reduce a block size and writeback
+ * @param bvma bvma data structure
+ * @param vcpu working vcpu ID
+ *
+ * @return the number of writeback pages
+ */
+static int reduce_and_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
+				struct emp_gpa *head)
+{
+	int i, n_wb_pages = 0;
+	int hs_len = 1 << gpa_desc_order(head);
+	int writeback_done;
+	struct emp_gpa *hs[hs_len];
+
+	if (els_tryreduce_complete(bvma, head, hs) == false) {
+		if (els_reduce(bvma, head, hs)) {
+			hs_len = 2;
+		} else {
+			hs[0] = head;
+			hs_len = 1;
+		}
+	}
+
+	debug_reduce_inactive_list_page_len(bvma, hs, hs_len);
+
+	for (i = 0; i < hs_len; i++) {
+		writeback_done = emp_writeback_block(bvma, hs[i], cpu);
+		if (unlikely(writeback_done < 0))
+			goto error;
+		if (writeback_done) {
+			n_wb_pages += gpa_block_size(hs[i]);
+			emp_els_stat_inc(bvma, hs[i], writeback);
+		}
+		emp_unlock_block(hs[i]);
+	}
+
+#ifdef CONFIG_EMP_BLOCKDEV
+	if (bvma->mrs.blockdev_used)
+		io_schedule();
+#endif
+
+	return n_wb_pages;
+
+error:
+	for ( ; i < hs_len; i++)
+		emp_unlock_block(hs[i]);
+#ifdef CONFIG_EMP_BLOCKDEV
+	if (bvma->mrs.blockdev_used)
+		io_schedule();
+#endif
+	return writeback_done;
+}
+
+/**
+ * els_need_reduce - Check the block needs to be reduced
+ * @param bvma bvma data structure
+ * @param head head of the block
+ * @param ref_count reference count of the block
+ *
+ * @retval true: Need to reduce
+ * @retval false: No need to reduce
+ */
+static inline bool 
+els_need_reduce(struct emp_mm *emm, struct emp_gpa *head, int ref_count)
+{
+	if (emm->config.els_disabled)
+		return false;
+
+	if (gpa_block_order(head) <= gpa_subblock_order(head))
+		return false;
+
+	if (head->local_page && head->local_page->w)
+		return false;
+
+	if (ref_count > (num_subblock_in_block(head) >> ELS_REDUCE_THRESHOLD_ORDER))
+		return false;
+
+	return true;
+}
+
+/**
+ * els_reduce_and_writeback_block - Reduce the elastic block size and writeback
+ * @param bvma bvma data structure
+ * @param cpu working vcpu ID
+ * @param head head of the block
+ *
+ * @retval 1: reduce
+ * @retval 0: no reduce
+ * @retval -1: error
+ */
+static int els_reduce_and_writeback_block(struct emp_mm *bvma,
+					   struct vcpu_var *cpu,
+					   struct emp_gpa *head)
+{
+	struct emp_gpa *v;
+	unsigned int ref_count = 0;
+	unsigned int noref_count = 0;
+	int ret = 0;
+
+	for_each_gpas(v, head) {
+		// referenced flags will be cleared by set_gpa_remotified 
+		if (is_gpa_flags_set(v, GPA_REFERENCED_MASK))
+			ref_count++;
+		else
+			noref_count++;
+	}
+
+	emp_els_stat_add(bvma, head, ref_count, ref_count);
+	emp_els_stat_add(bvma, head, noref_count, noref_count);
+
+	if (els_need_reduce(bvma, head, ref_count)) {
+		ret = reduce_and_writeback(bvma, cpu, head);
+		if (ret >= 0)
+			ret = 1; /* if there is no error, @head was reduced */
+	}
+
+	return ret;
+}
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
+
 /**
  * update_inactive_list - select victims from inactive list and writeback
  * @param bvma bvma data structure
@@ -1174,7 +1297,7 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 #ifdef CONFIG_EMP_VM
 	if (need_tlb_flush && is_emm_with_kvm(bvma)) {
 		tlb_flush_all(bvma->ekvm.kvm);
-		emp_stat_inc(bvma, stat.remote_tlb_flush_force);
+		emp_stat_inc(bvma, remote_tlb_flush_force);
 		local_cpu->t_tlb_flush = ctime;
 	}
 #endif /* CONFIG_EMP_VM */
@@ -1191,12 +1314,27 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 		debug_update_inactive_list2(bvma, head);
 
 		n_victim_pages += gpa_block_size(head);
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+		writeback_done = els_reduce_and_writeback_block(bvma,
+							local_cpu, head);
+		if (unlikely(writeback_done < 0)) {
+			n_victim_pages = writeback_done;
+			goto error;
+		}
+		if (writeback_done)
+			continue;
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 
 		writeback_done = emp_writeback_block(bvma, head, local_cpu);
 		if (unlikely(writeback_done < 0)) {
 			n_victim_pages = writeback_done; /* error code */
 			goto error;
 		}
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+		if (writeback_done)
+			emp_els_stat_inc(bvma, head, writeback);
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
 
 		debug_progress(head, writeback_done);
 		emp_unlock_block(head);
@@ -1260,6 +1398,7 @@ static int do_eager_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 		e->w = w;
 		head->local_page->w = (struct work_request *) e;
 		set_gpa_flags_if_unset(head, GPA_EAGER_WBR_MASK);
+		emp_els_stat_inc(bvma, head, writeback);
 	}
 
 	return 0;

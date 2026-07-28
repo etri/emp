@@ -38,7 +38,8 @@ enum gpa_flags {
 	GPA_promote = 17,
 	GPA_proactive = 18,
 	GPA_eager_wbr = 19,
-	NUM_GPA_FLAGS = 20,
+	GPA_stretched = 20,
+	NUM_GPA_FLAGS = 21,
 };
 
 #define GPA_TOUCHED_MASK    (1 << GPA_touched)
@@ -78,6 +79,7 @@ enum gpa_flags {
 #define GPA_PARTIAL_MAP_MASK (1 << GPA_partial_map)
 #endif
 #define GPA_EAGER_WBR_MASK    (1 << GPA_eager_wbr)
+#define GPA_STRETCHED_MASK    (1 << GPA_stretched)
 
 #ifdef CONFIG_EMP_VM
 #ifdef CONFIG_EMP_USER

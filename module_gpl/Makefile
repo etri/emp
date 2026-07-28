@@ -12,6 +12,11 @@ emp-y += procfs.o emp_madvise.o
 ifeq ($(EMP_USER), yes)
 emp-y += cow.o
 endif
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+# '#ifdef' adove is not for 'make', but for the code management.
+ifeq ($(EMP_ELASTIC_BLOCK), yes)
+emp-y += els_block.o
+endif
 # '#endif' below is not for 'make', but for the code management.
 #endif
 #ifdef CONFIG_EMP_DEBUG

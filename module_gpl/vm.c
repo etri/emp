@@ -13,6 +13,7 @@
 #include "vm.h"
 #include "glue.h"
 #include "block.h"
+#include "els_block.h"
 #include "reclaim.h"
 #include "donor_mem_rw.h"
 #include "alloc.h"
@@ -45,6 +46,9 @@ int     initial_critical_page_first;
 int     initial_mark_empty_page;
 int     initial_mem_poll;
 int     initial_enable_transition_csf;
+#endif
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+int    initial_els_disabled;
 #endif
 #ifdef CONFIG_EMP_OPT
 int     initial_eval_media;
@@ -2422,6 +2426,10 @@ static int emp_open(struct inode *inode, struct file *filp)
 		ret = -ENOENT;
 		goto open_procfs_err;
 	}
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+	els_init(bvma, initial_els_disabled);
+#endif
 
 	if (remote_page_init(bvma))
 		goto open_rp_init_err;

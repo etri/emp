@@ -340,11 +340,42 @@ void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa,
 #define debug_sub_inactive_list_page_len(emm, gpa) __debug_sub_inactive_list_page_len(emm, gpa, __FILE__, __LINE__)
 void debug_add_inflight_writeback_page_len(struct emp_mm *emm, struct emp_gpa *gpa);
 void debug_sub_inflight_writeback_page_len(struct emp_mm *emm, struct emp_gpa *gpa);
+void __debug_reduce_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa **gpa_list, int gpa_list_len, char *file, int line);
+#define debug_reduce_inactive_list_page_len(emm, gpa_list, gpa_list_len) __debug_reduce_inactive_list_page_len(emm, gpa_list, gpa_list_len, __FILE__, __LINE__)
 #else
 #define debug_add_inactive_list_page_len(emm, gpa) do {} while (0)
 #define debug_sub_inactive_list_page_len(emm, gpa) do {} while (0)
 #define debug_add_inflight_writeback_page_len(emm, gpa) do {} while (0)
 #define debug_sub_inflight_writeback_page_len(emm, gpa) do {} while (0)
+#define debug_reduce_inactive_list_page_len(emm, gpa_list, gpa_list_len) do {} while (0)
 #endif
+
+#ifdef CONFIG_EMP_ELASTIC_BLOCK
+#ifdef CONFIG_EMP_DEBUG
+void debug_els_update_gpa_flags(struct emp_gpa *g);
+void debug_els_stretch_rep(struct emp_gpa *, int, u32);
+void debug_els_stretch_rep2(struct emp_gpa *, struct emp_gpa *);
+void debug_els_stretch_rep3(struct emp_gpa *, struct emp_gpa *, int);
+void debug_els_stretch_rep4(struct emp_gpa *);
+void debug_els_stretch_rep5(struct emp_mm *, struct emp_vmr *, struct emp_gpa *,
+							struct emp_gpa *, int);
+void debug___els_reduce(struct emp_gpa *buddy, struct emp_gpa *s);
+void debug___els_tryreduce_complete(struct emp_gpa *s);
+void debug___els_tryreduce_complete2(struct emp_gpa *g, struct emp_gpa *s);
+void debug___els_stretch(struct emp_gpa *, int);
+#else /* !CONFIG_EMP_DEBUG */
+#define debug_els_update_gpa_flags(g) do {} while(0)
+#define debug_els_stretch_rep(chead, cpu, flag) do {} while(0)
+#define debug_els_stretch_rep2(new_primary, prev_linked) do {} while(0)
+#define debug_els_stretch_rep3(new_primary, chead, cpu) do {} while(0)
+#define debug_els_stretch_rep4(new_primary) do {} while(0)
+#define debug_els_stretch_rep5(bvma, v, new_primary, chead, cpu) do {} while(0)
+#define debug___els_reduce(buddy, s) do {} while(0)
+#define debug___els_tryreduce_complete(s) do {} while(0)
+#define debug___els_tryreduce_complete2(g, s) do {} while(0)
+#define debug___els_stretch(g, next_order) do {} while(0)
+#endif /* !CONFIG_EMP_DEBUG */
+#endif /* CONFIG_EMP_ELASTIC_BLOCK */
+
 
 #endif
