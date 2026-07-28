@@ -292,6 +292,8 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 	struct emp_list *list;
 	struct temp_list temp_mru;
 	int new_mru_len = 0;
+	struct temp_list temp_pin;
+	int new_pin_len = 0;
 	int i, cpu_id;
 
 	debug_add_gpas_to_active_list(gpas, n_new, lru_list_type);
@@ -309,6 +311,7 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 
 	cpu_id = cpu->id;
 	init_temp_list(&temp_mru);
+	init_temp_list(&temp_pin);
 
 
 	for (i = 0; i < n_new; i++) {
@@ -319,13 +322,21 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 		head = emp_get_block_head(gpa);
 		if (!is_unmapped_active(head))
 			head->r_state = GPA_ACTIVE;
-
-		if (lru_list_type == PROACTIVE_LIST)
+		if (unlikely(is_gpa_flags_set(head, GPA_PINNED_MASK))) {
+			// pin_list is a part of proactive list
 			set_gpa_flags_if_unset(head, GPA_PROACTIVE_MASK);
-		set_local_page_cpu_mru(head->local_page, cpu_id);
+			set_local_page_cpu_pin(head->local_page, cpu_id);
 
-		temp_list_add_tail(&head->local_page->lru_list, &temp_mru);
-		new_mru_len += gpa_block_size(head);
+			temp_list_add_tail(&head->local_page->lru_list, &temp_pin);
+			new_pin_len += gpa_block_size(head);
+		} else {
+			if (lru_list_type == PROACTIVE_LIST)
+				set_gpa_flags_if_unset(head, GPA_PROACTIVE_MASK);
+			set_local_page_cpu_mru(head->local_page, cpu_id);
+
+			temp_list_add_tail(&head->local_page->lru_list, &temp_mru);
+			new_mru_len += gpa_block_size(head);
+		}
 	}
 
 	if (new_mru_len > 0) {
@@ -340,7 +351,16 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 		atomic_add(new_mru_len, &slru->page_len);
 	}
 
-	return new_mru_len;
+	if (new_pin_len > 0) {
+		list = get_list_ptr_pin(bvma, cpu_id);
+		emp_list_lock(list);
+		emp_list_splice_tail(&temp_pin, list);
+		emp_list_unlock(list);
+		atomic_add(new_pin_len, &bvma->ftm.proactive_list.page_len);
+		atomic_add(new_pin_len, &bvma->ftm.cur_pin_pages);
+	}
+
+	return new_mru_len + new_pin_len;
 }
 
 bool COMPILER_DEBUG
@@ -500,6 +520,68 @@ static void __promote_gpas(struct emp_mm *emm, int cpu, struct temp_list *lp_lis
 }
 
 /**
+ * __move_to_pin_list - move the gpas in @lp_list to the pin list
+ * @param emm emm data structure
+ * @param cpu working vcpu ID
+ * @param lp_list list of the local pages to be pinned
+ * @param from_proactive are the gpas from the proactive list?
+ * @param mapped are the gpas mapped?
+ *
+ * pin_list is a part of the proactive list. If the gpas are not from the
+ * proactive list, the length of the proactive list should be increased.
+ */
+static void __move_to_pin_list(struct emp_mm *emm, int cpu,
+		struct temp_list *lp_list, bool from_proactive, bool mapped)
+{
+	struct emp_list *list;
+	struct list_head *cur, *n;
+	struct local_page *lp;
+	struct emp_gpa *gpa;
+	int pages_len = 0;
+	int total_pages_len = 0;
+
+	list = get_list_ptr_pin(emm, cpu);
+	emp_list_lock(list);
+
+	temp_list_for_each_safe(cur, n, lp_list) {
+		lp = __get_local_page_from_list(cur);
+		gpa = __get_gpa_from_local_page(emm, lp);
+		debug_assert(is_gpa_flags_set(gpa, GPA_PINNED_MASK));
+		temp_list_del(cur, lp_list);
+		set_local_page_cpu_pin(lp, cpu);
+		emp_list_add_tail(cur, list);
+
+		if (!from_proactive) {
+			debug_assert(!is_gpa_flags_set(gpa, GPA_PROACTIVE_MASK));
+			set_gpa_flags_if_unset(gpa, GPA_PROACTIVE_MASK);
+			pages_len += gpa_block_size(gpa);
+		} else {
+			total_pages_len += gpa_block_size(gpa);
+		}
+
+		if (!mapped) {
+			gpa->r_state = GPA_ACTIVE;
+			set_gpa_flags_if_unset(gpa, GPA_PREFETCHED_BLK_MASK
+							| GPA_PREFETCH_ONCE_MASK
+							| GPA_HPT_MASK);
+		} else
+			debug_assert(gpa->r_state == GPA_ACTIVE);
+
+		emp_unlock_local_page(emm, lp);
+	}
+
+	emp_list_unlock(list);
+
+	if (!from_proactive) {
+		struct slru *target = &emm->ftm.proactive_list;
+		atomic_add(pages_len, &target->page_len);
+	}
+
+	total_pages_len += pages_len;
+	atomic_add(total_pages_len, &emm->ftm.cur_pin_pages);
+}
+
+/**
  * select_victims_proactive_list - select victims from proactive list
  * @param bvma bvma data structure
  * @param cpu working vcpu ID
@@ -519,6 +601,8 @@ static int COMPILER_DEBUG select_victims_proactive_list(struct emp_mm *bvma,
 	int cpu_id = cpu->id;
 	int victim_pages_size = 0;
 	int retry = 0;
+	int n_pin = 0;
+	struct temp_list to_pin;
 
 	/* retrieve proactive list info */
 	target_list = &bvma->ftm.proactive_list;
@@ -542,6 +626,14 @@ retry_start:
 
 		emp_list_del(&lp->lru_list, list);
 		clear_local_page_on_lru(lp);
+
+		if (unlikely(is_gpa_flags_set(v, GPA_PINNED_MASK))) {
+			if (n_pin == 0)
+				init_temp_list(&to_pin);
+			temp_list_add_tail(cur, &to_pin);
+			n_pin++;
+			continue;
+		}
 
 		v->r_state = GPA_TRANS_PL;
 		clear_gpa_flags_if_set(v, GPA_PROACTIVE_MASK);
@@ -571,6 +663,94 @@ retry_start:
 		}
 	}
 
+	if (unlikely(n_pin > 0))
+		// pin list is a part of proactive list. Don't adjust the length.
+		__move_to_pin_list(bvma, cpu_id, &to_pin, true, true);
+
+	return n_vs;
+}
+
+/**
+ * select_victims_pin_list - select victims from pin list
+ * @param bvma bvma data structure
+ * @param cpu working vcpu ID
+ * @param vs_len the number of recommended victims
+ *
+ * @return the number of victims
+ *
+ * The selected victims are unpinned and moved to the MRU side of the
+ * proactive list. They are not returned to the caller. The caller should
+ * call select_victims_proactive_list() again to reclaim them.
+ */
+static int COMPILER_DEBUG select_victims_pin_list(struct emp_mm *bvma,
+					 struct vcpu_var *cpu, int vs_len)
+{
+	int cpu_id = cpu->id;
+	struct emp_list *pin_list, *mru_list;
+	struct temp_list temp;
+	struct list_head *cur, *n;
+	int n_vs;
+	struct local_page *lp;
+	int pages_len;
+
+	pin_list = get_list_ptr_pin(bvma, cpu_id);
+
+	if (atomic_read(&pin_list->len) == 0)
+		return 0;
+
+	n_vs = 0;
+	pages_len = 0;
+	init_temp_list(&temp);
+	emp_list_lock(pin_list);
+
+	/* select vs from pin list */
+	emp_list_for_each_safe(cur, n, pin_list) {
+		struct emp_gpa *v;
+		struct local_page *lp;
+
+		lp = __get_local_page_from_list(cur);
+
+		if ((v = emp_trylock_local_page(bvma, lp)) == NULL)
+			continue;
+
+		debug_assert(get_local_page_cpu(lp) == cpu_id
+					&& is_local_page_on_pin(lp));
+
+		emp_list_del(&lp->lru_list, pin_list);
+		clear_local_page_on_pin(lp);
+		temp_list_add_tail(cur, &temp);
+		pages_len += gpa_block_size(v);
+
+		debug_assert(is_gpa_flags_set(v, GPA_PINNED_MASK));
+		debug_assert(is_gpa_flags_set(v, GPA_PROACTIVE_MASK));
+		clear_gpa_flags_if_set(v, GPA_PINNED_MASK);
+
+		/* if target vs are selected, exit this loop */
+		if (++n_vs >= vs_len)
+			break;
+	}
+	emp_list_unlock(pin_list);
+
+	if (n_vs == 0)
+		return 0;
+
+	atomic_sub(pages_len, &bvma->ftm.cur_pin_pages);
+	atomic_sub(n_vs, &bvma->ftm.num_pin_blocks);
+	atomic_add(n_vs, &bvma->ftm.num_evicted_pin_blocks);
+
+	dprintk_ratelimited("[EMP_PIN] %d blocks are unpinned due to pressure on cpu%d\n",
+			n_vs, cpu_id);
+	mru_list = get_list_ptr_mru(bvma, &bvma->ftm.proactive_list, cpu_id);
+	emp_list_lock(mru_list);
+	temp_list_for_each_safe(cur, n, &temp) {
+		lp = __get_local_page_from_list(cur);
+		temp_list_del(cur, &temp);
+		set_local_page_cpu_mru(lp, cpu_id);
+		emp_list_add_tail(cur, mru_list);
+		emp_unlock_local_page(bvma, lp);
+	}
+	emp_list_unlock(mru_list);
+
 	return n_vs;
 }
 
@@ -597,6 +777,23 @@ static int update_proactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu
 			break;
 	}
 
+	if (likely(n_vs > 0))
+		return n_vs;
+
+	/* Consider pin list for victim selection */
+	if (atomic_read(&bvma->ftm.cur_pin_pages) == 0)
+		return n_vs;
+
+	for_all_vcpus_from(cpu, cpu_id, local_cpu, bvma) {
+		if (select_victims_pin_list(bvma, cpu, vs_len - n_vs) == 0)
+			continue;
+
+		n_vs += select_victims_proactive_list(bvma, cpu, vs + n_vs,
+						      vs_len - n_vs);
+		if (n_vs >= vs_len)
+			break;
+	}
+
 	return n_vs;
 }
 
@@ -617,6 +814,8 @@ select_victims_active_list(struct emp_mm *bvma, struct vcpu_var *cpu,
 	struct list_head *cur, *n;
 	struct temp_list to_promote;
 	int promote_pages_len = 0;
+	struct temp_list to_pin;
+	int pin_pages_len = 0;
 	int cpu_id;
 	int retry = 0;
 
@@ -625,6 +824,7 @@ select_victims_active_list(struct emp_mm *bvma, struct vcpu_var *cpu,
 	struct slru *target_list = &bvma->ftm.active_list;
 
 	init_temp_list(&to_promote);
+	init_temp_list(&to_pin);
 	cpu_id = cpu->id;
 	list = get_list_ptr_lru(bvma, target_list, cpu_id);
 
@@ -643,6 +843,14 @@ retry_start:
 
 		debug_assert(get_local_page_cpu(lp) == cpu_id
 					&& is_local_page_on_lru(lp));
+
+		if (unlikely(is_gpa_flags_set(v, GPA_PINNED_MASK))) {
+			emp_list_del(&lp->lru_list, list);
+			clear_local_page_on_lru(lp);
+			temp_list_add_tail(&lp->lru_list, &to_pin);
+			pin_pages_len += gpa_block_size(v);
+			continue;
+		}
 
 		// check GPA_PROMOTE_MASK
 		if (clear_gpa_flags_if_set(v, GPA_PROMOTE_MASK)) {
@@ -681,6 +889,12 @@ retry_start:
 			retry = 1;
 			goto retry_start;
 		}
+	}
+
+	// migrate active gpas to pin list
+	if (unlikely(pin_pages_len)) {
+		atomic_sub(pin_pages_len, &target_list->page_len);
+		__move_to_pin_list(bvma, cpu_id, &to_pin, false, true);
 	}
 
 	// migrate active gpas to mru_buf
@@ -818,9 +1032,12 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 	struct slru *target_list;
 	struct temp_list to_promote;
 	int promote_pages_len = 0;
+	struct temp_list to_pin;
+	int pin_pages_len = 0;
 	int n_vs = 0, cpu_id;
 
 	init_temp_list(&to_promote);
+	init_temp_list(&to_pin);
 	/* retrieve inactive list info */
 	target_list = &bvma->ftm.inactive_list;
 	cpu_id = cpu->id;
@@ -841,6 +1058,14 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 
 		debug_assert(get_local_page_cpu(lp) == cpu_id
 					&& is_local_page_on_mru(lp));
+
+		if (unlikely(is_gpa_flags_set(v, GPA_PINNED_MASK))) {
+			emp_list_del(&lp->lru_list, list);
+			clear_local_page_on_mru(lp);
+			temp_list_add_tail(&lp->lru_list, &to_pin);
+			pin_pages_len += gpa_block_size(v);
+			continue;
+		}
 
 		// check GPA_PROMOTE_MASK
 		if (clear_gpa_flags_if_set(v, GPA_PROMOTE_MASK)) {
@@ -872,6 +1097,20 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 	}
 
 	emp_list_unlock(list);
+
+	if (unlikely(pin_pages_len > 0)) {
+#ifdef CONFIG_EMP_DEBUG
+		struct local_page *lp;
+		temp_list_for_each(cur, &to_pin) {
+			lp = __get_local_page_from_list(cur);
+			sub_inactive_list_page_len(bvma, lp->gpa);
+		}
+#else
+		__sub_inactive_list_page_len(pin_pages_len, bvma);
+#endif
+		__move_to_pin_list(bvma, cpu_id, &to_pin, false, false);
+	}
+
 	if (promote_pages_len) {
 #ifdef CONFIG_EMP_DEBUG
 		struct local_page *lp;
@@ -1715,15 +1954,15 @@ static void __remove_from_proactive(struct emp_mm *emm, struct emp_gpa *gpa) {
 
 	debug_assert(lp);
 	/* We checked GPA_PROACTIVE_MASK */
-	/* The pin-list term module_pro has here is omitted: pin_list is still
-	 * module_pro state (emp_mm_pro), and module_pro overrides
-	 * remove_gpa_from_lru(), so a pinned page never reaches this function. */
-	debug_assert(is_local_page_on_list(lp));
+	debug_assert(is_local_page_on_list(lp) || is_local_page_on_pin(lp));
 
 	debug_assert(!list_empty(&lp->lru_list));
 	debug_assert(lp->lru_list.next != LIST_POISON1 && lp->lru_list.prev != LIST_POISON2);
 
-	if (is_local_page_on_mru(lp)) {
+	if (is_local_page_on_pin(lp)) {
+		list = get_list_ptr_pin(emm, lp->cpu);
+		atomic_sub(gpa_block_size(gpa), &emm->ftm.cur_pin_pages);
+	} else if (is_local_page_on_mru(lp)) {
 		list = get_list_ptr_mru(emm, proactive, lp->cpu);
 	} else if (is_local_page_on_lru(lp)) {
 		list = get_list_ptr_lru(emm, proactive, lp->cpu);
@@ -1736,7 +1975,10 @@ static void __remove_from_proactive(struct emp_mm *emm, struct emp_gpa *gpa) {
 	emp_list_del(&lp->lru_list, list);
 	emp_list_unlock(list);
 	atomic_sub(gpa_block_size(gpa), &proactive->page_len);
-	clear_local_page_list_flags(lp);
+	if (is_local_page_on_pin(lp))
+		clear_local_page_on_pin(lp);
+	else
+		clear_local_page_list_flags(lp);
 }
 
 static inline void
@@ -1840,7 +2082,7 @@ int reclaim_init(struct emp_mm *bvma)
 	int buf_size = sizeof(struct emp_list) * vcpu_len;
 #endif
 	struct slru *proactive, *active, *inactive;
-	struct emp_list *mru, *lru;
+	struct emp_list *mru, *lru, *pin;
 
 	proactive = &bvma->ftm.proactive_list;
 	active = &bvma->ftm.active_list;
@@ -1914,6 +2156,14 @@ skip_alloc_bufs:
 	if (proactive->host_lru == NULL || proactive->host_mru == NULL)
 		goto reclaim_init_fail;
 
+	/* pin_list is a part of proactive_list */
+	bvma->ftm.pin_list = emp_alloc_pcdata(struct emp_list);
+	if (bvma->ftm.pin_list == NULL)
+		goto reclaim_init_fail;
+	atomic_set(&bvma->ftm.cur_pin_pages, 0);
+	atomic_set(&bvma->ftm.num_pin_blocks, 0);
+	atomic_set(&bvma->ftm.num_evicted_pin_blocks, 0);
+
 	/* initialize per-pcpu active_list */
 	active->host_lru = emp_alloc_pcdata(struct emp_list);
 	active->host_mru = emp_alloc_pcdata(struct emp_list);
@@ -1925,6 +2175,8 @@ skip_alloc_bufs:
 		init_emp_list(mru);
 		lru = emp_pc_ptr(proactive->host_lru, cpu);
 		init_emp_list(lru);
+		pin = emp_pc_ptr(bvma->ftm.pin_list, cpu);
+		init_emp_list(pin);
 
 		mru = emp_pc_ptr(active->host_mru, cpu);
 		init_emp_list(mru);
@@ -1998,6 +2250,10 @@ reclaim_init_fail:
 	if (proactive->host_lru) {
 		emp_free_pcdata(proactive->host_lru);
 		proactive->host_lru = NULL;
+	}
+	if (bvma->ftm.pin_list) {
+		emp_free_pcdata(bvma->ftm.pin_list);
+		bvma->ftm.pin_list = NULL;
 	}
 #ifdef CONFIG_EMP_VM
 #ifdef CONFIG_EMP_DEBUG
@@ -2078,6 +2334,10 @@ void reclaim_exit(struct emp_mm *emm)
 	if (proactive->host_lru) {
 		emp_free_pcdata(proactive->host_lru);
 		proactive->host_lru = NULL;
+	}
+	if (emm->ftm.pin_list) {
+		emp_free_pcdata(emm->ftm.pin_list);
+		emm->ftm.pin_list = NULL;
 	}
 #ifdef CONFIG_EMP_VM
 #ifdef CONFIG_EMP_DEBUG

@@ -203,7 +203,7 @@ static struct emp_gpa *_els_is_stretchable(struct emp_gpa *shead, struct emp_gpa
 #endif
 
 	buddy = (shead == chead)? (shead + num_subblock_in_block(shead)): shead;
-	if (is_gpa_flags_set(buddy, GPA_PREFETCHED_MASK)) // TODO: add | GPA_PINNED_MASK))
+	if (is_gpa_flags_set(buddy, GPA_PREFETCHED_MASK | GPA_PINNED_MASK))
 		return NULL;
 	if ((buddy->r_state != state) || 
 			(gpa_block_order(chead) != gpa_block_order(buddy)) ||
@@ -217,7 +217,8 @@ static struct emp_gpa *_els_is_stretchable(struct emp_gpa *shead, struct emp_gpa
 			 is_gpa_flags_set(buddy, GPA_DIRTY_MASK)) || // ?
 			(fault_type != (get_gpa_flags(buddy) & GPA_nPT_MASK)) ||
 			is_gpa_flags_set(buddy, GPA_STRETCHED_MASK
-						| GPA_PREFETCHED_MASK)) {  // TODO: add | GPA_PINNED_MASK))
+						| GPA_PREFETCHED_MASK
+						| GPA_PINNED_MASK)) {
 		debug_BUG_ON(!____emp_gpa_is_locked(buddy));
 		debug_progress(buddy, chead);
 		__emp_unlock_block(buddy);

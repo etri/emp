@@ -269,6 +269,13 @@ struct emp_ftm {
 	/* lists of pages maintained to use local DRAM efficiently */
 	struct slru proactive_list;
 	size_t      proactive_pages_len;
+	/* pin_list is a part of proactive_list. A local page on it is marked
+	 * with is_local_page_on_pin() instead of is_local_page_on_mru()/_lru(),
+	 * so it is never picked by the MRU/LRU victim scans. */
+	struct emp_list   **pin_list;
+	atomic_t            cur_pin_pages;  // number of pages in pin_list
+	atomic_t            num_pin_blocks; // number of blocks with GPA_PINNED_MASK
+	atomic_t            num_evicted_pin_blocks; // number of evicted blocks from pin list
 	struct slru         active_list;
 	size_t              active_pages_len;
 	struct slru         inactive_list;

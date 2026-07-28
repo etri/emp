@@ -362,6 +362,13 @@ enum local_page_flags {
 	LOCAL_PAGE_ON_MRU,
 	LOCAL_PAGE_ON_LRU,
 	LOCAL_PAGE_ON_GLOBAL,
+	// pin_list is a part of the proactive list, but it is neither its MRU
+	// nor its LRU side. Keep it out of LOCAL_PAGE_ON_LIST_MASK so that a
+	// pinned page is never selected by the MRU/LRU victim scans, and so
+	// that the list removal paths, which test is_local_page_on_list() and
+	// then dispatch on mru/lru/global, skip it instead of picking a wrong
+	// list.
+	LOCAL_PAGE_ON_PIN,
 };
 
 #define LOCAL_PAGE_ON_MRU_MASK (1 << LOCAL_PAGE_ON_MRU)
@@ -392,6 +399,7 @@ enum local_page_flags {
 #define is_local_page_on_mru(lp) ____is_local_page_flags(lp, LOCAL_PAGE_ON_MRU)
 #define is_local_page_on_lru(lp) ____is_local_page_flags(lp, LOCAL_PAGE_ON_LRU)
 #define is_local_page_on_global(lp) ____is_local_page_flags(lp, LOCAL_PAGE_ON_GLOBAL)
+#define is_local_page_on_pin(lp) ____is_local_page_flags(lp, LOCAL_PAGE_ON_PIN)
 #define is_local_page_on_list(lp) ((lp)->flags & LOCAL_PAGE_ON_LIST_MASK)
 
 #define set_local_page_on_mru(lp) ____set_local_page_list_flags(lp, LOCAL_PAGE_ON_MRU)
@@ -401,6 +409,10 @@ enum local_page_flags {
 #define clear_local_page_on_mru(lp) ____clear_local_page_flags(lp, LOCAL_PAGE_ON_MRU)
 #define clear_local_page_on_lru(lp) ____clear_local_page_flags(lp, LOCAL_PAGE_ON_LRU)
 #define clear_local_page_on_global(lp) ____clear_local_page_flags(lp, LOCAL_PAGE_ON_GLOBAL)
+#define clear_local_page_on_pin(lp) do { \
+		____clear_local_page_flags(lp, LOCAL_PAGE_ON_PIN); \
+		debug_lru_clear_list_mark(lp); \
+} while (0)
 #define clear_local_page_list_flags(lp) do { \
 	(lp)->flags = (lp)->flags & (~(LOCAL_PAGE_ON_LIST_MASK)); \
 	debug_lru_clear_list_mark(lp); \
@@ -419,6 +431,15 @@ enum local_page_flags {
 } while (0)
 #define set_local_page_cpu_mru(lp, cpu_id) __set_local_page_cpu_list(lp, cpu_id, LOCAL_PAGE_ON_MRU)
 #define set_local_page_cpu_lru(lp, cpu_id) __set_local_page_cpu_list(lp, cpu_id, LOCAL_PAGE_ON_LRU)
+/* LOCAL_PAGE_ON_PIN is not in LOCAL_PAGE_ON_LIST_MASK, so this cannot go
+ * through __set_local_page_cpu_list(). */
+#define set_local_page_cpu_pin(lp, cpu_id) do { \
+		(lp)->cpu = (cpu_id); \
+		debug_lru_set_cpu_mark(lp, cpu_id); \
+		debug_assert(((lp)->flags & LOCAL_PAGE_ON_LIST_MASK) == 0); \
+		____set_local_page_flags(lp, LOCAL_PAGE_ON_PIN); \
+		debug_lru_set_list_mark(lp); \
+} while (0)
 #define set_local_page_global(lp) ____set_local_page_list_flags(lp, LOCAL_PAGE_ON_GLOBAL)
 
 #define set_lru_elem_cpu_mru(list, cpu_id) set_local_page_cpu_mru(__get_local_page_from_list(list), cpu_id)

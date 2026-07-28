@@ -1385,7 +1385,12 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		}
 
 		lp = head->local_page;
-		debug_assert(is_local_page_on_list(lp));
+		/* a pinned block sits on pin_list, which is not one of the
+		 * MRU/LRU/GLOBAL lists is_local_page_on_list() covers */
+		if (is_gpa_flags_set(head, GPA_PINNED_MASK))
+			debug_assert(is_local_page_on_list(lp) || is_local_page_on_pin(lp));
+		else
+			debug_assert(is_local_page_on_list(lp));
 		debug_assert(!list_empty(&lp->lru_list));
 		debug_assert(lp->lru_list.next != LIST_POISON1
 				&& lp->lru_list.prev != LIST_POISON2);

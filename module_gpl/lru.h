@@ -275,6 +275,10 @@ struct slru {
 #define get_list_ptr_inactive(emm, slru, cpu_id) \
 	(emp_pc_ptr((slru)->host_mru, PCPU_ID(emm, cpu_id)))
 #endif /* !CONFIG_EMP_VM */
+/* pin_list is a part of the proactive list, but it keeps one list per cpu
+ * (pinned pages need no MRU/LRU ordering) and is always per-pcpu. */
+#define get_list_ptr_pin(emm, cpu_id) \
+	(emp_pc_ptr((emm)->ftm.pin_list, PCPU_ID(emm, cpu_id)))
 /* per-cpu local free-page list, laid out like the slru per-cpu buffers above
  * but with a single list per cpu (free pages have no MRU/LRU ordering). */
 #ifdef CONFIG_EMP_VM
