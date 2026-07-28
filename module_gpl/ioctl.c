@@ -203,8 +203,10 @@ static long __emp_madvise(struct emp_mm *emm, unsigned long ioctl_param)
 	// case MADV_EMP_PAGEOUT: break;
 
 	// *** EMP only codes ***
-	// case MADV_EMP_PIN: break;
-	// case MADV_EMP_UNPIN: break;
+	case MADV_EMP_PIN:
+			return emp_madv_pin(emm, info.addr, info.size);
+	case MADV_EMP_UNPIN:
+			return emp_madv_unpin(emm, info.addr, info.size);
 
 	default:
 			return -EINVAL;

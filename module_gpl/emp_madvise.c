@@ -313,6 +313,224 @@ static inline int __get_max_block_size(struct emp_vmr *vmr, unsigned long idx) {
 	return 1 << __get_max_block_order(vmr, idx);
 }
 
+long emp_madv_pin(struct emp_mm *emm, unsigned long addr, long size)
+{
+	unsigned long addr_end, vmr_addr_end;
+	struct emp_vmr *vmr;
+	int sb_order = bvma_subblock_order(emm);
+	unsigned long idx;
+	struct emp_gpa *head, *gpa;
+	int block_size;
+	int new_pin = 0;
+	long ret = 0;
+#ifdef CONFIG_EMP_DEBUG
+	unsigned long debug_num_total = 0;
+	unsigned long debug_num_pin = 0;
+	unsigned long debug_addr = addr;
+	long debug_size = size;
+#endif
+
+	if ((addr & (PAGE_SIZE - 1)) != 0) {
+		size += addr & ~PAGE_MASK;
+		addr = addr & PAGE_MASK;
+	}
+	addr_end = addr + size;
+
+	while (addr < addr_end) {
+		/* returns error for invalid HVAs */
+		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+			/* @new_pin blocks are already marked as pinned.
+			 * Account for them before bailing out. */
+			ret = -EINVAL;
+			goto out;
+		}
+		vmr_addr_end = vmr->vm_end < addr_end ? vmr->vm_end : addr_end;
+		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
+
+		while (addr < vmr_addr_end) {
+			// Don't use raw_get_gpadesc(). We need to mark GPA_PINNED_MASK.
+			gpa = get_gpadesc(vmr, idx);
+			head = emp_lock_block(vmr, &gpa, idx);
+			block_size = gpa_block_size(gpa);
+#ifdef CONFIG_EMP_DEBUG
+			debug_num_total += block_size;
+#endif
+			if (!set_gpa_flags_if_unset(head, GPA_PINNED_MASK)) {
+				new_pin++;
+#ifdef CONFIG_EMP_DEBUG
+				debug_num_pin += block_size;
+#endif
+			}
+
+			/* If head is on writeback list, set promote mask first
+			 * to prevent removing the local page. The promoted
+			 * block will be inserted to pin list at
+			 * select_victims_active_list() */
+			if (head->r_state == GPA_WB)
+				set_gpa_flags_if_unset(head, GPA_PROMOTE_MASK);
+			emp_unlock_block(head);
+			addr += block_size << PAGE_SHIFT;
+			idx += block_size >> sb_order;
+		}
+	}
+
+out:
+	atomic_add(new_pin, &emm->ftm.num_pin_blocks);
+
+	dprintk("[EMP_MADV_PIN] emm: %d addr: 0x%016lx size: 0x%lx total_page: %ld pin_page: %ld\n",
+			emm->id, debug_addr, debug_size, debug_num_total, debug_num_pin);
+	return ret;
+}
+
+static inline void
+__remove_from_pin_list(struct emp_mm *emm, struct emp_gpa *head)
+{
+	struct local_page *lp = head->local_page;
+	struct emp_list *list;
+	debug_assert(lp);
+	list = get_list_ptr_pin(emm, lp->cpu);
+	emp_list_lock(list);
+	clear_local_page_on_pin(lp);
+	emp_list_del(&lp->lru_list, list);
+	emp_list_unlock(list);
+}
+
+static void ____flush_to_proactive(struct emp_mm *emm, struct temp_list *lp_list)
+{
+	struct list_head *cur, *n;
+	struct local_page *lp;
+	struct emp_list *list;
+	int cpu_id;
+	struct slru *proactive;
+	int pages_len = 0;
+
+	cpu_id = VCPU_ID(emm, smp_processor_id());
+	proactive = &emm->ftm.proactive_list;
+	list = get_list_ptr_mru(emm, proactive, cpu_id);
+
+	emp_list_lock(list);
+	temp_list_for_each_safe(cur, n, lp_list) {
+		lp = __get_local_page_from_list(cur);
+		temp_list_del(cur, lp_list);
+		pages_len += gpa_block_size(__get_gpa_from_local_page(emm, lp));
+		set_local_page_cpu_mru(lp, cpu_id);
+		emp_list_add_tail(cur, list);
+		emp_unlock_local_page(emm, lp);
+	}
+	emp_list_unlock(list);
+
+	atomic_sub(pages_len, &emm->ftm.cur_pin_pages);
+}
+
+static inline void __flush_to_proactive(struct emp_mm *emm,
+			struct temp_list *lp_list, bool force)
+{
+	if (temp_list_len(lp_list) < LEN_FLUSH_HEADS) {
+		if (!force)
+			return;
+		if (temp_list_len(lp_list) == 0)
+			return;
+	}
+	____flush_to_proactive(emm, lp_list);
+}
+
+long emp_madv_unpin(struct emp_mm *emm, unsigned long addr, long size)
+{
+	unsigned long addr_end, vmr_addr_end;
+	struct emp_vmr *vmr;
+	int sb_order = bvma_subblock_order(emm), order;
+	unsigned long idx;
+	struct emp_gpa *head, *gpa;
+	int block_size;
+	struct temp_list to_proactive;
+	int new_unpin = 0;
+	long ret = 0;
+#ifdef CONFIG_EMP_DEBUG
+	unsigned long debug_num_total = 0;
+	unsigned long debug_num_unpin = 0;
+	unsigned long debug_addr = addr;
+	long debug_size = size;
+#endif
+
+	if ((addr & (PAGE_SIZE - 1)) != 0) {
+		size += addr & ~PAGE_MASK;
+		addr = addr & PAGE_MASK;
+	}
+	addr_end = addr + size;
+
+	init_temp_list(&to_proactive);
+
+	while (addr < addr_end) {
+		/* returns error for invalid HVAs */
+		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+			/* The blocks staged in @to_proactive were removed from
+			 * pin_list and are still locked. Flush them before
+			 * bailing out, or they are leaked. */
+			ret = -EINVAL;
+			goto out;
+		}
+		vmr_addr_end = vmr->vm_end < addr_end ? vmr->vm_end : addr_end;
+		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
+
+		while (addr < vmr_addr_end) {
+			// If gpa is null, don't touch it
+			gpa = raw_get_gpadesc(vmr, idx);
+			if (gpa == NULL) {
+				order = __get_max_block_order(vmr, idx) - sb_order;
+				if (idx == _emp_get_block_head_index(vmr, idx, order)) {
+					// aligned to max_block
+					addr += 1UL << (order + sb_order + PAGE_SHIFT);
+					idx += 1UL << order;
+#ifdef CONFIG_EMP_DEBUG
+					debug_num_total += 1UL << (order + sb_order);
+#endif
+				} else {
+					// subblock-level skipping
+					addr += 1UL << (sb_order + PAGE_SHIFT);
+					idx++;
+#ifdef CONFIG_EMP_DEBUG
+					debug_num_total += 1UL << sb_order;
+#endif
+				}
+				continue;
+			}
+
+			head = emp_lock_block(vmr, &gpa, idx);
+			block_size = gpa_block_size(gpa);
+#ifdef CONFIG_EMP_DEBUG
+			debug_num_total += block_size;
+#endif
+			if (clear_gpa_flags_if_set(head, GPA_PINNED_MASK)) {
+				new_unpin++;
+#ifdef CONFIG_EMP_DEBUG
+				debug_num_unpin += block_size;
+#endif
+			}
+
+			if (is_gpa_flags_set(head, GPA_PROACTIVE_MASK)
+					&& is_local_page_on_pin(head->local_page)) {
+				debug_assert(head->r_state == GPA_ACTIVE);
+				__remove_from_pin_list(emm, head);
+				temp_list_add_tail(&head->local_page->lru_list,
+								&to_proactive);
+				__flush_to_proactive(emm, &to_proactive, false);
+			} else
+				emp_unlock_block(head);
+
+			addr += block_size << PAGE_SHIFT;
+			idx += block_size >> sb_order;
+		}
+	}
+
+out:
+	__flush_to_proactive(emm, &to_proactive, true);
+	atomic_sub(new_unpin, &emm->ftm.num_pin_blocks);
+
+	dprintk("[EMP_MADV_UNPIN] emm: %d addr: 0x%016lx size: 0x%lx total_page: %ld unpin_page: %ld\n",
+			emm->id, debug_addr, debug_size, debug_num_total, debug_num_unpin);
+	return ret;
+}
+
 // for MADV_EMP_WILLNEED
 long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __size)
 {
