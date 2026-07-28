@@ -568,14 +568,12 @@ static void emp_vma_close(struct vm_area_struct *vma)
 				(unsigned long) ____prev); \
 } while (0)
 
-/* TODO: ZERO_BLOCK checking should be located on module_pro */
-#define ZERO_BLOCK (1 << 22)
 static bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, struct emp_gpa *s, unsigned long index_head, struct emp_gpa *hs[])
 {
 	struct emp_vmr *vmr;
 	struct emp_gpa *g, *r;
 	bool dirty_block;
-	unsigned int flag, _flag;
+	unsigned int flag;
 	int sb_index, num_sb;
 	unsigned long index_gpa_dir;
 	unsigned long block_size;
@@ -592,11 +590,6 @@ static bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, str
 	block_order = gpa_block_order(s);
 	desc_order = block_order - bvma_subblock_order(bvma);
 	cachep = get_gpadesc_alloc(prev_vmr->emm, desc_order);
-
-	if (is_gpa_flags_set(s, ZERO_BLOCK)) {
-		hs[0] = s;
-		return false;
-	}
 
 	if (sb_order == block_order) {
 		// don't need to reduce block
@@ -633,7 +626,7 @@ static bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, str
 		__emp_lock_block(g);
 	}
 
-	flag = get_gpa_flags(s) & ~ZERO_BLOCK;
+	flag = get_gpa_flags(s);
 	dirty_block = flag & GPA_DIRTY_MASK;
 
 	// all the block headers are locked
@@ -646,9 +639,7 @@ static bool split_reduce_block(struct emp_mm *bvma, struct emp_vmr *new_vmr, str
 		if (g == s || g->local_page == NULL)
 			continue;
 
-		_flag = !dirty_block? get_gpa_flags(g) & ZERO_BLOCK: 0;
 		// update flag, r_state for the header of each subblock
-		set_gpa_flags(g, flag | _flag);
 		set_gpa_flags(g, flag);
 		g->r_state = s->r_state;
 		g->local_page->sptep = s->local_page->sptep + ((g - s) << sb_order);

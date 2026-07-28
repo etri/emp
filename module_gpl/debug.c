@@ -20,10 +20,6 @@
 
 #define IS_INVALID_GFN_OFFSET(x) ((x) == (0))
 
-/* TODO: hardcoded debugging code for checking eager writeback block */
-#define ZERO_BLOCK (1 << 23)
-#define EAGER_WBR  (1 << 24)
-
 /******************** EMP DEBUG BULK MESSAGE LOCK ***********************/
 
 static DEFINE_SPINLOCK(__debug_bulk_msg_lock);
@@ -1556,19 +1552,13 @@ void debug_emp_page_fault_gpa2(struct emp_mm *emm, struct emp_gpa *head)
 	sb_head_count = 1;
 	if (WB_BLOCK(head))
 		sb_head_count++;
-       else if (__is_gpa_flags_set(head, EAGER_WBR) && INACTIVE_BLOCK(head))
+       else if (__is_gpa_flags_set(head, GPA_EAGER_WBR_MASK) && INACTIVE_BLOCK(head))
 		sb_head_count++;
 
 	for_each_gpas(g, head) {
 		if (WB_BLOCK(head) && !g->local_page->w) {
 			if (__debug_page_count_eq(emm, g, sb_head_count - 1,
 					"debug_emp_page_fault_gpa2(writeback)"))
-				break;
-		} else if (INACTIVE_BLOCK(head) &&
-					__is_gpa_flags_set(head, EAGER_WBR) &&
-					__is_gpa_flags_set(g, ZERO_BLOCK)) {
-			if (__debug_page_count_eq(emm, g, sb_head_count - 1,
-					"debug_emp_page_fault_gpa2(inactive,eager,zero)"))
 				break;
 		} else {
 			if (__debug_page_count_eq(emm, g, sb_head_count,

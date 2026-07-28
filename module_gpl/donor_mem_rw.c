@@ -220,8 +220,6 @@ free_work_requests(struct emp_mm *bvma, struct work_request *w)
 	free_work_request(bvma, w);
 }
 
-/* TODO: ZERO_BLOCK checking should be located on module_pro */
-#define ZERO_BLOCK (1 << 21)
 /**
  * clear_writeback_work_request - Clear completed writeback work requests
  * @param bvma bvma data structure
@@ -273,7 +271,6 @@ static int clear_writeback_work_request(struct emp_mm *bvma,
 	 */
 	for_each_gpas_reverse(g, head) {
 		debug_assert(g->local_page);
-		debug_assert(!is_gpa_flags_set(g, ZERO_BLOCK));
 
 		// counter part of get_page right
 		// before post_writeback_async

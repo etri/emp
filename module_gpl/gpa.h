@@ -98,7 +98,7 @@ enum gpa_flags {
 #define GPA_KEEP_FLAGS_MASK \
 	(GPA_TOUCHED_MASK | GPA_PARTIAL_MAP_MASK | GPA_PINNED_MASK)
 #endif /* !CONFIG_EMP_VM */
-#define GPA_CLEANUP_MASK ((1 << NUM_GPA_FLAGS) - 1) & (~GPA_KEEP_FLAGS_MASK)
+#define GPA_CLEANUP_MASK (((1 << NUM_GPA_FLAGS) - 1) & (~GPA_KEEP_FLAGS_MASK))
 
 /*
  * enum gpa_state
