@@ -82,6 +82,9 @@ __get_gpa_from_local_page(struct emp_mm *emm, struct local_page *lp)
 #endif
 }
 
+void reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas);
+bool gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head);
+
 int update_lru_lists_reref(struct emp_mm *, struct vcpu_var *,
 			   struct emp_gpa **, int, int);
 int update_lru_lists_lru(struct emp_mm *, struct vcpu_var *, struct emp_gpa **,

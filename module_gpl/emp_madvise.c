@@ -63,7 +63,6 @@ struct blks_ctx {
 #define debug_blks_ctx_init(ctx) do {} while (0)
 #endif
 
-
 static inline void
 blks_ctx_init(struct emp_mm *emm, struct blks_ctx *ctx)
 {
@@ -432,3 +431,182 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 			ctx.stat.complete_remote_succeed);
 	return ret;
 }
+
+static inline int
+blks_ctx_flush_dontneed(struct emp_mm *emm, struct blks_ctx *ctx, bool force)
+{
+	if (ctx->num_heads >= LEN_FLUSH_HEADS || force) {
+		int i, ret;
+		reclaim_gpa_many(emm, ctx->heads, ctx->num_heads);
+		ret = add_gpas_to_inactive(emm, ctx->cpu, ctx->heads, ctx->num_heads);
+		for (i = 0; i < ctx->num_heads; i++)
+			emp_unlock_block(ctx->heads[i]);
+		ctx->num_heads = 0;
+		ctx->size_heads = 0;
+		return ret;
+	} else
+		return 0;
+}
+
+/**
+ * __emp_blk_move_to_inactive: move a block with a specific address to inactive list
+ * @param ???
+ *
+ * @retval n: gpa_block_size()
+ * @retval 0: gpa is null
+ * @retval -n: Error
+ */
+static int __emp_blk_move_to_inactive(struct emp_mm *emm, struct emp_vmr *vmr,
+					unsigned long idx, struct blks_ctx *ctx)
+{
+	struct emp_gpa *gpa, *head;
+	int r, ret;
+
+	debug_blks_ctx_inc(ctx, dontneed_called);
+	gpa = raw_get_gpadesc(vmr, idx);
+	if (!gpa)
+		return 0;
+
+	emp_stat_inc(emm, blk_dontneed_try);
+	debug_blks_ctx_inc(ctx, dontneed_try);
+
+	head = emp_trylock_block(vmr, &gpa, idx);
+	if (head == NULL) {
+		debug_blks_ctx_inc(ctx, dontneed_trylock_failed);
+		return gpa_block_size(gpa);
+	}
+
+	if (likely(gpa == head)) {
+		ret = gpa_block_size(gpa);
+	} else {
+		debug_assert(head < gpa);
+		ret = gpa_block_size(gpa) - gpa_subblock_size(gpa) * (gpa - head);
+		idx = idx - (gpa - head);
+	}
+	debug_progress(head, head->r_state);
+	debug_progress(head, __get_gpa_flags(head));
+
+#ifdef CONFIG_EMP_BLOCK
+	/* Prefetched means very recently accessed. User's hint may be wrong. */
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+		debug_blks_ctx_inc(ctx, dontneed_prefetched);
+		goto unlock;
+	}
+#endif /* CONFIG_EMP_BLOCK */
+
+	/* Delete the promotion flag. */
+	clear_gpa_flags_if_set(head, GPA_PROMOTE_MASK);
+	// TODO: clear_gpa_flags_if_set(head, GPA_PINNED_MASK);
+
+	if (head->r_state == GPA_ACTIVE && !is_unmapped_active(head)
+			&& gpa_acquire(vmr, head)) {
+		debug_blks_ctx_inc(ctx, dontneed_succeed);
+		debug_assert(!is_gpa_flags_set(head, GPA_PREFETCHED_MASK));
+
+		/* Remove from current LRU list */
+		remove_gpa_from_lru(emm, head);
+
+		head->r_state = GPA_TRANS_AL;
+		blks_ctx_add_head(ctx, head);
+
+		r = blks_ctx_flush_dontneed(emm, ctx, false);
+		if (r < 0)
+			ret = r;
+		else
+			emp_stat_inc(emm, blk_dontneed_succeed);
+
+	}
+
+unlock:
+#if defined(CONFIG_EMP_STAT) || defined(CONFIG_EMP_DEBUG)
+	if (head->r_state == GPA_ACTIVE) {
+		emp_stat_inc(emm, blk_dontneed_active);
+		debug_blks_ctx_inc(ctx, dontneed_active);
+	} else if (head->r_state == GPA_INACTIVE) {
+		emp_stat_inc(emm, blk_dontneed_inactive);
+		debug_blks_ctx_inc(ctx, dontneed_inactive);
+	} else if (head->r_state == GPA_WB) {
+		emp_stat_inc(emm, blk_dontneed_writeback);
+		debug_blks_ctx_inc(ctx, dontneed_wb);
+	} else if (head->r_state == GPA_INIT) {
+		emp_stat_inc(emm, blk_dontneed_remote);
+	}
+#endif /* CONFIG_EMP_STAT || CONFIG_EMP_DEBUG */
+
+	emp_unlock_block(head);
+	return ret;
+}
+
+// for MADV_EMP_DONTNEED
+long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __size)
+{
+	unsigned long size, addr_start, addr_end, vmr_addr_end;
+	struct emp_vmr *vmr;
+	int sb_order = bvma_subblock_order(emm), order;
+	unsigned long idx;
+	int block_size;
+	struct blks_ctx ctx;
+	bool force;
+	long ret;
+
+	if (__size >= 0) {
+		size = __size;
+		force = false;
+	} else {
+		size = -__size;
+		force = true;
+	}
+
+	blks_ctx_init(emm, &ctx);
+
+	if ((addr & (PAGE_SIZE - 1)) != 0) {
+		size += addr & ~PAGE_MASK;
+		addr = addr & PAGE_MASK;
+	}
+	addr_start = addr;
+	addr_end = addr + size;
+
+	while (addr < addr_end) {
+		/* returns error for invalid HVAs */
+		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL)
+			return -EINVAL;
+		vmr_addr_end = vmr->vm_end < addr_end ? vmr->vm_end : addr_end;
+		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
+
+		while (addr < vmr_addr_end) {
+			block_size = __emp_blk_move_to_inactive(emm, vmr, idx, &ctx);
+			if (unlikely(block_size < 0))
+				return (long) block_size;
+			if (block_size > 0) {
+				addr += block_size << PAGE_SHIFT;
+				idx += block_size >> sb_order;
+				continue;
+			}
+			order = __get_max_block_order(vmr, idx) - sb_order;
+			if (idx == _emp_get_block_head_index(vmr, idx, order)) {
+				// aligned to max_block
+				addr += 1UL << (order + sb_order + PAGE_SHIFT);
+				idx += 1UL << order;
+			} else {
+				// subblock-level skipping
+				addr += 1UL << (sb_order + PAGE_SHIFT);
+				idx++;
+			}
+		}
+	}
+
+	ret = (long) blks_ctx_flush_dontneed(emm, &ctx, true);
+	dprintk("[BLK_DONTNEED] addr: %ld size: %ld force: %d (STAT) called: %ld try: %ld trylock_failed: %ld prefetched: %ld succeed: %ld active: %ld inactive: %ld wb: %ld remote: %ld\n",
+			addr_start, size, force,
+			ctx.stat.dontneed_called,
+			ctx.stat.dontneed_try,
+			ctx.stat.dontneed_trylock_failed,
+			ctx.stat.dontneed_prefetched,
+			ctx.stat.dontneed_succeed,
+			ctx.stat.dontneed_active,
+			ctx.stat.dontneed_inactive,
+			ctx.stat.dontneed_wb,
+			ctx.stat.dontneed_remote);
+	return ret;
+}
+

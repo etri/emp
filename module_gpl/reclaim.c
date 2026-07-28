@@ -19,9 +19,6 @@
 #define TLB_VALID_PERIOD (10ULL * MS_TO_NS)
 #define MRU_BUF_FULL(size, len) ((len) >= (size))
 
-static void
-reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas);
-
 #ifdef CONFIG_EMP_VM
 static void __noop(void *dummy) {}
 
@@ -346,7 +343,7 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 	return new_mru_len;
 }
 
-static inline bool COMPILER_DEBUG
+bool COMPILER_DEBUG
 gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 {
 	struct emp_gpa *g, *pf_sb;
@@ -1649,8 +1646,7 @@ int update_lru_lists_lru(struct emp_mm *b, struct vcpu_var *cpu,
  * @param gpas gpas to reclaim
  * @param n_gpas the number of gpas
 */
-static void
-reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas)
+void reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas)
 {
 	int i, end;
 	bool tlb_flush_force = false;

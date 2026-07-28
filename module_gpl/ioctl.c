@@ -181,7 +181,8 @@ static long __emp_madvise(struct emp_mm *emm, unsigned long ioctl_param)
 	// case MADV_EMP_SEQUENTIAL: break;
 	case MADV_EMP_WILLNEED:
 			return emp_blk_prefetch(emm, info.addr, info.size);
-	// case MADV_EMP_DONTNEED: break;
+	case MADV_EMP_DONTNEED:
+			return emp_blk_move_to_inactive(emm, info.addr, info.size);
 
 	// *** codes from linux ***
 	// case MADV_EMP_REMOVE: break;
