@@ -4,6 +4,7 @@
 #include <rdma/rdma_cm.h>
 #include "config.h"
 #include "gpa.h"
+#include "stat.h"
 
 #define SLA_REMOTE (0)
 #define SLA_LOCAL  (1)
@@ -110,16 +111,7 @@ struct vcpu_var {
 #endif /* CONFIG_EMP_OPT */
 
 #ifdef CONFIG_EMP_STAT
-	/* statistics */
-	struct {
-		u64 vma_fault;
-		u64 local_fault;
-		u64 remote_fault;
-		u64 dbit_count;
-		u64 cbit_count;
-		u64 wb_count;
-		u64 alloc_pages_wait_count;
-	} stat;
+	struct emp_vcpu_stat stat;
 #endif
 
 	int                     id;

@@ -85,9 +85,6 @@ ifeq ($(EMP_EXT), yes)
 	ifneq ($(EMP_OPT), yes)
 		$(error EMP_EXT requires EMP_OPT)
 	endif
-	ifneq ($(EMP_STAT), yes)
-		$(error EMP_EXT requires EMP_STAT)
-	endif
 endif
 
 # Check requirements of device supports

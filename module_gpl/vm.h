@@ -9,6 +9,7 @@
 #include "emp_type.h"
 #include "constants.h"
 #include "lru.h"
+#include "stat.h"
 #include "vcpu_var.h"
 #include "../include/emp_ioctl.h"
 #include "../include/compat.h"
@@ -124,43 +125,6 @@ struct emp_config {
 	int     remote_reuse; /* reuse remote page: remote inclusive policy */
 	int     remote_policy_subblock;
 	int     remote_policy_block;
-};
-
-/* variables for collecting stats */
-struct emp_stat {
-	atomic_t read_reqs;
-	atomic_t read_comp;
-	atomic_t write_reqs;
-	atomic_t write_comp;
-
-	u64      recl_count;
-	u64      post_read_count;
-	u64      post_write_count;
-	u64      stale_page_count;
-
-	u64      remote_tlb_flush;
-	u64      remote_tlb_flush_no_ipi;
-	u64      remote_tlb_flush_force;
-
-	u64      io_read_pages;
-	u64      csf_fault;
-	u64      csf_useful;
-	u64      cpf_to_csf_transition;
-	u64      post_read_mempoll;
-
-	u64      fsync_count;
-
-	u64      blk_prefetch_try;
-	u64      blk_prefetch_active;
-	u64      blk_prefetch_inactive;
-	u64      blk_prefetch_writeback;
-	u64      blk_prefetch_remote;
-	u64      blk_dontneed_try;
-	u64      blk_dontneed_succeed;
-	u64      blk_dontneed_active;
-	u64      blk_dontneed_inactive;
-	u64      blk_dontneed_writeback;
-	u64      blk_dontneed_remote;
 };
 
 // second-tier memory for a mm
@@ -536,7 +500,7 @@ struct emp_mm {
 
 #ifdef CONFIG_EMP_STAT
 	/* variables for collecting stats */
-	struct emp_stat     stat;
+	struct emp_stat    stat;
 #endif
 
 	struct emp_stm_ops  sops;

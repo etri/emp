@@ -1321,9 +1321,7 @@ static int __clear_gpa_for_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 #endif
 		}
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
-#ifdef CONFIG_EMP_STAT
-		emm->stat.csf_fault++;
-#endif
+		emp_stat_inc(emm, csf_fault);
 	}
 #endif /* CONFIG_EMP_BLOCK */
 #ifdef CONFIG_EMP_EXT

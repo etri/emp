@@ -457,9 +457,7 @@ static void wait_for_prefetched_blocks(struct emp_mm *emm,
 		if (!is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
 			continue;
 		wait_for_prefetched_block(emm, cpu, head);
-#ifdef CONFIG_EMP_STAT
-		emm->stat.csf_useful++;
-#endif
+		emp_stat_inc(emm, csf_useful);
 	}
 }
 #endif /* CONFIG_EMP_BLOCK */
@@ -959,9 +957,7 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 		if (!head_wr)
 			head_wr = w;
 
-#ifdef CONFIG_EMP_STAT
-		cpu->stat.wb_count += dma_size;
-#endif
+		emp_vcpu_stat_add(cpu, wb_count, dma_size);
 	}
 
 	if (head_wr && head_wr->chained_ops) {
@@ -974,9 +970,7 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 		emm->sops.push_writeback_request(emm, head_wr, cpu);
 	}
 
-#ifdef CONFIG_EMP_STAT
-	emm->stat.post_write_count++;
-#endif	
+	emp_stat_inc(emm, post_write_count);
 	return head_wr;
 
 error:
@@ -1054,9 +1048,9 @@ static bool check_need_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 	need_writeback = clear_gpa_flags_if_set(head, GPA_DIRTY_MASK);
 	if (need_writeback)
-		cpu->stat.dbit_count++;
+		emp_vcpu_stat_inc(cpu, dbit_count);
 	else
-		cpu->stat.cbit_count++;
+		emp_vcpu_stat_inc(cpu, cbit_count);
 
 	return need_writeback;
 }
@@ -1180,7 +1174,7 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 #ifdef CONFIG_EMP_VM
 	if (need_tlb_flush && is_emm_with_kvm(bvma)) {
 		tlb_flush_all(bvma->ekvm.kvm);
-		++bvma->stat.remote_tlb_flush_force;
+		emp_stat_inc(bvma, stat.remote_tlb_flush_force);
 		local_cpu->t_tlb_flush = ctime;
 	}
 #endif /* CONFIG_EMP_VM */
@@ -1540,9 +1534,7 @@ reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas)
 
 	bvma->vops.unmap_gpas(bvma, gpas[end], &tlb_flush_force);
 
-#ifdef CONFIG_EMP_STAT
-	bvma->stat.recl_count += n_gpas;
-#endif
+	emp_stat_add(bvma, recl_count, n_gpas);
 }
 
 /**

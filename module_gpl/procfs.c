@@ -810,11 +810,11 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 		srcu_index = srcu_read_lock(&bvma->srcu); \
 		rcu_read_unlock(); \
 		FOR_EACH_##type(bvma, j) { \
-			val = (emp_get_vcpu_from_id(bvma, j))->stat.var; \
+			val = emp_vcpu_stat_read(emp_get_vcpu_from_id(bvma, j), var); \
 			len += snprintf(buffer+len, buf_size-len, "%lld\t", val); \
 			sum += val; \
 			if (bvma->config.reset_after_read) \
-				(emp_get_vcpu_from_id(bvma, j))->stat.var = 0; \
+				emp_vcpu_stat_reset(emp_get_vcpu_from_id(bvma, j), var); \
 		} \
 		len += snprintf(buffer+len, buf_size-len, "sum: %lld\n", sum); \
 		ret = simple_read_from_buffer(buf, count, ppos, buffer, len); \
@@ -848,7 +848,7 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 		srcu_index = srcu_read_lock(&bvma->srcu); \
 		rcu_read_unlock(); \
 		FOR_EACH_##type(bvma, j) \
-			(emp_get_vcpu_from_id(bvma, j))->stat.var = 0; \
+			emp_vcpu_stat_reset(emp_get_vcpu_from_id(bvma, j), var); \
 		srcu_read_unlock(&bvma->srcu, srcu_index); \
 	\
 		return count; \
@@ -864,9 +864,9 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 		if (bvma == NULL) return 0; \
 		rcu_read_lock(); \
 		if (bvma->close == 0) { \
-		len = snprintf(buffer, PROC_BUF_SIZE, "%lld\n", bvma->stat.var); \
+		len = snprintf(buffer, PROC_BUF_SIZE, "%lld\n", emp_stat_read(bvma, var)); \
 		if (bvma->config.reset_after_read) \
-			bvma->stat.var = 0; \
+			emp_stat_reset(bvma, var); \
 		} \
 		rcu_read_unlock(); \
 	\
@@ -881,7 +881,7 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 		if (bvma == NULL) return 0; \
 		rcu_read_lock(); \
 		if (bvma->close == 0) { \
-			bvma->stat.var = 0; \
+			emp_stat_reset(bvma, var); \
 		} \
 		rcu_read_unlock(); \
 		return count; \
@@ -932,11 +932,17 @@ static ssize_t donor_reqs_read(struct file *file, char __user *buf,
 	rcu_read_lock();
 	if (bvma->close == 0) {
 		len = snprintf(buffer, PROC_BUF_SIZE * 4, 
-				"%d %d %d %d\n",
-				atomic_read(&bvma->stat.read_reqs),
-				atomic_read(&bvma->stat.read_comp),
-				atomic_read(&bvma->stat.write_reqs),
-				atomic_read(&bvma->stat.write_comp));
+				"%lld %lld %lld %lld\n",
+				emp_stat_read(bvma, read_reqs),
+				emp_stat_read(bvma, read_comp),
+				emp_stat_read(bvma, write_reqs),
+				emp_stat_read(bvma, write_comp));
+		if (bvma->config.reset_after_read) {
+			emp_stat_reset(bvma, read_reqs);
+			emp_stat_reset(bvma, read_comp);
+			emp_stat_reset(bvma, write_reqs);
+			emp_stat_reset(bvma, write_comp);
+		}
 	}
 	rcu_read_unlock();
 

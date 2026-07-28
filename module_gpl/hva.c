@@ -306,9 +306,9 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 			clear_gpa_flags_if_set(demand, GPA_REMOTE_MASK);
 			clear_gpa_flags_if_set(head, GPA_PREFETCHED_CPF_MASK);
 			set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
-#ifdef CONFIG_EMP_STAT
-			bvma->stat.cpf_to_csf_transition++;
-#endif
+
+			emp_stat_inc(bvma, cpf_to_csf_transition);
+
 			cpf_prefetching = false;
 			csf_prefetching = true;
 			// fall-through
@@ -579,9 +579,8 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 #endif
 
 	cpu = emp_this_cpu_ptr(emm->pcpus);
-#ifdef CONFIG_EMP_STAT
-	inc_vma_fault(cpu);
-#endif
+	emp_vcpu_stat_inc(cpu, vma_fault);
+
 	emp_pf_history_beg(cpu, vmr->id, vmf->address);
 	emp_pf_history_add(cpu, hva_or_gpa, 0);
 
@@ -687,9 +686,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 #endif /* CONFIG_EMP_VM */
 
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
-#ifdef CONFIG_EMP_STAT
-		emm->stat.csf_fault++;
-#endif /* CONFIG_EMP_STAT */
+		emp_stat_inc(emm, csf_fault);
 	}
 #endif /* CONFIG_EMP_BLOCK */
 
@@ -724,9 +721,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	// all or nothing policy is assumed for a block
 	emp_pf_history_add(cpu, head_state_mid, head->r_state);
 	if (head->r_state != GPA_INIT) {
-#ifdef CONFIG_EMP_STAT
-		inc_local_fault(cpu);
-#endif
+		emp_vcpu_stat_inc(cpu, local_fault);
 		r = handle_local_fault(vmr, &head, demand, cpu, vmf, &ret);
 		debug_progress(head, r);
 		emp_pf_history_add(cpu, local_fault_ret, r);

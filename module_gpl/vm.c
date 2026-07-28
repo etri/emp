@@ -9,6 +9,7 @@
 #include <asm/bitops.h>
 #include "config.h"
 #include "gpa.h"
+#include "stat.h"
 #include "vm.h"
 #include "glue.h"
 #include "block.h"
@@ -1440,9 +1441,8 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			head_idx = emp_get_block_head_index(prev_vmr, split_index);
 			head = emp_lock_block(prev_vmr, NULL, head_idx);
 			debug_assert(head = split_head);
-#ifdef CONFIG_EMP_STAT
-			emm->stat.blk_prefetch_remote++;
-#endif
+			emp_stat_inc(emm, blk_prefetch_remote);
+
 			r = split_handle_remote_prefetch(emm, prev_vmr, head, head_idx, cpu);
 			debug_progress(split_head, r);
 			if (r >= 0) {
@@ -1505,9 +1505,8 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 					cpu, true, false);
 
 				/* fetch to split */
-#ifdef CONFIG_EMP_STAT
-				emm->stat.blk_prefetch_remote++;
-#endif
+				emp_stat_inc(emm, blk_prefetch_remote);
+
 				r = split_handle_remote_prefetch(emm, prev_vmr, head, head_idx, cpu);
 				debug_progress(split_head, r);
 				if (r >= 0) {
@@ -2324,12 +2323,8 @@ static struct emp_mm *create_emm(void)
 	bvma->config.remote_policy_block = initial_remote_policy_block;
 	atomic_set(&bvma->ftm.local_cache_pages, initial_local_cache_pages);
 
-#ifdef CONFIG_EMP_STAT
-	atomic_set(&bvma->stat.read_reqs, 0);
-	atomic_set(&bvma->stat.read_comp, 0);
-	atomic_set(&bvma->stat.write_reqs, 0);
-	atomic_set(&bvma->stat.write_comp, 0);
-#endif
+	emp_stat_init(bvma);
+
 	bvma->ftm.local_cache_pages_headroom = 0;
 
 	return bvma;
@@ -2577,9 +2572,7 @@ static int emp_fsync(struct file *filp, loff_t s, loff_t e, int datasync)
 	if (!bvma)
 		return -EINVAL;
 
-#ifdef CONFIG_EMP_STAT
-	bvma->stat.fsync_count++;
-#endif
+	emp_stat_inc(bvma, fsync_count);
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.emp_fsync)
 		return emp_ext.emp_fsync(bvma, s, e, datasync);

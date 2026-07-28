@@ -346,9 +346,7 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	else
 		head->r_state = GPA_FETCHING;
 
-#ifdef CONFIG_EMP_STAT
-	bvma->stat.stale_page_count += no_fetching_count;
-#endif
+	emp_stat_add(bvma, stale_page_count, no_fetching_count);
 
 	emp_update_rss_cached(vmr);
 
@@ -414,9 +412,9 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 #ifdef CONFIG_EMP_STAT
 	/* update stats - increase fetch num counters for the block order */
 	if (fip) {
-		inc_remote_fault(cpu);
+		emp_vcpu_stat_inc(cpu, remote_fault);
 	} else {
-		inc_local_fault(cpu);
+		emp_vcpu_stat_inc(cpu, local_fault);
 		if (!IS_IOTHREAD_VCPU(cpu->id)) {
 			/* update gpa info */
 			(*head)->r_state = GPA_ACTIVE;
@@ -424,7 +422,7 @@ int handle_remote_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 
 #if defined(GPA_IO_READ_MASK)
 		if (no_fetch)
-			bvma->stat.stale_page_count += block_size;
+			emp_stat_add(bvma, stale_page_count, block_size);
 #endif
 #ifdef CONFIG_EMP_OPT
 		if (is_stale) {
@@ -1202,9 +1200,7 @@ static int install_sptes_for_subblock(struct kvm_vcpu *kvm_vcpu,
 						demand_off, gpa, sptep);
 			clear_gpa_flags_if_set(head, GPA_PREFETCHED_CPF_MASK);
 			set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
-#ifdef CONFIG_EMP_STAT
-			bvma->stat.cpf_to_csf_transition++;
-#endif
+			emp_stat_inc(bvma, cpf_to_csf_transition);
 		}
 	} else {
 		/* demand sub-block install */
@@ -1483,7 +1479,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 
 #ifdef CONFIG_EMP_STAT
 	/* update stat */
-	inc_vma_fault(cpu);
+	emp_vcpu_stat_inc(cpu, vma_fault);
 #endif	
 	emp_pf_history_beg(cpu, vmr->id, hva);
 	emp_pf_history_add(cpu, hva_or_gpa, 1);
@@ -1563,7 +1559,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 				(mapping_attr & PT_WRITABLE_MASK)) {
 				clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
 #ifdef CONFIG_EMP_STAT
-				bvma->stat.csf_fault++;
+				emp_stat_inc(bvma, csf_fault);
 #endif
 				emp_pf_history_add(cpu, goto_code, 2);
 				goto return_to_fault_inst;
@@ -1571,9 +1567,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 		}
 
 		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
-#ifdef CONFIG_EMP_STAT
-		bvma->stat.csf_fault++;
-#endif
+		emp_stat_inc(bvma, csf_fault);
 	}
 #endif
 
@@ -1618,9 +1612,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	 *    It should wait for the completion.  	*/
 	emp_pf_history_add(cpu, head_state_mid, head->r_state);
 	if (head->r_state != GPA_INIT) {
-#ifdef CONFIG_EMP_STAT
-		inc_local_fault(cpu);
-#endif
+		emp_vcpu_stat_inc(cpu, local_fault);
 		r = handle_local_fault(vmr, &head, demand, cpu, NULL, NULL);
 		emp_pf_history_add(cpu, local_fault_ret, r);
 		emp_pf_history_add(cpu, remote_fault_ret, -1);

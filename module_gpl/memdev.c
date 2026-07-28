@@ -40,10 +40,8 @@ static void memdev_destroy_local_page(struct local_page *lpage, int pglen,
 static inline void __emp_memdev_wait_read(struct emp_mm *bvma, struct work_request *w)
 {
 	// w->state was set at emp_memdev_post_read()
-#ifdef CONFIG_EMP_STAT
 	if (likely(bvma))
-		atomic_inc(&bvma->stat.read_comp);
-#endif
+		emp_stat_inc(bvma, read_comp);
 }
 
 static int emp_memdev_wait_read(struct emp_mm *bvma, struct work_request *w,
@@ -64,10 +62,8 @@ static int emp_memdev_wait_write(struct emp_mm *bvma, struct work_request *w,
 			       struct vcpu_var *cpu, bool p)
 {
 	// w->state was set at emp_memdev_post_read()
-#ifdef CONFIG_EMP_STAT
 	if (likely(bvma))
-		atomic_inc(&bvma->stat.write_comp);
-#endif
+		emp_stat_inc(bvma, write_comp);
 	return w->m_errors;
 }
 

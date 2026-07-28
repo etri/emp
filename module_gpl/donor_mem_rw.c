@@ -51,11 +51,8 @@ fetch_pages(struct emp_mm *bvma, struct connection *conn, struct emp_gpa *gpa,
 	if (IS_ERR_OR_NULL(demand_w)) {
 		debug_page_ref_io_end(gpa->local_page);
 		emp_put_subblock(gpa);
-	}
-#ifdef CONFIG_EMP_STAT
-	else
-		atomic_inc(&bvma->stat.read_reqs);
-#endif
+	} else
+		emp_stat_inc(bvma, read_reqs);
 	return demand_w;
 }
 
@@ -173,9 +170,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			push_free_page_list(bvma, page, cpu);
 			return PTR_ERR(w);
 		}
-#ifdef CONFIG_EMP_STAT
-		bvma->stat.post_read_count++;
-#endif
+		emp_stat_inc(bvma, post_read_count);
 	} else {
 		debug_BUG_ON(page_count(local_page->page) < 1);
 
@@ -189,10 +184,8 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 				free_remote_page(bvma, gpa, true);
 		}
 
-#ifdef CONFIG_EMP_STAT
 		if (io_read_mask)
-			bvma->stat.io_read_pages++;
-#endif
+			emp_stat_inc(bvma, io_read_pages);
 		w = NULL;
 		
 		debug_alloc_and_fetch_pages2(vmr, gpa);
@@ -425,9 +418,7 @@ post_writeback_async(struct emp_mm *bvma, struct emp_gpa *gpa,
 		barrier();
 	}
 
-#ifdef CONFIG_EMP_STAT
-	atomic_inc(&bvma->stat.write_reqs);
-#endif
+	emp_stat_inc(bvma, write_reqs);
 	return w;
 }
 
