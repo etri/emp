@@ -4,9 +4,6 @@
 
 ALLDIRS = module_kvm module_gpl
 SUBDIRS = module_gpl
-ifeq ($(EMP_EXT), yes)
-SUBDIRS += module_pro
-endif
 ifeq ($(RDMA_SUPPORT), yes)
 SUBDIRS += vmd
 endif

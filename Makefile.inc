@@ -20,8 +20,6 @@ EMP_IO := yes
 EMP_STAT := yes
 # Include debug codes
 EMP_DEBUG := no
-# Include instruction emulation (VERY EXPERIMENTAL)
-EMP_INSN_EMUL := no
 # remote memory using block device support (e.g. NVMe SSD)
 BLOCKDEV_SUPPORT := yes
 # remote memory using memory-like device support (EXPERIMENTAL)
@@ -30,13 +28,6 @@ MEMDEV_SUPPORT := yes
 RDMA_SUPPORT := no
 #  depend on RDMA_SUPPORT
 USE_MLNX_OFED := no
-# wss estimator support
-WSS_ESTIMATOR := no
-#  depend on WSS_ESTIMATOR
-WSS_ESTIMATOR_AVL := no
-#   depend on WSS_ESTIMATOR and WSS_ESTIMATOR_AVL
-WSS_ESTIMATOR_AVL_SHARDS := no
-WSS_ESTIMATOR_AVL_PM := no
 # add optimizations for sequential access pattern (EXPERIMENTAL)
 EMP_SEQUENTIAL := no
 # optimize page_add_file_rmap() and page_remove_rmap() (EXPERIMENTAL)
@@ -51,8 +42,6 @@ KVM_ALLOC_PROFILE := no
 # EMP_DEBUG should be no
 EMP_PREFER_DCPMM := no
 KVM_PREFER_DCPMM := no
-# for libemp
-CUDA_SUPPORT := no
 
 # Internal Variables
 CUR_KERN := $(shell uname -r)
@@ -136,12 +125,6 @@ endif
 ifeq ($(EMP_DEBUG), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_DEBUG
 endif
-ifeq ($(EMP_INSN_EMUL), yes)
-EXTRA_CFLAGS += -DCONFIG_EMP_INSN_EMUL
-endif
-ifeq ($(EMP_SECURITY), yes)
-EXTRA_CFLAGS += -DCONFIG_EMP_SECURITY
-endif
 ifeq ($(MEMDEV_SUPPORT), yes)
 EXTRA_CFLAGS += -DCONFIG_EMP_MEMDEV
 endif
@@ -177,31 +160,6 @@ ifeq ($(RDMA_SUPPORT), yes)
   EXTRA_CFLAGS += -DMLNX_OFED
  endif
  EXTRA_CFLAGS += -DCONFIG_EMP_RDMA
-endif
-
-EXTRA_CFLAGS += -DPRINT_RE_EVENT
-
-ifeq ($(WSS_ESTIMATOR), yes)
-EXTRA_CFLAGS += -DSTACK_DIST_PROFILE
-KBUILD_EXTRA_SYMBOLS += $(CURDIR)/../wss_estimator/module/Module.symvers
- ifeq ($(WSS_ESTIMATOR_AVL), yes)
- EXTRA_CFLAGS += -DAVL_STACK_DIST -DAVL_STACK_COARSE
-  ifeq ($(WSS_ESTIMATOR_AVL_SHARDS), yes)
-  EXTRA_CFLAGS += -DAVL_STACK_SHARDS
-  endif #WSS_ESTIMATOR_AVL_SHARDS
-  ifeq ($(WSS_ESTIMATOR_AVL_PM), yes)
-  EXTRA_CFLAGS += -DSLA_PM
-  endif #WSS_ESTIMATOR_AVL_PM
- else #DUAL COUNTER STACK
- EXTRA_CFLAGS += -DDUAL_CS
- endif #WSS_ESTIMATOR_AVL
-endif #WSS_ESTIMATOR
-
-ifeq ($(REMOTE_INCLUSIVE), yes)
-EXTRA_CFLAGS += -DREMOTE_INCLUSIVE
-endif
-ifeq ($(LINUX_DISTRO), CentOS)
-EXTRA_CFLAGS += -DCENTOS
 endif
 
 KBUILD_EXTRA_SYMBOLS += $(wildcard $(CURDIR)/../module_gpl/Module.symvers)
