@@ -452,6 +452,26 @@ EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_free);
 		return ret; \
 	}
 
+#define __EMP_PROC_VMA_INTEGER_READ(name, var) \
+	static ssize_t ____concat2(name, _read) \
+					(struct file *file, char __user *buf, size_t count, loff_t *ppos) \
+	{	\
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+		if (bvma->vmrs_len == 0) return 0; \
+		return __integer_read(file, buf, count, ppos, bvma->var); \
+	}
+
+#define __EMP_PROC_VMA_ATOMIC_READ(name, var) \
+	static ssize_t ____concat2(name, _read) \
+					(struct file *file, char __user *buf, size_t count, loff_t *ppos) \
+	{	\
+		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
+		if (bvma == NULL) return 0; \
+		if (bvma->vmrs_len == 0) return 0; \
+		return __integer_read(file, buf, count, ppos, atomic_read(&bvma->var)); \
+	}
+
 #define EMP_PROC_VM_INTEGER_READ(x) __EMP_PROC_VM_INTEGER_READ(x, x)
 #define EMP_PROC_VM_CONFIG_INTEGER_READ(x) __EMP_PROC_VM_INTEGER_READ(x, config.x)
 
@@ -877,6 +897,308 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 	return len;
 }
 #endif /* CONFIG_EMP_RDMA */
+
+__EMP_PROC_VMA_ATOMIC_READ(mem_alloc_pages_len, ftm.alloc_pages_len)
+__EMP_PROC_VMA_ATOMIC_READ(mem_proactive_len, ftm.proactive_list.page_len)
+__EMP_PROC_VMA_ATOMIC_READ(mem_pin_list_len, ftm.cur_pin_pages)
+__EMP_PROC_VMA_ATOMIC_READ(num_pin_blocks, ftm.num_pin_blocks)
+__EMP_PROC_VMA_ATOMIC_READ(num_evicted_pin_blocks, ftm.num_evicted_pin_blocks)
+__EMP_PROC_VMA_ATOMIC_READ(mem_active_len, ftm.active_list.page_len)
+
+static ssize_t mem_inactive_len_read(struct file *file, char __user *buf,
+									size_t count, loff_t *ppos)
+{
+	char buffer[PROC_BUF_SIZE * 3];
+	ssize_t len = 0;
+	struct emp_mm *bvma;
+
+	bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	if (bvma->vmrs_len == 0) return 0;
+
+	if (bvma->close == 0) {
+		len = snprintf(buffer, PROC_BUF_SIZE * 3, 
+				"%d(%d)\n",
+				read_inactive_list_page_len(bvma),
+				atomic_read(&bvma->ftm.alloc_pages_len));
+	}
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t mem_proactive_queue_len_read(struct file *file, char __user *buf,
+					 size_t count, loff_t *ppos)
+{
+	size_t buf_size;
+	char *buffer;
+	ssize_t len = 0;
+	int val, sum = 0;
+#ifdef CONFIG_EMP_VM
+	int j;
+#endif
+	int cpu;
+	ssize_t ret;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL)
+		return 0;
+
+	buf_size = 2 * PROC_BUF_SIZE *
+		(IO_THREAD_MAX + KVM_THREAD_MAX + 4);
+	buffer = emp_kmalloc(buf_size, GFP_KERNEL);
+	if (buffer == NULL)
+		return 0;
+
+	if (bvma->close) {
+		ret = 0;
+		goto out;
+	}
+
+	len += snprintf(buffer+len, buf_size-len, "m: ");
+	for_each_possible_cpu(cpu) {
+		if (bvma->ftm.proactive_list.host_mru == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(emp_pc_ptr(bvma->ftm.proactive_list.host_mru, cpu));
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+
+#ifdef CONFIG_EMP_VM
+	FOR_EACH_KVM_THREAD(bvma, j) {
+		if (bvma->ftm.proactive_list.mru_bufs == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(&bvma->ftm.proactive_list.mru_bufs[j]);
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+#endif
+	len += snprintf(buffer+len, buf_size-len, "sum: 0x%x / %d MiB\n", sum,
+			atomic_read(&bvma->ftm.proactive_list.page_len) >> (MB_ORDER - PAGE_SHIFT));
+
+	sum = 0;
+	len += snprintf(buffer+len, buf_size-len, "l: ");
+	for_each_possible_cpu(cpu) {
+		if (bvma->ftm.proactive_list.host_lru == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(emp_pc_ptr(bvma->ftm.proactive_list.host_lru, cpu));
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+	
+#ifdef CONFIG_EMP_VM
+	FOR_EACH_KVM_THREAD(bvma, j) {
+		if (bvma->ftm.proactive_list.lru_bufs == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(&bvma->ftm.proactive_list.lru_bufs[j]);
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+#endif
+	len += snprintf(buffer+len, buf_size-len, "sum: 0x%x / %d MiB\n", sum,
+			atomic_read(&bvma->ftm.proactive_list.page_len) >> (MB_ORDER - PAGE_SHIFT));
+
+	ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
+out:
+	emp_kfree(buffer);
+
+	return ret;
+}
+
+static ssize_t mem_active_queue_len_read(struct file *file, char __user *buf,
+					 size_t count, loff_t *ppos)
+{
+	size_t buf_size;
+	char *buffer;
+	ssize_t len = 0;
+	int val, sum = 0;
+#ifdef CONFIG_EMP_VM
+	int j;
+#endif
+	int cpu;
+	ssize_t ret;
+
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL)
+		return 0;
+
+	buf_size = 2 * PROC_BUF_SIZE *
+		(IO_THREAD_MAX + KVM_THREAD_MAX + 4);
+	buffer = emp_kmalloc(buf_size, GFP_KERNEL);
+	if (buffer == NULL)
+		return 0;
+
+	if (bvma->close) {
+		ret = 0;
+		goto out;
+	}
+
+	len += snprintf(buffer+len, buf_size-len, "m: ");
+	for_each_possible_cpu(cpu) {
+		if (bvma->ftm.active_list.host_mru == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(emp_pc_ptr(bvma->ftm.active_list.host_mru, cpu));
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+
+#ifdef CONFIG_EMP_VM
+	FOR_EACH_KVM_THREAD(bvma, j) {
+		if (bvma->ftm.active_list.mru_bufs == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(&bvma->ftm.active_list.mru_bufs[j]);
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+#endif
+	len += snprintf(buffer+len, buf_size-len, "sum: 0x%x / %d MiB\n", sum,
+			atomic_read(&bvma->ftm.active_list.page_len) >> (MB_ORDER - PAGE_SHIFT));
+
+	sum = 0;
+	len += snprintf(buffer+len, buf_size-len, "l: ");
+	for_each_possible_cpu(cpu) {
+		if (bvma->ftm.active_list.host_lru == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(emp_pc_ptr(bvma->ftm.active_list.host_lru, cpu));
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+
+#ifdef CONFIG_EMP_VM
+	FOR_EACH_KVM_THREAD(bvma, j) {
+		if (bvma->ftm.active_list.lru_bufs == NULL) {
+			len += snprintf(buffer+len, buf_size-len, "-\t");
+			continue;
+		}
+		val = emp_list_len(&bvma->ftm.active_list.lru_bufs[j]);
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+#endif
+	len += snprintf(buffer+len, buf_size-len, "sum: 0x%x / %d MiB\n", sum,
+			atomic_read(&bvma->ftm.active_list.page_len) >> (MB_ORDER - PAGE_SHIFT));
+
+	ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
+out:
+	emp_kfree(buffer);
+
+	return ret;
+}
+
+static inline ssize_t __mem_inactive_queue_len_read(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos, struct emp_mm *bvma)
+{
+	size_t buf_size = PROC_BUF_SIZE * (IO_THREAD_MAX + KVM_THREAD_MAX + 4);
+	ssize_t len = 0;
+	int val, sum = 0;
+#ifdef CONFIG_EMP_VM
+	int j;
+#endif
+	int cpu;
+	char *buffer;
+        ssize_t ret;
+
+        buffer = emp_kmalloc(buf_size, GFP_KERNEL);
+        if (buffer == NULL)
+                return 0;
+
+	if (bvma->close) goto out;
+
+	for_each_possible_cpu(cpu) {
+		val = emp_list_len(emp_pc_ptr(bvma->ftm.inactive_list.host_mru, cpu));
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+
+#ifdef CONFIG_EMP_VM
+	FOR_EACH_KVM_THREAD(bvma, j) {
+		val = emp_list_len(&bvma->ftm.inactive_list.mru_bufs[j]);
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+#endif
+	len += snprintf(buffer+len, buf_size-len, "sum: 0x%x => %d MiB\n", sum,
+			(read_inactive_list_page_len(bvma)
+				- read_inflight_writeback_page_len(bvma))
+					>> (MB_ORDER - PAGE_SHIFT));
+	ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
+out:
+	emp_kfree(buffer);
+
+	return ret;
+}
+
+static ssize_t mem_inactive_queue_len_read(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos)
+{
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	return __mem_inactive_queue_len_read(file, buf, count, ppos, bvma);
+}
+
+static inline ssize_t __mem_wb_request_queue_len_read(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos, struct emp_mm *bvma)
+{
+	size_t buf_size = PROC_BUF_SIZE * (IO_THREAD_MAX + KVM_THREAD_MAX + 4);
+	ssize_t len = 0;
+	int val, sum = 0;
+#ifdef CONFIG_EMP_VM
+	int j;
+#endif
+	int cpu;
+	char *buffer;
+        ssize_t ret;
+
+        buffer = emp_kmalloc(buf_size, GFP_KERNEL);
+        if (buffer == NULL)
+                return 0;
+
+	if (bvma->close) goto out;
+
+	for_each_possible_cpu(cpu) {
+		val = emp_list_len(emp_pc_ptr(bvma->ftm.inactive_list.host_lru, cpu));
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+
+#ifdef CONFIG_EMP_VM
+	FOR_EACH_KVM_THREAD(bvma, j) {
+		val = emp_list_len(&bvma->ftm.inactive_list.lru_bufs[j]);
+		len += snprintf(buffer+len, buf_size-len, "0x%x\t", val);
+		sum += val;
+	}
+#endif
+	len += snprintf(buffer+len, buf_size-len, "sum: 0x%x => %d MiB\n", sum,
+			read_inflight_writeback_page_len(bvma)
+					>> (MB_ORDER - PAGE_SHIFT));
+	ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
+out:
+	emp_kfree(buffer);
+
+	return ret;
+}
+
+static ssize_t mem_wb_request_queue_len_read(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos)
+{
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	return __mem_wb_request_queue_len_read(file, buf, count, ppos, bvma);
+}
+
+__EMP_PROC_VMA_INTEGER_READ(mem_inactive_region_len, ftm.inactive_pages_len)
 
 #ifdef CONFIG_EMP_STAT
 /**************************************************/
@@ -1314,6 +1636,18 @@ static struct emp_proc_entry emp_proc_vm[] = {
 #ifdef CONFIG_EMP_RDMA
 	emp_proc_entry_ro(donor_info),
 #endif
+	emp_proc_entry_ro(mem_alloc_pages_len),
+	emp_proc_entry_ro(mem_proactive_len),
+	emp_proc_entry_ro(mem_active_len),
+	emp_proc_entry_ro(mem_inactive_len),
+	emp_proc_entry_ro(mem_proactive_queue_len),
+	emp_proc_entry_ro(mem_active_queue_len),
+	emp_proc_entry_ro(mem_inactive_queue_len),
+	emp_proc_entry_ro(mem_wb_request_queue_len),
+	emp_proc_entry_ro(mem_inactive_region_len),
+	emp_proc_entry_ro(mem_pin_list_len),
+	emp_proc_entry_ro(num_pin_blocks),
+	emp_proc_entry_ro(num_evicted_pin_blocks),
 	emp_proc_entry_END,
 };
 
