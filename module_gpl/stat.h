@@ -116,6 +116,9 @@ struct emp_vcpu_stat {
 	u64 vma_fault;
 	u64 local_fault;
 	u64 remote_fault;
+	u64 active_fault;
+	u64 inactive_fault;
+	u64 wb_fault;
 	u64 dbit_count;
 	u64 cbit_count;
 	u64 wb_count;

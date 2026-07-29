@@ -119,6 +119,7 @@ int handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 
 	debug_BUG_ON(is_gpa_flags_set(*head, GPA_EAGER_WBR_MASK));
 
+	emp_vcpu_stat_inc(cpu, wb_fault);
 	_handle_writeback_fault(vmr, *head, cpu);
 
 	// success to stretch the block means that the block is linked to
@@ -202,6 +203,7 @@ void handle_inactive_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 {
 	struct emp_gpa *phead = *head;
 
+	emp_vcpu_stat_inc(cpu, inactive_fault);
 	_handle_gpa_on_inactive_fault(vmr, phead, cpu);
 
 	// success to stretch the block means that the block is linked to
@@ -227,6 +229,8 @@ int handle_active_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		        struct emp_gpa *dma, struct vcpu_var *cpu,
 			int *vmf_ret)
 {
+	emp_vcpu_stat_inc(cpu, active_fault);
+
 	if (!IS_IOTHREAD_VCPU(cpu->id))
 		return 0;
 

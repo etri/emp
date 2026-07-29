@@ -1056,9 +1056,15 @@ EMP_PROC_STAT_PER_VCPU(vma_fault)
 /* for io threads (qemu) */
 __EMP_PROC_STAT_PER_IOTHREAD(hva_local_fault, local_fault)
 __EMP_PROC_STAT_PER_IOTHREAD(hva_remote_fault, remote_fault)
+__EMP_PROC_STAT_PER_IOTHREAD(hva_on_active_fault, active_fault)
+__EMP_PROC_STAT_PER_IOTHREAD(hva_on_inactive_fault, inactive_fault)
+__EMP_PROC_STAT_PER_IOTHREAD(hva_on_wb_fault, wb_fault)
 /* for pure vcpu threads */
 __EMP_PROC_STAT_PER_KVM_THREAD(gpa_local_fault, local_fault)
 __EMP_PROC_STAT_PER_KVM_THREAD(gpa_remote_fault, remote_fault)
+__EMP_PROC_STAT_PER_KVM_THREAD(gpa_on_active_fault, active_fault)
+__EMP_PROC_STAT_PER_KVM_THREAD(gpa_on_inactive_fault, inactive_fault)
+__EMP_PROC_STAT_PER_KVM_THREAD(gpa_on_wb_fault, wb_fault)
 EMP_PROC_STAT_PER_VCPU(dbit_count)
 EMP_PROC_STAT_PER_VCPU(cbit_count)
 EMP_PROC_STAT_PER_VCPU(wb_count)
@@ -1316,8 +1322,14 @@ static struct emp_proc_entry emp_proc_stat[] = {
 	emp_proc_entry_rw(vma_fault),
 	emp_proc_entry_rw(hva_local_fault),
 	emp_proc_entry_rw(hva_remote_fault),
+	emp_proc_entry_rw(hva_on_active_fault),
+	emp_proc_entry_rw(hva_on_inactive_fault),
+	emp_proc_entry_rw(hva_on_wb_fault),
 	emp_proc_entry_rw(gpa_local_fault),
 	emp_proc_entry_rw(gpa_remote_fault),
+	emp_proc_entry_rw(gpa_on_active_fault),
+	emp_proc_entry_rw(gpa_on_inactive_fault),
+	emp_proc_entry_rw(gpa_on_wb_fault),
 	emp_proc_entry_rw(dbit_count),
 	emp_proc_entry_rw(cbit_count),
 	emp_proc_entry_rw(wb_count),
