@@ -1200,6 +1200,74 @@ static ssize_t mem_wb_request_queue_len_read(struct file *file, char __user *buf
 
 __EMP_PROC_VMA_INTEGER_READ(mem_inactive_region_len, ftm.inactive_pages_len)
 
+static ssize_t free_pages_reclaim_read(struct file *file, char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	char buffer[PROC_BUF_SIZE];
+	ssize_t len = 0;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	if (bvma->close == 0) {
+		len = snprintf(buffer, PROC_BUF_SIZE,
+				"%d\n", atomic_read(&bvma->ftm.free_pages_reclaim));
+	}
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static inline ssize_t __free_pages_read(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos, struct emp_mm *bvma) {
+	size_t buf_size = PROC_BUF_SIZE * (IO_THREAD_MAX + KVM_THREAD_MAX + 4);
+	char *buffer;
+	ssize_t len = 0;
+	int val_free, val_wb, sum_free = 0, sum_wb = 0;
+	int global_free = 0;
+	ssize_t ret;
+
+	buffer = emp_kmalloc(buf_size, GFP_KERNEL);
+	if(buffer == NULL) return 0;
+
+	if (bvma->close == 0) {
+		int cpu;
+		for_each_possible_cpu(cpu) {
+			val_free = emp_list_len(emp_pc_ptr(bvma->ftm.host_free_bufs, cpu));
+			val_wb = emp_list_len(emp_pc_ptr(bvma->ftm.inactive_list.host_lru, cpu));
+			len += snprintf(buffer+len, buf_size-len,
+					"0x%x(0x%x) ", val_free, val_wb);
+			sum_free += val_free;
+		}
+
+#ifdef CONFIG_EMP_VM
+		FOR_EACH_KVM_THREAD(bvma, cpu) {
+			val_free = emp_list_len(&bvma->ftm.local_free_bufs[cpu]);
+			val_wb = emp_list_len(&bvma->ftm.inactive_list.lru_bufs[cpu]);
+			len += snprintf(buffer+len, buf_size-len,
+					"0x%x(0x%x) ", val_free, val_wb);
+			sum_free += val_free;
+		}
+#endif
+
+		global_free = emp_list_len(&bvma->ftm.free_page_list);
+		sum_free += global_free;
+		sum_wb = read_inflight_writeback_page_len(bvma);
+	}
+	len += snprintf(buffer+len, buf_size-len,
+					"g: 0x%x sum: 0x%x(0x%x)\n",
+					global_free, sum_free, sum_wb);
+	ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
+
+	emp_kfree(buffer);
+
+	return ret;
+}
+
+static ssize_t free_pages_read(struct file *file, char __user *buf,
+							size_t count, loff_t *ppos)
+{
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	return __free_pages_read(file, buf, count, ppos, bvma);
+}
+
 #ifdef CONFIG_EMP_STAT
 /**************************************************/
 /* per-VM files - stat                            */
@@ -1390,6 +1458,7 @@ __EMP_PROC_STAT_PER_KVM_THREAD(gpa_on_wb_fault, wb_fault)
 EMP_PROC_STAT_PER_VCPU(dbit_count)
 EMP_PROC_STAT_PER_VCPU(cbit_count)
 EMP_PROC_STAT_PER_VCPU(wb_count)
+__EMP_PROC_STAT_PER_VCPU(alloc_pages_wait, alloc_pages_wait_count)
 
 static ssize_t donor_reqs_read(struct file *file, char __user *buf,
 									size_t count, loff_t *ppos)
@@ -1645,6 +1714,8 @@ static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_ro(mem_inactive_queue_len),
 	emp_proc_entry_ro(mem_wb_request_queue_len),
 	emp_proc_entry_ro(mem_inactive_region_len),
+	emp_proc_entry_ro(free_pages_reclaim),
+	emp_proc_entry_ro(free_pages),
 	emp_proc_entry_ro(mem_pin_list_len),
 	emp_proc_entry_ro(num_pin_blocks),
 	emp_proc_entry_ro(num_evicted_pin_blocks),
@@ -1667,6 +1738,7 @@ static struct emp_proc_entry emp_proc_stat[] = {
 	emp_proc_entry_rw(dbit_count),
 	emp_proc_entry_rw(cbit_count),
 	emp_proc_entry_rw(wb_count),
+	emp_proc_entry_rw(alloc_pages_wait),
 	emp_proc_entry_ro(donor_reqs),
 	emp_proc_entry_rw(reclaim),
 	emp_proc_entry_rw(post_write),
