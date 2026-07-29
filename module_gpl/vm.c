@@ -115,6 +115,7 @@ static void init_emp_ops(void) {
 	emp_ops.add_gpas_to_inactive = add_gpas_to_inactive;
 	emp_ops.emp_writeback_block = emp_writeback_block;
 	emp_ops.remove_gpa_from_lru = remove_gpa_from_lru;
+	emp_ops.adjust_local_cache_size = adjust_local_cache_size;
 }
 
 /**
@@ -167,6 +168,7 @@ int register_emp_ext(struct emp_ext *ext) {
 	APPLY_OPS(add_gpas_to_inactive);
 	APPLY_OPS(emp_writeback_block);
 	APPLY_OPS(remove_gpa_from_lru);
+	APPLY_OPS(adjust_local_cache_size);
 #undef APPLY
 #define APPLY(func) do { if (ext->func) emp_ext.func = ext->func; } while (0)
 	APPLY(emp_open);
@@ -2317,6 +2319,7 @@ static struct emp_mm *create_emm(void)
 	bvma->config.remote_policy_subblock = initial_remote_policy_subblock;
 	bvma->config.remote_policy_block = initial_remote_policy_block;
 	atomic_set(&bvma->ftm.local_cache_pages, initial_local_cache_pages);
+	bvma->config.minimum_pages = atomic_read(&bvma->ftm.local_cache_pages) >> 3;
 
 	emp_stat_init(bvma);
 

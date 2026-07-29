@@ -17,11 +17,6 @@ EXPORT_SYMBOL(emp_proc_dir);
 #define ____concat2(a, b) a##b
 #define ____concat3(a, b, c) a##b##c
 
-#define __PAGES_TO_SIZE(p) (((size_t) (p)) << (PAGE_SHIFT))
-#define __PAGES_TO_SIZE_VM(p, bvma) (((size_t) (p)) << (PAGE_SHIFT))
-#define __SIZE_TO_PAGES(s) ((s) >> (PAGE_SHIFT))
-#define __SIZE_TO_PAGES_VM(s, bvma) ((s) >> (PAGE_SHIFT))
-
 static inline struct emp_mm *__get_emp_mm_by_file(struct file *file) {
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0))
@@ -508,6 +503,101 @@ static ssize_t online_read(struct file *file, char __user *buf,
 	rcu_read_unlock();
 	return ret;
 }
+
+static ssize_t local_cache_adjust_write(struct file *file, const char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	ssize_t size;
+	int ret;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	size = __size_write(file, buf, count, ppos);
+	if (size < 0) return size;
+
+#ifdef CONFIG_EMP_EXT
+	ret = emp_ops.adjust_local_cache_size(bvma, 0, size);
+#else
+	ret = adjust_local_cache_size(bvma, 0, size);
+#endif
+	if (ret < 0) return ret;
+	else return count;
+}
+
+static ssize_t local_cache_increase_write(struct file *file, const char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	ssize_t size;
+	int ret;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	size = __size_write(file, buf, count, ppos);
+	if (size < 0) return size;
+
+#ifdef CONFIG_EMP_EXT
+	ret = emp_ops.adjust_local_cache_size(bvma, size, 0);
+#else
+	ret = adjust_local_cache_size(bvma, size, 0);
+#endif
+	if (ret < 0) return ret;
+	else return count;
+}
+
+static ssize_t local_cache_decrease_write(struct file *file, const char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	ssize_t size;
+	int ret;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	size = __size_write(file, buf, count, ppos);
+	if (size < 0) return size;
+
+#ifdef CONFIG_EMP_EXT
+	ret = emp_ops.adjust_local_cache_size(bvma, -size, 0);
+#else
+	ret = adjust_local_cache_size(bvma, -size, 0);
+#endif
+	if (ret < 0) return ret;
+	else return count;
+}
+
+static ssize_t minimum_local_cache_size_read(struct file *file, char __user *buf,
+									size_t count, loff_t *ppos)
+{
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	return __size_read(file, buf, count, ppos,
+		__PAGES_TO_SIZE_VM(bvma->config.minimum_pages, bvma));
+}
+
+static ssize_t minimum_local_cache_size_write(struct file *file, const char __user *buf,
+									size_t count, loff_t *ppos)
+{
+	ssize_t size;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+
+	size = __size_write(file, buf, count, ppos);
+	if (size < 0)
+		return size;
+
+	if (size < __PAGES_TO_SIZE_VM(1, bvma)) {
+		printk(KERN_ERR "ERROR: minimum_local_cache_size should be larger than 0x%lx (subblock size)\n",
+					__PAGES_TO_SIZE_VM(1, bvma));
+		return -EINVAL;
+	}
+
+	printk(KERN_INFO "minimum_local_cache_size: emp_id: %d value: 0x%lx\n",
+						bvma->id, size);
+
+	bvma->config.minimum_pages = __SIZE_TO_PAGES_VM(size, bvma);
+
+	return count;
+}
+
 
 #ifdef CONFIG_EMP_BLOCK
 EMP_PROC_VM_CONFIG_INTEGER_READ(block_order)
@@ -1187,6 +1277,11 @@ static struct emp_proc_entry emp_proc_global[] = {
 
 static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_ro(online),
+	emp_proc_entry_ro(local_cache_size),
+	emp_proc_entry_wo(local_cache_adjust),
+	emp_proc_entry_wo(local_cache_increase),
+	emp_proc_entry_wo(local_cache_decrease),
+	emp_proc_entry_rw(minimum_local_cache_size),
 #ifdef CONFIG_EMP_BLOCK
 	emp_proc_entry_ro(block_order),
 	emp_proc_entry_ro(subblock_order),
@@ -1210,7 +1305,6 @@ static struct emp_proc_entry emp_proc_vm[] = {
 #ifdef CONFIG_EMP_STAT
 	emp_proc_entry_rw(reset_after_read),
 #endif
-	emp_proc_entry_ro(local_cache_size),
 #ifdef CONFIG_EMP_RDMA
 	emp_proc_entry_ro(donor_info),
 #endif

@@ -1946,6 +1946,77 @@ int reclaim_emp_pages(struct emp_mm *emm, struct vcpu_var *cpu, int pressure)
 	return reclaimed;
 }
 
+int adjust_local_cache_size(struct emp_mm *bvma, ssize_t diff_size, ssize_t new_size) {
+	ssize_t curr_pages = atomic_read(&bvma->ftm.local_cache_pages);
+	ssize_t curr_size = __PAGES_TO_SIZE_VM(curr_pages, bvma);
+	int sign;
+	long diff_pages;
+
+	if (diff_size != 0)
+		new_size = curr_size + diff_size;
+	else if (new_size != 0 && new_size != curr_size)
+		diff_size = new_size - curr_size;
+	else
+		return 0;
+
+	if (new_size < __PAGES_TO_SIZE_VM(1, bvma)) {
+		printk(KERN_ERR "ERROR: initial_local_cache_size should be larger than 0x%lx (subblock size)\n",
+					__PAGES_TO_SIZE_VM(1, bvma));
+		return -EINVAL;
+	}
+
+	if (new_size < __PAGES_TO_SIZE_VM(bvma->config.minimum_pages, bvma)) {
+		printk(KERN_WARNING "%s: the requested size(0x%lx) is less than minimum. "
+						"the local cache size(%lx) will be changed to the minimum size(0x%lx).\n",
+						__func__, new_size, curr_size,
+						__PAGES_TO_SIZE_VM(bvma->config.minimum_pages, bvma));
+		if (curr_pages == bvma->config.minimum_pages)
+			return 0;
+		new_size = __PAGES_TO_SIZE_VM(bvma->config.minimum_pages, bvma);
+		diff_size = new_size - curr_size;
+	}
+
+	sign = diff_size > 0 ? 1 : -1;
+	diff_size = diff_size * sign; /* take an absolute value */
+	diff_pages = __SIZE_TO_PAGES_VM(diff_size, bvma);
+
+	dprintk(KERN_ERR "change in local cache size(before): emp_id: %d local_pages: %x proactive_pages_len: %lx active_page_len: %lx inactive_pages_len: %lx\n",
+				bvma->id,
+				atomic_read(&bvma->ftm.local_cache_pages),
+				bvma->ftm.proactive_pages_len,
+				bvma->ftm.active_pages_len,
+				bvma->ftm.inactive_pages_len);
+	atomic_add(sign * diff_pages, &bvma->ftm.local_cache_pages);
+#ifndef CONFIG_EMP_DEBUG
+	printk(KERN_INFO "change in local cache size: emp_id: %d value: 0x%lx -> 0x%lx\n",
+				bvma->id, curr_size, new_size);
+#endif
+	reclaim_set(bvma);
+	dprintk(KERN_ERR "change in local cache size(after): emp_id: %d local_pages: %x proactive_pages_len: %lx active_page_len: %lx inactive_pages_len: %lx\n",
+				bvma->id,
+				atomic_read(&bvma->ftm.local_cache_pages),
+				bvma->ftm.proactive_pages_len,
+				bvma->ftm.active_pages_len,
+				bvma->ftm.inactive_pages_len);
+
+	if (sign > 0) {
+		wake_up_interruptible(&bvma->ftm.free_pages_wq);
+	} else {
+		int reclaimed = 1;
+		struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
+		atomic_add(diff_pages, &bvma->ftm.free_pages_reclaim);
+
+		while (reclaimed > 0) {
+			reclaimed = reclaim_emp_pages(bvma, cpu, diff_pages);
+			if (reclaimed <= 0)
+				break;
+			diff_pages -= reclaimed;
+		}
+	}
+
+	return 0;
+}
+
 /* remove gpa from proactive list */
 static void __remove_from_proactive(struct emp_mm *emm, struct emp_gpa *gpa) {
 	struct slru *proactive = &emm->ftm.proactive_list;

@@ -9,6 +9,11 @@
 #include "vcpu_var.h"
 #include "udma.h"
 
+#define __PAGES_TO_SIZE(p) (((size_t) (p)) << (PAGE_SHIFT))
+#define __PAGES_TO_SIZE_VM(p, bvma) (((size_t) (p)) << (PAGE_SHIFT))
+#define __SIZE_TO_PAGES(s) ((s) >> (PAGE_SHIFT))
+#define __SIZE_TO_PAGES_VM(s, bvma) ((s) >> (PAGE_SHIFT))
+
 // currently 2MB/thread is allocated for headroom
 #define LOCAL_CACHE_BUFFER_SIZE(b) \
 	((2 * EMP_MAIN_CPU_LEN(b)) << (MB_ORDER - PAGE_SHIFT))
@@ -99,6 +104,7 @@ void free_eager_wbr(struct emp_mm *, struct eager_wbr *);
 int emp_writeback_block(struct emp_mm *, struct emp_gpa *, struct vcpu_var *);
 int reclaim_gpa(struct emp_mm *, struct emp_gpa *, bool *);
 int reclaim_emp_pages(struct emp_mm *, struct vcpu_var *, int);
+int adjust_local_cache_size(struct emp_mm *emm, ssize_t diff_size, ssize_t new_size);
 void remove_gpa_from_lru(struct emp_mm *emm, struct emp_gpa *head);
 void reclaim_set(struct emp_mm *);
 int reclaim_init(struct emp_mm *);

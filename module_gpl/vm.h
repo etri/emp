@@ -105,6 +105,7 @@ extern int    initial_remote_policy_subblock;
 extern int    initial_remote_policy_block;
 
 struct emp_config {
+	size_t    minimum_pages;
 #ifdef CONFIG_EMP_BLOCK
 	u8      block_order;
 	u8      subblock_order;
@@ -829,6 +830,8 @@ struct emp_ops {
 	int (*emp_writeback_block)(struct emp_mm *, struct emp_gpa *,
 							struct vcpu_var *);
 	void (*remove_gpa_from_lru)(struct emp_mm *emm, struct emp_gpa *head);
+	int (*adjust_local_cache_size)(struct emp_mm *emm, ssize_t diff_size,
+							ssize_t new_size);
 };
 
 struct emp_ext {
