@@ -1429,7 +1429,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 	dprintk("%s split head = %p split index = %ld\n", __func__, split_head, split_index);
 	if (split_head) {
 		switch (split_head->r_state) {
-		case GPA_INIT:
+		case GPA_INIT: {
 			// pre_fetch remote gpa which is shared between new_vmr and prev_vmr to split
 			int r = 0;
 			struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
@@ -1458,6 +1458,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			}
 			emp_unlock_block(head);
 			break;
+		}
 		case GPA_INACTIVE:
 			dprintk("%s split head in inactive. split head = %p split index = %ld\n", __func__, split_head, split_index);
 			break;
