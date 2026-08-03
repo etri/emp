@@ -116,6 +116,10 @@ static ssize_t __size_write(struct file *file, const char __user *buf,
 	if (end > 1 && (buffer[end - 1] == 'B' || buffer[end - 1] == 'b'))
 		buffer[--end] = '\0';
 
+	/* Accept the IEC infix e.g. "2 MiB" or "512 KiB" */
+	if (end > 1 && (buffer[end - 1] == 'i' || buffer[end - 1] == 'I'))
+		buffer[--end] = '\0';
+
 	if (end > 1) {
 		if (buffer[end - 1] == 'G' || buffer[end - 1] == 'g') {
 			order = 30;
