@@ -698,7 +698,7 @@ handle_rdma_read_mempoll(struct ib_cq *cq, struct ib_wc *wc)
 	atomic_dec(&c->pending_signaled);
 	atomic_sub(w->wr_size, &c->pending);
 
-	emm->stat.post_read_mempoll += w->wr_size;
+	emp_stat_add(emm, post_read_mempoll, w->wr_size);
 	free_work_request(emm, w);
 }
 
@@ -739,9 +739,7 @@ static void handle_rdma_read(struct ib_cq *cq, struct ib_wc *wc)
 
 	atomic_sub(w->entangled_wr_len, &context->pending);
 	update_wr_state(w, next_state);
-#ifdef CONFIG_EMP_STAT
-	atomic_inc(&((struct emp_mm *)context->conn->emm)->stat.read_comp);
-#endif
+	emp_stat_inc((struct emp_mm *)context->conn->emm, read_comp);
 }
 
 static void handle_rdma_write(struct ib_cq *cq, struct ib_wc *wc)
@@ -766,9 +764,7 @@ static void handle_rdma_write(struct ib_cq *cq, struct ib_wc *wc)
 	if (w->wr.wr.send_flags & IB_SEND_SIGNALED)
 		atomic_sub(w->head_wr->entangled_wr_len, &context->pending);
 	update_wr_state(w, next_state);
-#ifdef CONFIG_EMP_STAT
-	atomic_inc(&((struct emp_mm *)context->conn->emm)->stat.write_comp);
-#endif
+	emp_stat_inc((struct emp_mm *)context->conn->emm, write_comp);
 }
 
 static inline struct context *get_context_from_send_wc(struct ib_wc *wc)
