@@ -26,30 +26,16 @@ DECLARE_WAIT_QUEUE_HEAD(tmp_wq);
  * get_pmd - Get a pmd entry for the fault address
  * @param mm mm structure
  * @param address fault address
- * @param pmd pmd entry
  *
  * @return pmd entry
  */
-pmd_t *get_pmd(struct mm_struct *mm, unsigned long address, pmd_t **pmd)
+pmd_t *get_pmd(struct mm_struct *mm, unsigned long address)
 {
-	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
-	pmd_t *orig_pmd;
-
-	pgd = pgd_offset(mm, address);
-	p4d = p4d_offset(pgd, address);
-	pud = pud_offset(p4d, address);
-	*pmd = pmd_offset(pud, address);
-
-	orig_pmd = *pmd;
-	if (!pmd_none(*orig_pmd))
-		return orig_pmd;
-
-	spin_lock(&mm->page_table_lock);
-	orig_pmd = *pmd;
-	spin_unlock(&mm->page_table_lock);
-	return orig_pmd;
+	pgd_t *pgd = pgd_offset(mm, address);
+	p4d_t *p4d = p4d_offset(pgd, address);
+	pud_t *pud = pud_offset(p4d, address);
+	pmd_t *pmd = pmd_offset(pud, address);
+	return pmd;
 }
 
 /**
@@ -394,7 +380,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 			(head + (head->local_page->demand_offset >> sb_order)) :
 			NULL;
 
-	pmd = get_pmd(vmr->host_mm, (unsigned long)vmf->address, &pmd);
+	pmd = get_pmd(vmr->host_mm, (unsigned long)vmf->address);
 
 	if (pmd_none(*pmd))
 		__pmd_populate(vmr->host_mm, vmf);

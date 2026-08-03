@@ -1548,22 +1548,10 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 		if (INIT_BLOCK(head))
 			goto next_head;
 
-#if 0
-		if (!ACTIVE_BLOCK(head)) {
-#ifdef CONFIG_EMP_DEBUG_PAGE_REF
-			vpn = (vpn_start & ~bvma_subblock_mask(emm))
-				+ ((head_idx - index_start) << bvma_subblock_order(emm));
-			pmd = get_pmd(new_mm, vpn << PAGE_SHIFT, &pmd);
-			debug_check_page_map_status(new_vmr, head, head_idx, pmd, false);
-#endif
-			goto next_head;
-		}
-#endif
-
 		vpn = (vpn_start & ~bvma_subblock_mask(emm))
 			+ ((head_idx - index_start) << bvma_subblock_order(emm));
 
-		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT, &pmd);
+		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT);
 		idx = head_idx;
 		for_each_gpas(gpa, head) {
 			if (unlikely(idx < index_start)) {

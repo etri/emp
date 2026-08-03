@@ -174,20 +174,6 @@ static inline bool is_gpa_remote_page_valid(struct emp_gpa *gpa)
 }
 #endif /* CONFIG_EMP_DEBUG */
 
-static inline spinlock_t *
-__get_pte_lockptr_single(struct emp_mm *emm, struct emp_gpa *head)
-{
-	struct mapped_pmd *p;
-	struct emp_vmr *vmr;
-	debug_assert(single_mapped_gpa(head));
-	p = emp_lp_first_mapped_pmd(head->local_page);
-	debug_assert(p);
-	debug_assert(p->vmr_id >= 0 && p->vmr_id < emm->vmrs_len);
-	vmr = emm->vmrs[p->vmr_id];
-	debug_assert(vmr);
-	return pte_lockptr(vmr->host_mm, p->pmd);
-}
-
 #ifdef CONFIG_EMP_EXT
 static inline void
 emp_ext_dup_cow_gpa(struct emp_mm *e, unsigned long i, struct emp_gpa *o, struct emp_gpa *n)
@@ -1004,7 +990,7 @@ dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 	}
 
 	____gpa_to_hva_and_len(vmr, old_head, head_idx, addr, page_len);
-	pmd = get_pmd(vmr->host_mm, addr, &pmd);
+	pmd = get_pmd(vmr->host_mm, addr);
 
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
 #ifdef CONFIG_EMP_DEBUG
@@ -2250,13 +2236,8 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, cons
 			}
 		}
 
+
 		if (!ACTIVE_BLOCK(head)) {
-#ifdef CONFIG_EMP_DEBUG_PAGE_REF
-			vpn = (vpn_start & ~bvma_subblock_mask(emm))
-				+ ((head_idx - index_start) << bvma_subblock_order(emm));
-			pmd = get_pmd(new_mm, vpn << PAGE_SHIFT, &pmd);
-			debug_check_page_map_status(new_vmr, head, head_idx, pmd, false);
-#endif
 			emp_unlock_block(head);
 			continue;
 		}
@@ -2264,7 +2245,7 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, cons
 		vpn = (vpn_start & ~bvma_subblock_mask(emm))
 			+ ((head_idx - index_start) << bvma_subblock_order(emm));
 
-		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT, &pmd);
+		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT);
 		for_each_gpas(gpa, head) {
 			if (!emp_lp_lookup_vmr_id(gpa, prev_vmr->id)) {
 				debug_check_page_map_status(new_vmr, head,
