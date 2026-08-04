@@ -41,8 +41,8 @@
 // #define MADV_EMP_DONTDUMP           MADV_DONTDUMP
 // #define MADV_EMP_DODUMP             MADV_DODUMP
 // #define MADV_EMP_FREE               MADV_FREE
-// #define MADV_EMP_WIPEONFORK         MADV_WIPEONFORK
-// #define MADV_EMP_KEEPONFORK         MADV_KEEPONFORK
+#define MADV_EMP_WIPEONFORK            MADV_WIPEONFORK
+#define MADV_EMP_KEEPONFORK            MADV_KEEPONFORK
 // #define MADV_EMP_COLD               MADV_COLD
 // #define MADV_EMP_PAGEOUT            MADV_PAGEOUT
 // *** EMP only codes ***

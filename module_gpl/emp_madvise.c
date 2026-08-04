@@ -828,3 +828,78 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 	return ret;
 }
 
+
+/*
+ * emp_madv_set_fork_policy - set EMP's logical fork policy of a range
+ * @param emm emm data structure
+ * @param addr start of the range
+ * @param size length of the range
+ * @param policy EMP_FORK_COW (MADV_KEEPONFORK) or EMP_FORK_WIPE (MADV_WIPEONFORK)
+ *
+ * The kernel's VM_WIPEONFORK is not touched: EMP keeps it set on every private
+ * EMP vma to suppress copy_page_range(), so the user's intent is recorded in
+ * emp_vmr.fork_policy instead. See enum emp_fork_policy.
+ *
+ * Only a request covering a whole vmr is accepted. A partial range would need
+ * either a vma split or a per-gpa policy bitmap; until one of those exists,
+ * silently applying a partial request to the whole range would be wrong, so it
+ * is rejected instead.
+ *
+ * @retval 0: Success
+ * @retval -EINVAL: not a whole private EMP range of the calling process
+ */
+long emp_madv_set_fork_policy(struct emp_mm *emm, unsigned long addr, long size,
+				enum emp_fork_policy policy)
+{
+	struct mm_struct *mm = current->mm;
+	struct emp_vmr *vmr;
+	long ret = -EINVAL;
+	int p, count;
+
+	if (size <= 0 || (addr & ~PAGE_MASK))
+		return -EINVAL;
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
+	down_read(&mm->mmap_sem);
+#else
+	down_read(&mm->mmap_lock);
+#endif
+	vmr = emm->last_vmr;
+	if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, addr))
+		goto found;
+
+	/* Strict same-mm lookup: emp_vmr_lookup_hva() falls back to a vmr of
+	 * another process when this mm has no match, and that vmr must never
+	 * receive this process's policy. */
+	p = 0;
+	count = 0;
+	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
+		if (count++ >= emm->vmrs_len)
+			break;
+		vmr = emm->vmrs[p];
+		if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, addr))
+			goto found;
+	}
+	goto out;
+
+found:
+	if (addr != vmr->vm_start || addr + size != vmr->vm_end)
+		goto out;	/* TODO: partial range is not supported */
+	/* a shared mapping has no private contents to inherit or wipe */
+	if (!vmr->host_vma || (vmr->host_vma->vm_flags & VM_SHARED))
+		goto out;
+	/* NOTE: set fork_policy while vmr closing is safe */
+
+	/* set fork_policy */
+	vmr->fork_policy = policy;
+	ret = 0;
+out:
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
+	up_read(&mm->mmap_sem);
+#else
+	up_read(&mm->mmap_lock);
+#endif
+	return ret;
+}

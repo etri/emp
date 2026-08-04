@@ -197,8 +197,16 @@ static long __emp_madvise(struct emp_mm *emm, unsigned long ioctl_param)
 	// case MADV_EMP_DONTDUMP: break;
 	// case MADV_EMP_DODUMP: break;
 	// case MADV_EMP_FREE: break;
-	// case MADV_EMP_WIPEONFORK: break;
-	// case MADV_EMP_KEEPONFORK: break;
+#ifdef CONFIG_EMP_USER
+	/* These set EMP's logical fork policy. The kernel's VM_WIPEONFORK is
+	 * left alone: EMP keeps it set to suppress copy_page_range(). */
+	case MADV_EMP_WIPEONFORK:
+			return emp_madv_set_fork_policy(emm, info.addr,
+							info.size, EMP_FORK_WIPE);
+	case MADV_EMP_KEEPONFORK:
+			return emp_madv_set_fork_policy(emm, info.addr,
+							info.size, EMP_FORK_COW);
+#endif /* CONFIG_EMP_USER */
 	// case MADV_EMP_COLD: break;
 	// case MADV_EMP_PAGEOUT: break;
 
