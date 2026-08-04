@@ -520,17 +520,13 @@ static void
 __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 			pmd_t *pmd, unsigned long addr, unsigned long len)
 {
-	spinlock_t *ptl;
 	pte_t pte_entry;
 	pte_t *_pte, *pte;
 	unsigned long i;
 
-	// ptl is spinlock of pmd page
-	ptl = pte_lockptr(vma->vm_mm, pmd);
 	pte = emp_pte_map(pmd, addr);
 	emp_set_page_mapping_and_index(vma, addr, page);
 
-	spin_lock(ptl);
 	/* change the pages */
 	for (i = 0, _pte = pte;
 			i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
@@ -556,7 +552,6 @@ __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 		set_pte_at(vma->vm_mm, addr, _pte, pte_entry);
 	}
 	emp_pte_unmap(pte);
-	spin_unlock(ptl);
 }
 
 static inline void
@@ -564,6 +559,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 			unsigned long addr, unsigned long page_len)
 {
 	pmd_t *pmd;
+	spinlock_t *ptl;
 	struct emp_gpa *gpa;
 
 	debug_assert(emp_lp_count_pmd(head->local_page) == 1);
@@ -580,6 +576,8 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 			(unsigned long) pmd, addr))
 		__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
+	ptl = pte_lockptr(vmr->host_mm, pmd);
+	spin_lock(ptl);
 
 	for_each_gpas(gpa, head) {
 		debug_assert(emp_lp_count_pmd(gpa->local_page) == 1);
@@ -593,6 +591,8 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
 
+	spin_unlock(ptl);
+
 	/* TODO: Batch TLB flushing for block granularity.
 	 *       Refer to unmap_ptes() and __unmap_ptes()
 	 *       Note that @addr is updated and points the last end address */
@@ -602,17 +602,13 @@ static void COMPILER_DEBUG
 __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 		pmd_t *pmd, unsigned long addr, unsigned long len)
 {
-	spinlock_t *ptl;
 	pte_t pte_entry;
 	pte_t *_pte, *pte;
 	unsigned long i;
 	unsigned long pfn;
 
-	// ptl is spinlock of pmd page
-	ptl = pte_lockptr(vma->vm_mm, pmd);
 	pte = emp_pte_map(pmd, addr);
 
-	spin_lock(ptl);
 	/* make ptes writable */
 	for (i = 0, _pte = pte; i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
 		/* Following the wp_page_reuse() in the kernel.
@@ -632,13 +628,13 @@ __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 	}
 
 	emp_pte_unmap(pte);
-	spin_unlock(ptl);
 }
 
 static inline void
 cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *head)
 {
 	pmd_t *pmd = NULL;
+	spinlock_t *ptl = NULL;
 	unsigned long addr, page_len;
 	struct emp_gpa *gpa;
 
@@ -659,6 +655,14 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 				(unsigned long) pmd, addr))
 			__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
+		debug_assert(vmr->host_mm == vmr->host_vma->vm_mm);
+		if (ptl == NULL) {
+			// ptl is spinlock of pmd page
+			ptl = pte_lockptr(vmr->host_mm, pmd);
+			spin_lock(ptl);
+		}
+		debug_assert(pte_lockptr(vmr->host_mm, pmd) == ptl);
+
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
 		__cow_mkwrite_pte(vmr->host_vma, gpa_page(gpa),
@@ -666,6 +670,9 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 next:
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
+
+	if (ptl)
+		spin_unlock(ptl);
 }
 
 static inline bool
