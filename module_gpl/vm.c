@@ -1854,13 +1854,25 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 {
 	struct emp_vmr *prev_vmr = (struct emp_vmr *)new_vma->vm_private_data;
 	struct emp_vmr *new_vmr;
+	/* A split stays inside the same mm; dup_mmap() always builds the vma in
+	 * the child's mm. Check it rather than inferring "not a split == fork",
+	 * so that an open we do not model (mremap, or a future kernel change)
+	 * becomes visible instead of being silently treated as a fork. */
+	bool same_mm = new_vma->vm_mm == prev_vmr->host_mm;
 
 	new_vmr = prev_vmr->split_new_vmr;
 	if (new_vmr) {
 		// emp_vma_split allocated new_vmr pointed by new_vmr of prev_vmr
+		debug_BUG_ON(!same_mm);
 		__emp_vma_split(prev_vmr, new_vmr, new_vma);
 	} else {
 		// open of dup_mmap reaches here
+		if (unlikely(same_mm))
+			printk_ratelimited(KERN_WARNING
+				"%s: vma open of the same mm without a pending "
+				"split. emm: %d vmr: %d vma: %016lx\n",
+				__func__, prev_vmr->emm->id, prev_vmr->id,
+				(unsigned long) new_vma);
 		new_vmr = __emp_vma_open(prev_vmr, new_vma);
 		debug_BUG_ON(!new_vmr);
 	}
