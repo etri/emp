@@ -6,6 +6,11 @@
 #include "vm.h"
 #include "remote_page.h"
 
+static inline bool __is_cow_gpa(struct emp_gpa *gpa)
+{
+	return atomic_read(&gpa->refcnt) > 1;
+}
+
 bool __put_cow_remote_page(struct emp_mm *emm, struct emp_gpa *gpa);
 /* return true if remote page of gpa still exist (not cleared by CoW) */
 static inline bool put_cow_remote_page(struct emp_mm *emm, struct emp_gpa *gpa)

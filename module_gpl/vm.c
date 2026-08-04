@@ -1056,6 +1056,7 @@ static void split_update_pte(struct vm_area_struct *vma, struct page *page,
 		 */
 		pte_entry = mk_pte(page, vma->vm_page_prot);
 		//pte_entry = maybe_mkwrite(pte_mkdirty(pte_entry), vma);
+		// no need to wrprotect, It was copied.
 		kernel_page_add_file_rmap(page, vma, false);
 		update_mmu_cache(vma, addr, _pte);
 		set_pte_at(vma->vm_mm, addr, _pte, pte_entry);

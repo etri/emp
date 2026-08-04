@@ -684,7 +684,7 @@ static inline bool
 check_cow_fault_gpa(struct emp_gpa *head)
 {
 	debug_assert(____emp_gpa_is_locked(head));
-	return atomic_read(&head->refcnt) > 1;
+	return __is_cow_gpa(head);
 }
 
 static inline bool
@@ -1731,7 +1731,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	}
 #endif
 
-	if (atomic_read(&head->refcnt) <= 1) {
+	if (!__is_cow_gpa(head)) {
 		/* This page may be previously duplicated, but it has
 		 * no write-permission yet. Just give the permission. */
 		if (likely(head->r_state == GPA_ACTIVE && head->local_page)) {

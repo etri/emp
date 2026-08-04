@@ -153,7 +153,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
  */
 static int
 pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
-		unsigned long haddr, unsigned int page_len, const bool is_write)
+	unsigned long haddr, unsigned int page_len, const bool is_write, const bool wrprotect)
 {
 	pte_t pte_entry;
 	pte_t *_pte, *pte;
@@ -208,6 +208,8 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 		pte_entry = mk_pte(_page, vma->vm_page_prot);
 		if (is_write)
 			pte_entry = emp_maybe_mkwrite(pte_mkdirty(pte_entry), vma);
+		if (wrprotect)
+			pte_entry = pte_wrprotect(pte_entry);
 		pte_entry = pte_mkold(pte_entry);
 
 		kernel_page_add_file_rmap(_page, vma, false);
@@ -238,7 +240,7 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	__emp_get_pages_map(vmr, gpa, page_len);
 	debug_page_ref_will_pte_end(lp, page_len);
 
-	ret = pte_install(vmr->host_vma, pmd, page, hva, page_len, is_write);
+	ret = pte_install(vmr->host_vma, pmd, page, hva, page_len, is_write, __is_cow_gpa(gpa));
 
 	debug_check_notnull_pointer(lp->w);
 
@@ -307,7 +309,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 			hva += PAGE_SIZE * sb_offset;
 			page = demand->local_page->page + sb_offset;
 			spin_lock(ptl);
-			ret = pte_install(vmr->host_vma, pmd, page, hva, 1, is_write);
+			ret = pte_install(vmr->host_vma, pmd, page, hva, 1, is_write, __is_cow_gpa(demand));
 			spin_unlock(ptl);
 			return ret;
 		}
