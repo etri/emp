@@ -1734,8 +1734,10 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		return NULL;
 
 	if (!is_emm_with_kvm(emm)) {
-		if (emp_get_mmu_notifier(new_vmr))
+		if (emp_get_mmu_notifier(new_vmr)) {
+			emp_kfree(new_vmr);
 			return NULL;
+		}
 	}
 
 	new_vma->vm_private_data = (void *)new_vmr;
