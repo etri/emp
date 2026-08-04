@@ -675,6 +675,69 @@ next:
 		spin_unlock(ptl);
 }
 
+static void COMPILER_DEBUG
+__cow_wrprotect_pte(struct vm_area_struct *vma, struct page *page,
+		pmd_t *pmd, unsigned long addr, unsigned long len)
+{
+	pte_t *_pte, *pte;
+	unsigned long i;
+
+	pte = emp_pte_map(pmd, addr);
+
+	/* make ptes writable */
+	for (i = 0, _pte = pte; i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
+		if (!pte_write(*_pte))
+			continue;
+		debug_assert(page_to_pfn(page) == pte_pfn(*_pte));
+		ptep_set_wrprotect(vma->vm_mm, addr, _pte);
+	}
+
+	emp_pte_unmap(pte);
+}
+
+static inline void
+cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *head)
+{
+	pmd_t *pmd = NULL;
+	spinlock_t *ptl = NULL;
+	unsigned long addr, page_len;
+	struct emp_gpa *gpa;
+
+	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
+	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
+			&& (gpa_block_order(head) != gpa_subblock_order(head)));
+
+	for_each_gpas(gpa, head) {
+		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		if (pmd == NULL)
+			goto next;
+
+		if (debug_WARN_ONCE(pmd_none(*pmd),
+				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
+				"pmd: 0x%016lx hva: 0x%016lx",
+				__func__, vmr->id, head_idx + (gpa - head),
+				(unsigned long) pmd, addr))
+			__cow_pmd_populate(vmr->host_mm, pmd, addr);
+
+		debug_assert(vmr->host_mm == vmr->host_vma->vm_mm);
+		if (ptl == NULL) {
+			// ptl is spinlock of pmd page
+			ptl = pte_lockptr(vmr->host_mm, pmd);
+			spin_lock(ptl);
+		}
+		debug_assert(pte_lockptr(vmr->host_mm, pmd) == ptl);
+
+		/* we does not update page_len since partial map gpa block
+		 * can have only single subblock. */
+		__cow_wrprotect_pte(vmr->host_vma, gpa_page(gpa),
+						pmd, addr, page_len);
+next:
+		addr += PAGE_SIZE << gpa_subblock_order(gpa);
+	}
+
+	if (ptl)
+		spin_unlock(ptl);
+}
 static inline bool
 check_cow_fault_vmr(struct emp_vmr *vmr) {
 	return (vmr->host_vma->vm_flags & VM_SHARED) == 0;
@@ -2203,16 +2266,14 @@ void dup_list_del(struct emp_vmr *vmr)
 	spin_unlock(&vmr->emm->dup_list_lock);
 }
 
-static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, const bool dup_dir)
+static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
 	struct emp_mm *emm = new_vmr->emm;
-	struct mm_struct *new_mm = new_vmr->host_mm;
 	struct emp_vmdesc *desc = new_vmr->descs;
 	unsigned long head_idx, idx;
 	struct emp_gpa *gpa, *head;
 	unsigned long index_start, index_end;
-	unsigned long vpn, vpn_base, vpn_start, vpn_end;
-	pmd_t *pmd;
+	unsigned long vpn_base, vpn_start, vpn_end;
 
 	vpn_start = new_vmr->vm_start >> PAGE_SHIFT;
 	vpn_end = new_vmr->vm_end >> PAGE_SHIFT;
@@ -2226,57 +2287,22 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr, cons
 		head = emp_lock_block(prev_vmr, NULL, head_idx);
 		debug_BUG_ON(!head); // raw_for_all_gpa_heads() iterates only exist heads.
 
-		if (dup_dir) {
-			/* Consideration of elastic block
-			 * 1. If @head has been stretched to the next block,
-			 *    the next iteration moves @pos to the next of
-			 *    stretched block.
-			 * 2. If @head has been stretched to the previous block,
-			 *    the previous block was already handled and we
-			 *    should handle from @pos to the end of the block.
-			 */
-			idx = head_idx;
-			for_each_gpas(gpa, head) {
-				set_gpa_dir_new(new_vmr, desc->gpa_dir, idx, gpa);
-				idx++;
-			}
-		}
-
-
-		if (!ACTIVE_BLOCK(head)) {
-			emp_unlock_block(head);
-			continue;
-		}
-
-		vpn = (vpn_start & ~bvma_subblock_mask(emm))
-			+ ((head_idx - index_start) << bvma_subblock_order(emm));
-
-		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT);
+		/* Consideration of elastic block
+		 * 1. If @head has been stretched to the next block,
+		 *    the next iteration moves @pos to the next of
+		 *    stretched block.
+		 * 2. If @head has been stretched to the previous block,
+		 *    the previous block was already handled and we
+		 *    should handle from @pos to the end of the block.
+		 */
+		idx = head_idx;
 		for_each_gpas(gpa, head) {
-			if (!emp_lp_lookup_vmr_id(gpa, prev_vmr->id)) {
-				debug_check_page_map_status(new_vmr, head,
-							head_idx, pmd, false);
-				continue;
-			}
-
-			debug_check_page_map_status(new_vmr, head,
-							head_idx, pmd, true);
-
-			/* If prev_vmr is mapped, kernel copied the pte to
-			 * new_vmr and increased the reference count of the
-			 * page. Thus, we have to insert pmd to new_vmr.
-			 */
-			emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
-			debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->id);
-			debug_page_ref_dup_end(gpa->local_page);
-			debug_page_ref_mark_map(new_vmr->id, gpa->local_page); /* mark the kernel's increment on page count */
-
-			/* NOTE: RSS is updated by kernel */
-			emp_update_rss_add_kernel(new_vmr,
-					__local_gpa_to_page_len(new_vmr, gpa),
-					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
-					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+			set_gpa_dir_new(new_vmr, desc->gpa_dir, idx, gpa);
+			idx++;
 		}
+
+		if (ACTIVE_BLOCK(head))
+			cow_wrprotect_pte(prev_vmr, head_idx, head);
 
 		emp_unlock_block(head);
 	}
@@ -2316,7 +2342,8 @@ int dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		new_vmr->descs = desc;
 	}
 
-	__dup_vmdesc(new_vmr, prev_vmr, dup_dir);
+	if (dup_dir)
+		__dup_vmdesc(new_vmr, prev_vmr);
 
 	return 0;
 }
