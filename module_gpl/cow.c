@@ -995,9 +995,8 @@ dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
 #ifdef CONFIG_EMP_DEBUG
 		/* Assert @pmd is same for all subblocks in a block. */
-		unsigned long temp;
 		debug_assert(pmd == get_pmd(vmr->host_mm,
-				vmr_offset_to_hva(vmr, idx), (pmd_t **)&temp));
+				vmr_offset_to_hva(vmr, idx)));
 #endif
 
 		/* insert pmd to @new */
