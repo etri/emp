@@ -318,16 +318,23 @@ static void __put_vcpus_var(struct emp_mm *bvma, int cpus_len)
 	for (cpu = 0; cpu < cpus_len; cpu++) {
 		v = &bvma->vcpus[cpu];
 		flush_local_free_pages(bvma, v);
-#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
-		if (v->pf_history)
-			emp_kfree(v->pf_history);
-#endif
-#ifdef CONFIG_EMP_OPT
-		if (v->eager_wbr_cache)
-			emp_kmem_cache_destroy(v->eager_wbr_cache);
-#endif /* CONFIG_EMP_OPT */
 	}
 	emp_list_unlock(free_page_list);
+
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+	for (cpu = 0; cpu < cpus_len; cpu++) {
+		v = &bvma->vcpus[cpu];
+		if (v->pf_history)
+			emp_kfree(v->pf_history);
+	}
+#endif
+#ifdef CONFIG_EMP_OPT
+	for (cpu = 0; cpu < cpus_len; cpu++) {
+		v = &bvma->vcpus[cpu];
+		if (v->eager_wbr_cache)
+			emp_kmem_cache_destroy(v->eager_wbr_cache);
+	}
+#endif /* CONFIG_EMP_OPT */
 
 	if (bvma->ftm.local_free_bufs) {
 		emp_kfree(bvma->ftm.local_free_bufs);
@@ -414,16 +421,27 @@ static void __put_pcpus_var(struct emp_mm *emm, int max_cpu_id)
 			break;
 		v = per_cpu_ptr(emm->pcpus, cpu);
 		flush_local_free_pages(emm, v);
-#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
-		if (v->pf_history)
-			emp_kfree(v->pf_history);
-#endif
-#ifdef CONFIG_EMP_OPT
-		if (v->eager_wbr_cache)
-			emp_kmem_cache_destroy(v->eager_wbr_cache);
-#endif /* CONFIG_EMP_OPT */
 	}
 	emp_list_unlock(free_page_list);
+
+#ifdef CONFIG_EMP_DEBUG_PF_HISTORY
+	for_each_possible_cpu(cpu) {
+		if (unlikely(cpu >= max_cpu_id))
+			break;
+		v = per_cpu_ptr(emm->pcpus, cpu);
+		if (v->pf_history)
+			emp_kfree(v->pf_history);
+	}
+#endif
+#ifdef CONFIG_EMP_OPT
+	for_each_possible_cpu(cpu) {
+		if (unlikely(cpu >= max_cpu_id))
+			break;
+		v = per_cpu_ptr(emm->pcpus, cpu);
+		if (v->eager_wbr_cache)
+			emp_kmem_cache_destroy(v->eager_wbr_cache);
+	}
+#endif /* CONFIG_EMP_OPT */
 
 	emp_free_pcdata(emm->ftm.host_free_bufs);
 	emm->ftm.host_free_bufs = NULL;
