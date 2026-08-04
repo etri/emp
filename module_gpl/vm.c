@@ -1710,6 +1710,9 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 	// new_vmr->dup_parent = NULL due to kzalloc()
 	INIT_LIST_HEAD(&new_vmr->dup_children);
 	INIT_LIST_HEAD(&new_vmr->dup_sibling);
+	/* kzalloc() already gives EMP_FORK_COW; be explicit since the default
+	 * decides whether a fork child inherits the parent's backing. */
+	new_vmr->fork_policy = EMP_FORK_COW;
 #endif
 	init_waitqueue_head(&new_vmr->gpas_close_wq);
 
@@ -1723,7 +1726,7 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	struct emp_mm *emm = prev_vmr->emm;
 	struct emp_vmr *new_vmr;
 	bool vm_shared = new_vma->vm_flags & VM_SHARED ? true : false;
-	bool vm_wipeonfork = new_vma->vm_flags & VM_WIPEONFORK ? true : false;
+	bool vm_wipeonfork = prev_vmr->fork_policy == EMP_FORK_WIPE ? true : false; // new_vmr inherits prev_vmr->fork_policy
 	bool new_vmdesc, dup_dir; // options of dup_vmdesc
 
 	new_vmr = create_vmr(emm, new_vma);
@@ -1736,6 +1739,10 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	}
 
 	new_vma->vm_private_data = (void *)new_vmr;
+
+	/* A fork child inherits the parent's fork policy, so a grandchild of a
+	 * MADV_EMP_WIPEONFORK range is wiped as well. */
+	new_vmr->fork_policy = prev_vmr->fork_policy;
 
 	if (vm_shared) {
 		new_vmr->descs = prev_vmr->descs;
@@ -1833,6 +1840,9 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	split_vmdesc(new_vmr, prev_vmr);
 	split_set_gpadesc_regions(prev_vmr);
 	split_set_gpadesc_regions(new_vmr);
+
+	/* both halves of the split keep the fork policy of the original range */
+	new_vmr->fork_policy = prev_vmr->fork_policy;
 
 	new_vmr->vmr_closing = false;
 	new_vma->vm_private_data = (void *)new_vmr;

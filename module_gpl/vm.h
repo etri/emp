@@ -192,6 +192,25 @@ struct emp_vmdesc {
 #endif
 };
 
+#ifdef CONFIG_EMP_USER
+/*
+ * EMP's logical fork policy of a private mapping.
+ *
+ * This is deliberately NOT the kernel's VM_WIPEONFORK flag. EMP needs
+ * VM_WIPEONFORK on every private EMP vma to suppress copy_page_range(), so the
+ * flag cannot also carry the user's MADV_WIPEONFORK/MADV_KEEPONFORK intent.
+ *
+ * VM_WIPEONFORK: always set on a private EMP vma; suppresses the kernel's
+ *                PTE copy. Never cleared.
+ * fork_policy:   decides whether a fork child inherits the parent's EMP
+ *                backing. Set by MADV_EMP_WIPEONFORK/MADV_EMP_KEEPONFORK.
+ */
+enum emp_fork_policy {
+	EMP_FORK_COW = 0,	/* child inherits the parent's backing (default) */
+	EMP_FORK_WIPE,		/* child starts empty (MADV_EMP_WIPEONFORK) */
+};
+#endif /* CONFIG_EMP_USER */
+
 // virtual memory region for a contiguous host virtual (mmaped) memory
 struct emp_vmr {
 	unsigned int        magic; // magic value
@@ -229,6 +248,10 @@ struct emp_vmr {
 
 #ifdef CONFIG_EMP_USER
 	struct emp_mmu_notifier *mmu_notifier;
+
+	/* EMP's logical fork policy; inherited by fork children and by both
+	 * halves of a vma split. See enum emp_fork_policy. */
+	enum emp_fork_policy    fork_policy;
 
 	/* The following variables are protected by vmr->emm->dup_list_lock */
 	struct list_head        dup_shared;   /* MAP_SHARED */
