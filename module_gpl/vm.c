@@ -1881,6 +1881,23 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 
 	vm_flags_set(new_vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
 
+#ifdef CONFIG_EMP_USER
+	/* EMP does its own lazy fork: keep the kernel from copying this vma's
+	 * PTEs so a fork child starts with empty page tables and EMP's metadata
+	 * COW is the only mechanism inheriting the parent's contents.
+	 *
+	 * Set here rather than in emp_vma_open(): dup_mmap() decides the child's
+	 * anon_vma *before* it calls ->open, so turning the flag on later would
+	 * suppress the copy but leave the child with an anon_vma a real
+	 * VM_WIPEONFORK vma would not have.
+	 *
+	 * The flag is never cleared. The user's MADV_WIPEONFORK/MADV_KEEPONFORK
+	 * intent lives in emp_vmr.fork_policy instead; see enum emp_fork_policy.
+	 */
+	if (!(new_vma->vm_flags & VM_SHARED))
+		vm_flags_set(new_vma, VM_WIPEONFORK);
+#endif /* CONFIG_EMP_USER */
+
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.emp_vma_open)
 		emp_ext.emp_vma_open(new_vmr);
