@@ -3,6 +3,14 @@
 
 #define CONFIG_EMP_SHOW_FAULT_PROGRESS // show page fault address at every CONFIG_EMP_SHOW_FAULT_PROGRESS_PERIOD faults
 
+/* Instrumentation for the lazy fork: prints one summary per fork covering which
+ * block states a child inherits through the metadata-only duplication, and
+ * whether write-protecting the parent raced EMP's reclaim. Deliberately outside
+ * CONFIG_EMP_DEBUG so it can be switched on in a production-config build (the
+ * CONFIG_EMP_DEBUG_RSS toggles below sit inside that guard and are inert there).
+ * Enabled here for validation; comment it out before merging. */
+#define CONFIG_EMP_DEBUG_LAZY_FORK
+
 #ifdef CONFIG_EMP_DEBUG
 //#define CONFIG_EMP_DEBUG_PROGRESS
 //#define CONFIG_EMP_DEBUG_PROGRESS_GPA_LOCK

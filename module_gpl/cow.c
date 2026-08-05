@@ -675,28 +675,71 @@ next:
 		spin_unlock(ptl);
 }
 
+/*
+ * Per-fork instrumentation of the lazy fork, answering two things the design
+ * reasons about but cannot show without a run:
+ *
+ * 1. Which block states a child inherits. __dup_vmdesc() shares every block
+ *    regardless of state, on the grounds that the child holds no PTE either way
+ *    and inherits GPA_INACTIVE/GPA_WB blocks logically. A non-zero inact/wb
+ *    count is therefore expected. But shared must equal blocks: every gpa handed
+ *    to the child must report refcnt > 1, or CoW is not armed for it.
+ *
+ * 2. Whether write-protecting the parent races EMP's reclaim. cow_wrprotect_pte()
+ *    runs under the block lock reclaim also needs, so it should be safe; still_w
+ *    re-counts the parent's writable PTEs after every block has been released,
+ *    so anything non-zero is a PTE that became writable again behind us.
+ *
+ * Follows the debug_blks_ctx_stat idiom: the counters vanish when the toggle is
+ * off, leaving only an unused pointer argument.
+ */
+#ifdef CONFIG_EMP_DEBUG_LAZY_FORK
+struct debug_lazy_fork_stat {
+	unsigned long blocks, shared, active;
+	unsigned long state[GPA_STATE_MAX];
+	unsigned long pmd_null, pmd_none;
+	unsigned long pte_present, pte_ro, pte_wp;
+	unsigned long still_w;
+};
+#define lfs_inc(s, f) do { if (s) (s)->f++; } while (0)
+#define lfs_state_inc(s, st) do { \
+	if ((s) && (st) >= 0 && (st) < GPA_STATE_MAX) (s)->state[st]++; \
+} while (0)
+#else
+struct debug_lazy_fork_stat { char __unused_lfs; };
+#define lfs_inc(s, f) do {} while (0)
+#define lfs_state_inc(s, st) do {} while (0)
+#endif /* CONFIG_EMP_DEBUG_LAZY_FORK */
+
 static void COMPILER_DEBUG
 __cow_wrprotect_pte(struct vm_area_struct *vma, struct page *page,
-		pmd_t *pmd, unsigned long addr, unsigned long len)
+		pmd_t *pmd, unsigned long addr, unsigned long len,
+		struct debug_lazy_fork_stat *lfs)
 {
 	pte_t *_pte, *pte;
 	unsigned long i;
 
 	pte = emp_pte_map(pmd, addr);
 
-	/* make ptes writable */
+	/* make ptes read-only so the next write faults into EMP's CoW */
 	for (i = 0, _pte = pte; i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
-		if (!pte_write(*_pte))
+		if (pte_present(*_pte))
+			lfs_inc(lfs, pte_present);
+		if (!pte_write(*_pte)) {
+			lfs_inc(lfs, pte_ro);
 			continue;
+		}
 		debug_assert(page_to_pfn(page) == pte_pfn(*_pte));
 		ptep_set_wrprotect(vma->vm_mm, addr, _pte);
+		lfs_inc(lfs, pte_wp);
 	}
 
 	emp_pte_unmap(pte);
 }
 
 static inline void
-cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *head)
+cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
+		struct emp_gpa *head, struct debug_lazy_fork_stat *lfs)
 {
 	pmd_t *pmd = NULL;
 	spinlock_t *ptl = NULL;
@@ -709,8 +752,15 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *h
 
 	for_each_gpas(gpa, head) {
 		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
-		if (pmd == NULL)
+		if (pmd == NULL) {
+			/* the parent does not map this subblock: nothing to
+			 * protect, the child will fault it in itself */
+			lfs_inc(lfs, pmd_null);
 			goto next;
+		}
+
+		if (pmd_none(*pmd))
+			lfs_inc(lfs, pmd_none);
 
 		if (debug_WARN_ONCE(pmd_none(*pmd),
 				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
@@ -730,7 +780,7 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *h
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
 		__cow_wrprotect_pte(vmr->host_vma, gpa_page(gpa),
-						pmd, addr, page_len);
+						pmd, addr, page_len, lfs);
 next:
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
@@ -738,6 +788,51 @@ next:
 	if (ptl)
 		spin_unlock(ptl);
 }
+
+#ifdef CONFIG_EMP_DEBUG_LAZY_FORK
+/*
+ * Re-count @vmr's writable PTEs for @head after cow_wrprotect_pte() has run and
+ * the block has been released. Any writable PTE here became writable again
+ * behind the protect pass, which is the reclaim/fault race the write-protect is
+ * reasoned to be safe against.
+ */
+static unsigned long
+debug_lf_count_writable(struct emp_vmr *vmr, unsigned long head_idx,
+			struct emp_gpa *head)
+{
+	pmd_t *pmd;
+	spinlock_t *ptl = NULL;
+	unsigned long addr, page_len, nr = 0;
+	struct emp_gpa *gpa;
+
+	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
+
+	for_each_gpas(gpa, head) {
+		pte_t *pte, *_pte;
+		unsigned long i;
+
+		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		if (pmd == NULL || pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
+			goto next;
+
+		if (ptl == NULL) {
+			ptl = pte_lockptr(vmr->host_mm, pmd);
+			spin_lock(ptl);
+		}
+		pte = emp_pte_map(pmd, addr);
+		for (i = 0, _pte = pte; i < page_len; i++, _pte++)
+			if (pte_present(*_pte) && pte_write(*_pte))
+				nr++;
+		emp_pte_unmap(pte);
+next:
+		addr += PAGE_SIZE << gpa_subblock_order(gpa);
+	}
+
+	if (ptl)
+		spin_unlock(ptl);
+	return nr;
+}
+#endif /* CONFIG_EMP_DEBUG_LAZY_FORK */
 static inline bool
 check_cow_fault_vmr(struct emp_vmr *vmr) {
 	return (vmr->host_vma->vm_flags & VM_SHARED) == 0;
@@ -2274,6 +2369,10 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 	struct emp_gpa *gpa, *head;
 	unsigned long index_start, index_end;
 	unsigned long vpn_base, vpn_start, vpn_end;
+	struct debug_lazy_fork_stat lfs_val;
+	struct debug_lazy_fork_stat *lfs = &lfs_val;
+
+	memset(lfs, 0, sizeof(*lfs));
 
 	vpn_start = new_vmr->vm_start >> PAGE_SHIFT;
 	vpn_end = new_vmr->vm_end >> PAGE_SHIFT;
@@ -2301,11 +2400,47 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			idx++;
 		}
 
-		if (ACTIVE_BLOCK(head))
-			cow_wrprotect_pte(prev_vmr, head_idx, head);
+		/* what the child just inherited, and whether CoW is armed for it */
+		lfs_inc(lfs, blocks);
+		lfs_state_inc(lfs, head->r_state);
+		if (__is_cow_gpa(head))
+			lfs_inc(lfs, shared);
+
+		if (ACTIVE_BLOCK(head)) {
+			lfs_inc(lfs, active);
+			cow_wrprotect_pte(prev_vmr, head_idx, head, lfs);
+		}
 
 		emp_unlock_block(head);
 	}
+
+#ifdef CONFIG_EMP_DEBUG_LAZY_FORK
+	/* Every block has been released by now, so re-count the parent's
+	 * writable PTEs: a non-zero still_w is a PTE that became writable again
+	 * behind the protect pass. */
+	raw_for_all_gpa_heads_range(prev_vmr, head_idx, head, index_start, index_end) {
+		head = emp_lock_block(prev_vmr, NULL, head_idx);
+		if (unlikely(!head))
+			continue;
+		if (ACTIVE_BLOCK(head))
+			lfs->still_w += debug_lf_count_writable(prev_vmr,
+								head_idx, head);
+		emp_unlock_block(head);
+	}
+
+	printk(KERN_INFO "[EMP] lazy_fork emm:%d prev_vmr:%d new_vmr:%d "
+		"blocks:%lu shared:%lu active:%lu "
+		"state[init:%lu act:%lu inact:%lu wb:%lu fetch:%lu til:%lu "
+		"tal:%lu tpl:%lu] pmd_null:%lu pmd_none:%lu present:%lu "
+		"already_ro:%lu wp:%lu still_w:%lu%s\n",
+		emm->id, prev_vmr->id, new_vmr->id,
+		lfs->blocks, lfs->shared, lfs->active,
+		lfs->state[0], lfs->state[1], lfs->state[2], lfs->state[3],
+		lfs->state[4], lfs->state[5], lfs->state[6], lfs->state[7],
+		lfs->pmd_null, lfs->pmd_none, lfs->pte_present, lfs->pte_ro,
+		lfs->pte_wp, lfs->still_w,
+		(lfs->still_w || lfs->shared != lfs->blocks) ? "  <<< CHECK" : "");
+#endif /* CONFIG_EMP_DEBUG_LAZY_FORK */
 }
 
 int dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
