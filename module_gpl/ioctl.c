@@ -217,7 +217,7 @@ static long __emp_madvise(struct emp_mm *emm, unsigned long ioctl_param)
 			return emp_madv_unpin(emm, info.addr, info.size);
 
 	default:
-			return -EINVAL;
+			return 1; /* the advice is not supported */
 	}
 }
 

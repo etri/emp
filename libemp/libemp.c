@@ -44,6 +44,7 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 
 int madvise(void *addr, size_t length, int advice) {
 	struct emp_madv_info madv_info;
+	int ret;
 	print_verbose("[libemp - madvise] empfd: %d addr: %lx length: %ld %lx advice: %d\n",
 			empfd, (unsigned long) addr, length, length, advice);
 
@@ -54,8 +55,9 @@ int madvise(void *addr, size_t length, int advice) {
 	madv_info.size = length;
 	madv_info.advice = advice;
 
-	if (ioctl(empfd, IOCTL_EMP_MADV, &madv_info) == 0)
-		return 0;
+	ret = ioctl(empfd, IOCTL_EMP_MADV, &madv_info);
+	if (ret <= 0) /* if ret > 0, the advice is not supported on EMP */
+		return ret;
 
 fallback:
 	return real_madvise(addr, length, advice);
