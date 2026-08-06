@@ -682,7 +682,7 @@ emp_vmr_lookup(struct emp_mm *emm, struct vm_area_struct *vma)
 	p = 0;
 	count = 0;
 	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
-		if (++count >= emm->vmrs_len)
+		if (++count > emm->vmrs_len)
 			break;
 		if (emm->vmrs[p]->host_vma == vma) {
 			emm->last_vmr = emm->vmrs[p];
