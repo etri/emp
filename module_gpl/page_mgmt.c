@@ -721,7 +721,7 @@ static inline void map_spte(struct kvm_vcpu *vcpu, struct page *p, gfn_t gfn,
  *
  * Install sptes for a block except a demand sub-block
  */
-u64 emp_map_prefetch_sptes(struct kvm_vcpu *vcpu, struct emp_gpa *head,
+static u64 emp_map_prefetch_sptes(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 		struct emp_gpa *demand, pgoff_t demand_off, gva_t gpa, u64 *sptep)
 {
 	struct emp_gpa *g;
@@ -850,7 +850,7 @@ static void __emp_map_prefetch_sptes_memslot(struct kvm_vcpu *vcpu,
  *
  * Install sptes for a block except a demand page
  */
-void emp_map_prefetch_sptes2(struct kvm_vcpu *vcpu, struct emp_gpa *head,
+static void emp_map_prefetch_sptes2(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 		struct emp_gpa *demand, pgoff_t demand_off, gva_t gpa, u64 *sptep,
 		struct kvm_memory_slot *slot)
 {
@@ -1457,7 +1457,7 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
  * @param fs first gpa for fetching (Fetch Start)
  * @param fe last gpa for fetching (Fetch End)
  */
-void calibrate_block_count(struct emp_gpa *head, struct emp_gpa *fs, struct emp_gpa *fe)
+static void calibrate_block_count(struct emp_gpa *head, struct emp_gpa *fs, struct emp_gpa *fe)
 {
 	struct emp_gpa *g;
 

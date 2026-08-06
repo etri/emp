@@ -93,7 +93,6 @@ static long __set_dram(struct emp_mm *emm, unsigned long ioctl_param)
 }
 
 #ifdef CONFIG_EMP_VM
-int register_kvm(struct emp_mm *emm, int kvm_fd, int kvm_max_vcpus);
 static long __reg_kvm(struct emp_mm *emm, unsigned long ioctl_param)
 {
 	size_t size;
@@ -146,7 +145,6 @@ static long __hint_iov(struct emp_mm *emm, unsigned long ioctl_param,
 #endif /* CONFIG_EMP_IO */
 
 #ifdef CONFIG_EMP_VM
-void register_mem_slot(struct emp_mm *emm, unsigned long start, unsigned long size);
 static long __reg_mem_region(struct emp_mm *emm, unsigned long ioctl_param)
 {
 	size_t size;

@@ -934,6 +934,11 @@ int register_emp_ext(struct emp_ext *);
 int unregister_emp_ext(void);
 #endif /* CONFIG_EMP_EXT */
 
+#ifdef CONFIG_EMP_VM
+int register_kvm(struct emp_mm *emm, int kvm_fd, int kvm_max_vcpus);
+void register_mem_slot(struct emp_mm *emm, unsigned long start, unsigned long size);
+#endif
+
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))
 // From RHEL 9, vmf->pgoff is a constant variable.
