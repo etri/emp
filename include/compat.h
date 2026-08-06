@@ -20,6 +20,17 @@
 #endif
 *******************************************************************************/
 
+/* mmap_lock was renamed from mmap_sem in upstream Linux 5.8.
+ * It also provides the mmap_read_lock() helpers.
+ * We support RHEL 8+ versions, and all of them provide mmap_read_lock().
+ */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
+#define mmap_read_lock(mm) down_read(&(mm)->mmap_sem)
+#define mmap_read_unlock(mm) up_read(&(mm)->mmap_sem)
+#define mmap_write_lock(mm) down_write(&(mm)->mmap_sem)
+#define mmap_write_unlock(mm) up_write(&(mm)->mmap_sem)
+#endif
 
 /* Between 8.3 <= RHEL_RELEASE_CODE < 8.7, the followings are chaned.
  * 1. kvm->tlbs->dirty is removed

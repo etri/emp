@@ -185,12 +185,7 @@ static void handle_qiov_write(struct emp_mm *emm, struct iovec *iov, int iov_len
 	sb_order = bvma_subblock_order(emm);
 
 	io_head_count = 0;
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
-	down_read(&current->mm->mmap_sem);
-#else
-	down_read(&current->mm->mmap_lock);
-#endif
+	mmap_read_lock(current->mm);
 
 	for (i = 0; i < iov_len; i++) {
 		io_len = iov[i].iov_len >> (sb_order + PAGE_SHIFT);
@@ -228,13 +223,7 @@ static void handle_qiov_write(struct emp_mm *emm, struct iovec *iov, int iov_len
 	}
 
 out:
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
-	up_read(&current->mm->mmap_sem);
-#else
-	up_read(&current->mm->mmap_lock);
-#endif
-
+	mmap_read_unlock(current->mm);
 }
  
 /**
@@ -262,12 +251,7 @@ static void handle_qiov_read(struct emp_mm *emm, struct iovec *iov, int iov_len)
 
 	io_head_count = 0;
 	pid = current->pid;
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
-	down_read(&current->mm->mmap_sem);
-#else
-	down_read(&current->mm->mmap_lock);
-#endif
+	mmap_read_lock(current->mm);
 
 	for (i = 0; i < iov_len; i++) {
 		io_len = iov[i].iov_len >> (sb_order + PAGE_SHIFT);
@@ -303,12 +287,7 @@ static void handle_qiov_read(struct emp_mm *emm, struct iovec *iov, int iov_len)
 	}
 
 out:
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
-	up_read(&current->mm->mmap_sem);
-#else
-	up_read(&current->mm->mmap_lock);
-#endif
+	mmap_read_unlock(current->mm);
 }
 
 /**

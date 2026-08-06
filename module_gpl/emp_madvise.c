@@ -859,12 +859,8 @@ long emp_madv_set_fork_policy(struct emp_mm *emm, unsigned long addr, long size,
 	if (size <= 0 || (addr & ~PAGE_MASK))
 		return -EINVAL;
 
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
-	down_read(&mm->mmap_sem);
-#else
-	down_read(&mm->mmap_lock);
-#endif
+	mmap_read_lock(mm);
+
 	vmr = emm->last_vmr;
 	if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, addr))
 		goto found;
@@ -895,11 +891,6 @@ found:
 	vmr->fork_policy = policy;
 	ret = 0;
 out:
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
-	up_read(&mm->mmap_sem);
-#else
-	up_read(&mm->mmap_lock);
-#endif
+	mmap_read_unlock(mm);
 	return ret;
 }
