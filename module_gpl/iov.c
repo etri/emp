@@ -110,7 +110,7 @@ map_io_blocks(struct emp_vmr *vmr, unsigned long *head_idx_arr, int head_len)
 		{
 			struct vm_fault vmf = {
 				.pgoff = g_idx << bvma_subblock_order(emm),
-				.address = GPN_TO_HVA(emm, vmr, vmf.pgoff)
+				.address = __gfn_to_hva(emm, vmr, vmf.pgoff)
 			};
 			vmf.flags = FAULT_FLAG_WRITE;
 
@@ -209,7 +209,7 @@ static void handle_qiov_write(struct emp_mm *emm, struct iovec *iov, int iov_len
 
 		io_head = io_head_arr + io_head_count;
 		for (j = 0; j < count; j++) {
-			io_base = GPN_TO_HVA(emm, vmr, (io_head[j])<<sb_order);
+			io_base = __gfn_to_hva(emm, vmr, (io_head[j])<<sb_order);
 			fetch_io_blocks(io_base);
 		}
 
@@ -272,7 +272,7 @@ static void handle_qiov_read(struct emp_mm *emm, struct iovec *iov, int iov_len)
 
 		io_head = io_head_arr + io_head_count;
 		for (j = 0; j < count; j++) {
-			io_base = GPN_TO_HVA(emm, vmr, io_head[j] << sb_order);
+			io_base = __gfn_to_hva(emm, vmr, io_head[j] << sb_order);
 			fetch_io_blocks(io_base);
 			io_gpa = get_gpadesc(vmr, io_head[j]);
 			if (unlikely(!io_gpa))

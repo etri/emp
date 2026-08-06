@@ -2,11 +2,9 @@
 #define __PAGING_H__
 #include "vm.h"
 
-#define IS_INVALID_HVA(emm, va) (emp_vmr_lookup_hva(emm, va) == NULL)
 #define GPA_TO_GFN(gpa) ((gpa) >> PAGE_SHIFT)
 #define GFN_TO_GPA(gpn) ((gpn) << PAGE_SHIFT)
 #define HVA_TO_GPN      __hva_to_gfn
-#define GPN_TO_HVA      __gfn_to_hva
 #define GPN_OFFSET      __gpn_offset
 #define GPN_OFFSET_TO_HVA __gfn_offset_to_hva
 #define GPN_VMA_LEN(vma) GPA_TO_GFN(vma->vm_end - vma->vm_start)
@@ -42,10 +40,10 @@ __hva_to_gfn(struct emp_mm *emm, struct emp_vmr *vmr, unsigned long hva)
 #endif
 }
 
+#ifdef CONFIG_EMP_VM
 static inline unsigned long 
 __gfn_to_hva(struct emp_mm *bvma, struct emp_vmr *vmr, unsigned long gfn)
 {
-#ifdef CONFIG_EMP_VM
 	int i;
 	unsigned long start, end;
 	unsigned long gpa = GFN_TO_GPA(gfn);
@@ -59,15 +57,12 @@ __gfn_to_hva(struct emp_mm *bvma, struct emp_vmr *vmr, unsigned long gfn)
 		if (gpa < start || gpa >= end)
 			continue;
 		addr = ((gpa - start) + bvma->ekvm.memslot[i].hva);
-		debug_BUG_ON(IS_INVALID_HVA(bvma, addr));
+		debug_BUG_ON(emp_vmr_lookup_hva(bvma, addr) == NULL);
 		return addr;
 	}
 	BUG();
-#else
-	unsigned long gpa = GFN_TO_GPA(gfn);
-	return (vmr->vm_start + gpa);
-#endif
 }
+#endif
 
 static inline unsigned long 
 __gfn_offset_to_hva(struct emp_vmr *vmr, unsigned long gpn_offset, int sb_order)

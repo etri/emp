@@ -2115,7 +2115,7 @@ vm_start_aligned:
 
 #ifdef CONFIG_EMP_VM
 	if (bvma->ekvm.kvm && (bvma->ekvm.apic_base_hva == 0UL))
-		bvma->ekvm.apic_base_hva = GPN_TO_HVA(bvma, vmr,
+		bvma->ekvm.apic_base_hva = __gfn_to_hva(bvma, vmr,
 				APIC_DEFAULT_PHYS_BASE >> PAGE_SHIFT);
 #endif
 
