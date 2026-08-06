@@ -1809,9 +1809,9 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
 		debug_assert(split_vmr->split_prev_vmr == vmr);
 		debug_assert(split_vmr->split_new_vmr == NULL);
 		split_vmr->split_prev_vmr = NULL;
+		vmr->split_new_vmr = NULL;
 #ifdef CONFIG_EMP_DEBUG
 		split_vmr->split_addr = 0;
-		vmr->split_new_vmr = NULL;
 #endif
 	}
 
@@ -1820,9 +1820,9 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
 		debug_assert(split_vmr->split_new_vmr == vmr);
 		debug_assert(split_vmr->split_prev_vmr == NULL);
 		split_vmr->split_new_vmr = NULL;
+		vmr->split_prev_vmr = NULL;
 #ifdef CONFIG_EMP_DEBUG
 		split_vmr->split_addr = 0;
-		vmr->split_prev_vmr = NULL;
 #endif
 	}
 
