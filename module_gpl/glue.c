@@ -101,12 +101,12 @@ void kernel_symbol_close(void) {
 #ifndef CONFIG_EMP_PAGE_RMAP_OPT
 void kernel_page_add_file_rmap(struct page *page, struct vm_area_struct *vma, bool compound)
 {
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0))
-	void (*f)(struct page *, struct vm_area_struct *vma, bool compound);
-	f = (void (*)(struct page *, struct vm_area_struct *vma, bool compound))
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 1)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
+	void (*f)(struct page *, bool compound);
+	f = (void (*)(struct page *, bool compound))
 			ksym->page_add_file_rmap;
-	f(page, vma, compound);
+	f(page, compound);
 #elif (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(10, 0)) \
 	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0))
 	void (*f)(struct page *, struct vm_area_struct *vma, bool compound);
