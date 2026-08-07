@@ -1374,53 +1374,31 @@ out:
 /**
  * emp_fetch_barrier - Guarantees that fetching in-progress is completed
  * @param vcpu working vcpu info
+ * @param vmr emp_vmr of faulted addr
  * @param hva host virtual address of faulted addr
- * @param gva guest virtual address of faulted addr
  *
  * @retval 0: Error
  * @retval 1: Success
  */
-static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
-			     gva_t gva)
+static int emp_fetch_barrier(struct vcpu_var *vcpu, struct emp_vmr *vmr,
+			struct emp_gpa *head, struct emp_gpa *demand, pgoff_t demand_off)
 {
-	struct emp_mm *bvma = get_kvm_emp_mm(kvm_vcpu->kvm);
-	int vcpu_id = kvm_vcpu->vcpu_id + VCPU_START_ID;
-	struct vcpu_var *vcpu = &bvma->vcpus[vcpu_id];
-	struct emp_gpa *gpa;
-	struct emp_vmr *vmr;
-	pgoff_t gpa_off;
-	struct emp_gpa *head;
+	struct emp_mm *bvma = vmr->emm;
 #ifdef CONFIG_EMP_BLOCK
 	bool csf = bvma_csf_enabled(bvma);
 	bool cpf = bvma_cpf_enabled(bvma);
-#endif
-	unsigned long sb_index;
-	int gpa_sb_offset;
+	int demand_sb_offset;
 
-	/* returns NULL for invalid hva */
-	if ((vmr = emp_vmr_lookup_hva(bvma, hva)) == NULL)
-		return 0;
+	demand_sb_offset = demand_off & gpa_subblock_mask(head);
 
-	/* retrieve gpa and block */
-	gpa_off = GPN_OFFSET(bvma, HVA_TO_GPN(bvma, vmr, hva));
-	sb_index = gpa_off >> bvma_subblock_order(bvma);
-	gpa = get_exist_gpadesc(vmr, sb_index);
-	head = emp_get_block_head(gpa);
-	gpa_sb_offset = gpa_off & gpa_subblock_mask(head);
-
-	/* waiting for fetchings to be completed. */
-	if (head->r_state != GPA_FETCHING)
-		return 0;
-
-#ifdef CONFIG_EMP_BLOCK
 	if (csf && !is_gpa_flags_set(head, GPA_PREFETCH_ONCE_MASK)) {
 		if (cpf) {
 			/* waiting only for demand page */
 			int fallback = bvma->sops.wait_read_async_demand_page(bvma, vcpu,
-									  gpa, gpa_sb_offset);
+									  demand, demand_sb_offset);
 
 			/* processed only a page, not all */
-			head->local_page->demand_offset = emp_get_block_offset(head, gpa, gpa_off);
+			head->local_page->demand_offset = emp_get_block_offset(head, demand, demand_off);
 			if (fallback > 1)
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 			else
@@ -1428,15 +1406,15 @@ static int emp_fetch_barrier(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 			set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
 		} else {
 			/* waiting only for demand subblock */
-			if ((bvma->sops.wait_read_async)(bvma, vcpu, gpa)) {
+			if ((bvma->sops.wait_read_async)(bvma, vcpu, demand)) {
 				/* Called from emp_page_fault_gpa(). Forking on EPT is not allowed. */
-				debug_BUG_ON(is_gpa_remote_page_cow(gpa) == true);
-				clear_gpa_flags_if_set(gpa, GPA_REMOTE_MASK);
+				debug_BUG_ON(is_gpa_remote_page_cow(demand) == true);
+				clear_gpa_flags_if_set(demand, GPA_REMOTE_MASK);
 			}
 
 			/* processed only a sub-block, not all */
 			if (gpa_subblock_order(head) != gpa_block_order(head)) {
-				head->local_page->demand_offset = emp_get_block_offset(head, gpa, gpa_off);
+				head->local_page->demand_offset = emp_get_block_offset(head, demand, demand_off);
 				set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 				set_gpa_flags_if_unset(head, GPA_PREFETCH_ONCE_MASK);
 			}
@@ -1735,7 +1713,8 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 
 	debug_emp_page_fault_gpa3(head, gva, demand_off);
 
-	emp_fetch_barrier(kvm_vcpu, hva, gva);
+	if (head->r_state == GPA_FETCHING)
+		emp_fetch_barrier(cpu, vmr, head, demand, demand_off);
 	
 	/* calibrating page reference counts by calling get_page or put_page */
 	calibrate_block_count(head, fs, fe);
