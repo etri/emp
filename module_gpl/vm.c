@@ -466,14 +466,19 @@ static void put_pcpus_var(struct emp_mm *emm)
 static int emp_vmr_find_and_set(struct emp_mm *emm, struct emp_vmr *vmr)
 {
 	unsigned long p;
+
+	spin_lock(&emm->vmrs_lock);
 	p = find_first_bit(emm->vmrs_bitmap, EMP_VMRS_MAX);
-	if (unlikely(p == EMP_VMRS_MAX))
+	if (unlikely(p == EMP_VMRS_MAX)) {
+		spin_unlock(&emm->vmrs_lock);
 		return -1;
+	}
 
 	vmr->id = p;
 	emm->vmrs[p] = vmr;
 	__clear_bit(p, emm->vmrs_bitmap);
 	emm->vmrs_len++;
+	spin_unlock(&emm->vmrs_lock);
 
 	return p;
 }
@@ -487,12 +492,14 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 	debug_assert(vmr->mmu_notifier == NULL);
 #endif
 
-	if (emm->last_vmr == vmr)
-		emm->last_vmr = NULL;
+	if (get_emp_mm_last_vmr(emm) == vmr)
+		clear_emp_mm_last_vmr(emm);
 
+	spin_lock(&emm->vmrs_lock);
 	emm->vmrs[vmr->id] = NULL;
 	__set_bit(vmr->id, emm->vmrs_bitmap);
 	emm->vmrs_len--;
+	spin_unlock(&emm->vmrs_lock);
 }
 
 static void emp_vma_close(struct vm_area_struct *vma)
@@ -2336,6 +2343,7 @@ static struct emp_mm *create_emm(void)
 	bitmap_fill(bvma->vmrs_bitmap, EMP_VMRS_MAX);
 
 	init_srcu_struct(&bvma->srcu);
+	spin_lock_init(&bvma->vmrs_lock);
 	spin_lock_init(&bvma->mrs.memregs_lock);
 	init_waitqueue_head(&bvma->mrs.mrs_ctrl_wq);
 

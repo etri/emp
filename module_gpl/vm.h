@@ -518,10 +518,11 @@ struct emp_mm {
 #endif
 	struct emp_config   config;
 
+	spinlock_t          vmrs_lock; // protect vmrs_bitmap, vmrs_len, vmrs
 	DECLARE_BITMAP(vmrs_bitmap, EMP_VMRS_MAX);
 	int                 vmrs_len;
 	struct emp_vmr      **vmrs;
-	struct emp_vmr      *last_vmr;
+	atomic64_t          _last_vmr;
 	struct emp_gpadesc_alloc gpadesc_alloc;
 
 	struct emp_ftm      ftm;
@@ -554,6 +555,18 @@ struct emp_mm {
 	spinlock_t         split_link_lock;
 #endif
 };
+
+static inline struct emp_vmr *get_emp_mm_last_vmr(struct emp_mm *emm) {
+	return (struct emp_vmr *) atomic64_read(&emm->_last_vmr);
+}
+
+static inline void set_emp_mm_last_vmr(struct emp_mm *emm, struct emp_vmr *vmr) {
+	atomic64_set(&emm->_last_vmr, (s64) vmr);
+}
+
+static inline void clear_emp_mm_last_vmr(struct emp_mm *emm) {
+	atomic64_set(&emm->_last_vmr, (s64) NULL);
+}
 
 #ifdef CONFIG_EMP_BLOCK
 #define bvma_block_order(b)     ((b)->config.block_order)
@@ -676,17 +689,21 @@ static inline struct emp_vmr *
 emp_vmr_lookup(struct emp_mm *emm, struct vm_area_struct *vma)
 {
 	int p, count;
-	if (emm->last_vmr && (emm->last_vmr->host_vma == vma))
-		return emm->last_vmr;
+	struct emp_vmr *vmr = get_emp_mm_last_vmr(emm);
+	if (vmr && (vmr->host_vma == vma))
+		return vmr;
 
 	p = 0;
 	count = 0;
 	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
 		if (++count > emm->vmrs_len)
 			break;
-		if (emm->vmrs[p]->host_vma == vma) {
-			emm->last_vmr = emm->vmrs[p];
-			return emm->vmrs[p];
+		vmr = emm->vmrs[p];
+		if (unlikely(!vmr))
+			continue;
+		if (vmr->host_vma == vma) {
+			set_emp_mm_last_vmr(emm, vmr);
+			return vmr;
 		}
 	}
 
@@ -699,9 +716,8 @@ static inline struct emp_vmr *
 emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 {
 	int p, count;
-	struct emp_vmr *vmr = emm->last_vmr;
+	struct emp_vmr *vmr = get_emp_mm_last_vmr(emm);
 #ifdef CONFIG_EMP_USER
-	struct emp_vmr *vmr_diff_mm = NULL;
 	struct mm_struct *mm = current->mm;
 	if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, hva))
 		return vmr;
@@ -716,23 +732,19 @@ emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 		if (count++ >= emm->vmrs_len)
 			break;
 		vmr = emm->vmrs[p];
+		if (unlikely(!vmr))
+			continue;
 		if (VA_IN_VMR(vmr, hva)) {
 #ifdef CONFIG_EMP_USER
-			if (vmr->host_mm != mm) {
-				vmr_diff_mm = vmr;
+			if (vmr->host_mm != mm)
 				continue;
-			}
 #endif
-			emm->last_vmr = vmr;
+			set_emp_mm_last_vmr(emm, vmr);
 			return vmr;
 		}
 	}
 
-#ifdef CONFIG_EMP_USER
-	return vmr_diff_mm;
-#else
 	return NULL;
-#endif
 }
 
 /* Refer to module_gpl/hva.h:emp_set_page_mapping_and_index().

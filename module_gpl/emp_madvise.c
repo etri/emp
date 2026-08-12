@@ -856,34 +856,19 @@ long emp_madv_set_fork_policy(struct emp_mm *emm, unsigned long addr, long size,
 	struct mm_struct *mm = current->mm;
 	struct emp_vmr *vmr;
 	long ret = -EINVAL;
-	int p, count;
 
 	if (size <= 0 || (addr & ~PAGE_MASK))
 		return -EINVAL;
 
 	mmap_read_lock(mm);
+	vmr = emp_vmr_lookup_hva(emm, addr);
 
-	vmr = emm->last_vmr;
-	if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, addr))
-		goto found;
+	if (!vmr)
+		goto out;
 
-	/* Strict same-mm lookup: emp_vmr_lookup_hva() falls back to a vmr of
-	 * another process when this mm has no match, and that vmr must never
-	 * receive this process's policy. */
-	p = 0;
-	count = 0;
-	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
-		if (count++ >= emm->vmrs_len)
-			break;
-		vmr = emm->vmrs[p];
-		if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, addr))
-			goto found;
-	}
-	goto out;
-
-found:
 	if (addr != vmr->vm_start || addr + size != vmr->vm_end)
 		goto out;	/* TODO: partial range is not supported */
+
 	/* a shared mapping has no private contents to inherit or wipe */
 	if (!vmr->host_vma || (vmr->host_vma->vm_flags & VM_SHARED))
 		goto out;
