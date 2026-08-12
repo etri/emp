@@ -110,13 +110,8 @@ void reclaim_set(struct emp_mm *);
 int reclaim_init(struct emp_mm *);
 void reclaim_exit(struct emp_mm *);
 
-#ifdef CONFIG_EMP_BLOCK
 void wait_for_prefetched_block(struct emp_mm *emm,
 				struct vcpu_var *cpu, struct emp_gpa *head);
-#else
-static inline void wait_for_prefetched_block(struct emp_mm *emm,
-				struct vcpu_var *cpu, struct emp_gpa *head) {}
-#endif
 
 /**
  * is_unmapped_active - Check the pages status (unmapped and active)

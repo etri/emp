@@ -12,12 +12,16 @@ emp-y += procfs.o emp_madvise.o
 ifeq ($(EMP_USER), yes)
 emp-y += cow.o
 endif
+#ifdef CONFIG_EMP_BLOCK
 #ifdef CONFIG_EMP_ELASTIC_BLOCK
 # '#ifdef' adove is not for 'make', but for the code management.
+ifeq ($(EMP_BLOCK), yes)
 ifeq ($(EMP_ELASTIC_BLOCK), yes)
 emp-y += els_block.o
 endif
+endif
 # '#endif' below is not for 'make', but for the code management.
+#endif
 #endif
 #ifdef CONFIG_EMP_DEBUG
 # '#ifdef' adove is not for 'make', but for the code management.
@@ -26,9 +30,17 @@ emp-y += debug.o
 endif
 # '#endif' below is not for 'make', but for the code management.
 #endif
+#ifdef CONFIG_EMP_VM
+#ifdef CONFIG_EMP_IO
+# '#ifdef' adove is not for 'make', but for the code management.
+ifeq ($(EMP_VM), yes)
 ifeq ($(EMP_IO), yes)
  emp-y += iov.o
 endif
+endif
+# '#endif' below is not for 'make', but for the code management.
+#endif
+#endif
 
 #ifdef CONFIG_EMP_BLOCKDEV
 # '#ifdef' adove is not for 'make', but for the code management.

@@ -735,7 +735,9 @@ static int __emp_blk_move_to_inactive(struct emp_mm *emm, struct emp_vmr *vmr,
 
 	}
 
+#ifdef CONFIG_EMP_BLOCK
 unlock:
+#endif
 #if defined(CONFIG_EMP_STAT) || defined(CONFIG_EMP_DEBUG)
 	if (head->r_state == GPA_ACTIVE) {
 		emp_stat_inc(emm, blk_dontneed_active);

@@ -345,7 +345,6 @@ static ssize_t initial_subblock_size_write(struct file *file, const char __user 
 #ifdef CONFIG_EMP_ELASTIC_BLOCK
 EMP_PROC_INITIAL_BOOLEAN(els_disabled)
 #endif /* CONFIG_EMP_ELASTIC_BLOCK */
-EMP_PROC_INITIAL_BOOLEAN(remote_reuse)
 EMP_PROC_INITIAL_BOOLEAN(critical_subblock_first)
 EMP_PROC_INITIAL_BOOLEAN_READ(critical_page_first)
 static ssize_t initial_critical_page_first_write(struct file *file, const char __user *buf,
@@ -405,6 +404,7 @@ static ssize_t initial_enable_transition_csf_write(struct file *file, const char
 EMP_PROC_INITIAL_BOOLEAN(mark_empty_page)
 EMP_PROC_INITIAL_BOOLEAN(mem_poll)
 #endif
+EMP_PROC_INITIAL_BOOLEAN(remote_reuse)
 #ifdef CONFIG_EMP_OPT
 EMP_PROC_INITIAL_BOOLEAN(eval_media)
 EMP_PROC_INITIAL_BOOLEAN(async_invlept)

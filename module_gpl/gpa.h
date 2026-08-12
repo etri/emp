@@ -17,8 +17,10 @@ enum gpa_flags {
 	GPA_ept = 3,
 	GPA_hpt = 4,
 	GPA_remote = 5,
+#ifdef CONFIG_EMP_BLOCK
 	GPA_prefetched_csf = 6,
 	GPA_prefetched_cpf = 7,
+#endif
 	GPA_prefetched_blk = 8,
 	GPA_prefetch_once = 9,
 	GPA_referenced = 10,
@@ -56,12 +58,18 @@ enum gpa_flags {
 #define GPA_nPT_MASK        (GPA_HPT_MASK)
 #endif /* !CONFIG_EMP_VM */
 #define GPA_REMOTE_MASK     (1 << GPA_remote)
+#ifdef CONFIG_EMP_BLOCK
 #define GPA_PREFETCHED_CSF_MASK  (1 << GPA_prefetched_csf)
 #define GPA_PREFETCHED_CPF_MASK  (1 << GPA_prefetched_cpf)
+#endif /* CONFIG_EMP_BLOCK */
 #define GPA_PREFETCHED_BLK_MASK  (1 << GPA_prefetched_blk)
+#ifdef CONFIG_EMP_BLOCK
 #define GPA_PREFETCHED_MASK  (GPA_PREFETCHED_CSF_MASK \
 				| GPA_PREFETCHED_CPF_MASK \
 				| GPA_PREFETCHED_BLK_MASK)
+#else /* !CONFIG_EMP_BLOCK */
+#define GPA_PREFETCHED_MASK  (GPA_PREFETCHED_BLK_MASK)
+#endif /* !CONFIG_EMP_BLOCK */
 #define GPA_PREFETCH_ONCE_MASK  (1 << GPA_prefetch_once)
 #define GPA_REFERENCED_MASK (1 << GPA_referenced)
 #ifdef CONFIG_EMP_IO

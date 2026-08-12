@@ -114,10 +114,12 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 		}
 		return;
 	}
-#endif
 
 	if (!is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK))
 		prefetched_gpa = NULL;
+#else /* !CONFIG_EMP_BLOCK */
+	debug_assert(prefetched_gpa == NULL);
+#endif /* !CONFIG_EMP_BLOCK */
 
 	for_each_gpas(gpa, head) {
 		if (fetch && gpa == prefetched_gpa) {
@@ -268,13 +270,16 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 	int ret = VM_FAULT_NOPAGE;
 	unsigned long hva;
 	unsigned int page_len;
+#ifdef CONFIG_EMP_BLOCK
 	bool csf_prefetching, cpf_prefetching;
+#endif
 	struct vm_area_struct *vma = vmr->host_vma;
 	spinlock_t *ptl;
 
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
 
+#ifdef CONFIG_EMP_BLOCK
 	// prefetch_hit == true => csf == false
 	// prefetch_hit == false => csf == GPA_PREFETCHED_MASK
 	if (prefetch_hit) {
@@ -327,6 +332,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 		emp_update_rss_cached(vmr);
 		return ret;
 	}
+#endif
 
 	____local_gpa_to_hva_and_len(vmr, head, hva, page_len);
 

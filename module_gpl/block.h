@@ -171,6 +171,7 @@ static inline void _emp_unlock_block(struct emp_gpa *head)
 }
 #else /* !CONFIG_EMP_BLOCK */
 
+#define emp_get_block_offset(head, demand, pgoff) (0)
 #define _emp_get_block_head_index(vmr, index, order) \
 				({ debug_assert((order) == 0); (index); })
 #define emp_get_block_head_index(vmr, index) (index)
@@ -218,7 +219,7 @@ relock:
  * @return head of the block
  */
 static inline struct emp_gpa *
-_emp_trylock_block(struct emp_vmr *vmr, struct emp_gpa **gpa, unsigned long index)
+_emp_trylock_block(struct emp_vmr *vmr, struct emp_gpa **_gpa, unsigned long index)
 {
 	struct emp_gpa *gpa = _gpa ? *_gpa : get_gpadesc(vmr, index);
 	if (unlikely(!gpa))
@@ -417,7 +418,10 @@ get_next_exist_head_gpadesc(struct emp_vmr *vmr, unsigned long *indexp) {
 	} else
 		return __get_next_exist_head_gpadesc(vmr, indexp);
 }
-#endif
+#else /* !CONFIG_EMP_BLOCK */
+#define __get_next_exist_head_gpadesc(vmr, indexp) __get_next_exist_gpadesc(vmr, indexp)
+#define get_next_exist_head_gpadesc(vmr, indexp) get_next_exist_gpadesc(vmr, indexp)
+#endif /* !CONFIG_EMP_BLOCK */
 
 /* trylock the gpa descriptor that belongs to @lp */
 static inline struct emp_gpa *

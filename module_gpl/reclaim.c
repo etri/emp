@@ -366,7 +366,10 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 bool COMPILER_DEBUG
 gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 {
-	struct emp_gpa *g, *pf_sb;
+	struct emp_gpa *g;
+#ifdef CONFIG_EMP_BLOCK
+	struct emp_gpa *pf_sb;
+#endif
 	struct page *p;
 	int page_size;
 	int count_page, count_max, count_def;
@@ -381,11 +384,13 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 
 	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
 		count_def = 2;
+#ifdef CONFIG_EMP_BLOCK
 		if (is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK))
 			pf_sb = head + (head->local_page->demand_offset
 						>> gpa_subblock_order(head));
 		else
 			pf_sb = NULL;
+#endif
 	} else {
 		count_def = 1;
 	}
@@ -398,9 +403,11 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 		count_page = emp_page_count(p);
 		count_max = count_def + page_size * emp_lp_count_pmd(g->local_page);
 
+#ifdef CONFIG_EMP_BLOCK
 		// prefetched subblock in CSF has been handled its I/O
 		if (g == pf_sb)
 			count_max -= 1;
+#endif
 
 		if (count_page > count_max) {
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
@@ -438,24 +445,30 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 	return true;
 }
 
-#ifdef CONFIG_EMP_BLOCK
 void wait_for_prefetched_block(struct emp_mm *emm,
 				struct vcpu_var *cpu, struct emp_gpa *head)
 {
-	struct emp_gpa *g, *pf_sb_head;
+	struct emp_gpa *g;
+#ifdef CONFIG_EMP_BLOCK
+	struct emp_gpa *pf_sb_head;
+#endif
 
 	debug_assert(__is_gpa_flags_set(head, GPA_PREFETCHED_MASK));
 	debug_assert(!__is_gpa_flags_same(head, GPA_nPT_MASK, 0));
 
+#ifdef CONFIG_EMP_BLOCK
 	if (is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK))
 		pf_sb_head = head + (head->local_page->demand_offset
 					>> gpa_subblock_order(head));
 	else
 		pf_sb_head = NULL;
+#endif
 
 	for_each_gpas(g, head) {
+#ifdef CONFIG_EMP_BLOCK
 		if (g == pf_sb_head)
 			continue;
+#endif
 
 		if (emm->sops.wait_read_async(emm, cpu, g))
 			clear_gpa_flags_if_set(g, GPA_REMOTE_MASK);
@@ -478,7 +491,6 @@ static void wait_for_prefetched_blocks(struct emp_mm *emm,
 		emp_stat_inc(emm, csf_useful);
 	}
 }
-#endif /* CONFIG_EMP_BLOCK */
 
 #define CONFIG_EMP_PROMOTE_TO_PROACTIVE
 static void __promote_gpas(struct emp_mm *emm, int cpu, struct temp_list *lp_list,
@@ -507,8 +519,8 @@ static void __promote_gpas(struct emp_mm *emm, int cpu, struct temp_list *lp_lis
 #endif
 		gpa->r_state = GPA_ACTIVE;
 		if (!mapped) {
-			set_gpa_flags_if_unset(gpa, GPA_PREFETCHED_BLK_MASK);
-			set_gpa_flags_if_unset(gpa, GPA_PREFETCH_ONCE_MASK);
+			set_gpa_flags_if_unset(gpa, GPA_PREFETCHED_BLK_MASK
+							| GPA_PREFETCH_ONCE_MASK);
 		}
 		emp_unlock_local_page(emm, lp);
 	}

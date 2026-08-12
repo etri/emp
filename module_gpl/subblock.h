@@ -91,8 +91,8 @@ static inline void __emp_get_subblock(struct emp_gpa *g)
 	get_page(g->local_page->page);
 }
 
-#define emp_get_subblock(g, compound) do { \
-	__emp_get_subblock(g, compound); \
+#define emp_get_subblock(g) do { \
+	__emp_get_subblock(g); \
 	debug_page_ref_mark((g)->local_page->vmr_id, (g)->local_page, 1); \
 } while (0)
 

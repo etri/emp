@@ -815,7 +815,9 @@ static unsigned long split_get_num_low_memory_pages(struct emp_mm *e)
 static void
 split_set_gpadesc_regions(struct emp_vmr *vmr)
 {
+#if defined(CONFIG_EMP_VM) || defined(CONFIG_EMP_BLOCK)
 	struct emp_mm *emm = vmr->emm;
+#endif
 	struct emp_vmdesc *desc = vmr->descs;
 	struct gpadesc_region *regions = desc->regions;
 	unsigned long gpa_len = desc->gpa_len;

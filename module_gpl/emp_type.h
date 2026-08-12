@@ -287,11 +287,11 @@ struct emp_gpa {
 #define gpa_desc_order(gpa) (0)
 #define gpa_desc_size(gpa) (1)
 #define gpa_max_block_order(gpa) (0)
+#define set_gpa_block_order(gpa, order) debug_assert((order) == 0)
+#define set_gpa_max_block_order(gpa, order) debug_assert((order) == 0)
 /* The followings are not defined.
  * __update_gpa_desc_order(gpa)
- * set_gpa_block_order(gpa, order)
  * inc_gpa_block_order(gpa)
- * set_gpa_max_block_order(gpa)
  */
 #define copy_gpa_orders(dst, src) do {} while (0)
 

@@ -1548,9 +1548,13 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 		// re-locking in __clear_gpa_for_cow() does not
 		// modify the old_head.
 		__clear_gpa_for_cow(emm, vmr, old_head, idx);
+#ifdef CONFIG_EMP_BLOCK
 		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_PREFETCHED_CSF_MASK));
 		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_PREFETCHED_CPF_MASK));
+#endif /* CONFIG_EMP_BLOCK */
+#ifdef CONFIG_EMP_IO
 		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_IO_IP_MASK));
+#endif /* CONFIG_EMP_IO */
 	}
 
 	/* Update demand head */
@@ -1727,9 +1731,13 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 			return 0; /* Not a cow fault anymore */
 	}
 
+#ifdef CONFIG_EMP_BLOCK
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK));
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
+#endif /* CONFIG_EMP_BLOCK */
+#ifdef CONFIG_EMP_IO
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_IO_IP_MASK));
+#endif /* CONFIG_EMP_IO */
 
 	desc_order = gpa_desc_order(head);
 	end_idx = head_idx + (1UL << desc_order);

@@ -174,7 +174,7 @@ static inline void update_gpa_order(struct emp_gpa *g, int order) {
 	set_gpa_max_block_order(g, order);
 }
 #else
-#define update_gpa_block_order(g, o) do {} while(0)
+#define update_gpa_order(g, o) debug_assert((o) == 0)
 #endif
 
 #ifdef CONFIG_EMP_EXT
@@ -335,7 +335,9 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 			unsigned long vm_start, unsigned long vm_end,
 			unsigned long sb_at_head, unsigned long sb_at_tail)
 {
+#if defined(CONFIG_EMP_VM) || defined(CONFIG_EMP_BLOCK)
 	struct emp_mm *emm = vmr->emm;
+#endif
 	struct emp_vmdesc *desc = vmr->descs;
 	struct gpadesc_region *regions = desc->regions;
 	unsigned long gpa_len = desc->gpa_len;

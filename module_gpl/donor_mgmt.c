@@ -150,11 +150,13 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 
 	adjust_remote_page_policy(bvma, mr);
 
+#ifdef CONFIG_EMP_BLOCK
 	// disable CPF when donor is not RDMA
 	if (!IS_MR_TYPE_RDMA(mr) && bvma->config.critical_page_first) {
 		printk(KERN_ERR "Disable CPF when donor is not RDMA device\n");
 		bvma->config.critical_page_first = 0;
 	}
+#endif
 
 #ifdef CONFIG_EMP_BLOCKDEV
 	if (mr->type == MR_NVME)
