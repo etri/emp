@@ -317,6 +317,7 @@ long emp_madv_pin(struct emp_mm *emm, unsigned long addr, long size)
 {
 	unsigned long addr_end, vmr_addr_end;
 	struct emp_vmr *vmr;
+	struct mm_struct *mm = current->mm;
 	int sb_order = bvma_subblock_order(emm);
 	unsigned long idx;
 	struct emp_gpa *head, *gpa;
@@ -336,6 +337,7 @@ long emp_madv_pin(struct emp_mm *emm, unsigned long addr, long size)
 	}
 	addr_end = addr + size;
 
+	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
 		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
@@ -375,6 +377,7 @@ long emp_madv_pin(struct emp_mm *emm, unsigned long addr, long size)
 	}
 
 out:
+	mmap_read_unlock(mm);
 	atomic_add(new_pin, &emm->ftm.num_pin_blocks);
 
 	dprintk("[EMP_MADV_PIN] emm: %d addr: 0x%016lx size: 0x%lx total_page: %ld pin_page: %ld\n",
@@ -438,6 +441,7 @@ long emp_madv_unpin(struct emp_mm *emm, unsigned long addr, long size)
 {
 	unsigned long addr_end, vmr_addr_end;
 	struct emp_vmr *vmr;
+	struct mm_struct *mm = current->mm;
 	int sb_order = bvma_subblock_order(emm), order;
 	unsigned long idx;
 	struct emp_gpa *head, *gpa;
@@ -460,6 +464,7 @@ long emp_madv_unpin(struct emp_mm *emm, unsigned long addr, long size)
 
 	init_temp_list(&to_proactive);
 
+	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
 		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
@@ -524,6 +529,7 @@ long emp_madv_unpin(struct emp_mm *emm, unsigned long addr, long size)
 
 out:
 	__flush_to_proactive(emm, &to_proactive, true);
+	mmap_read_unlock(mm);
 	atomic_sub(new_unpin, &emm->ftm.num_pin_blocks);
 
 	dprintk("[EMP_MADV_UNPIN] emm: %d addr: 0x%016lx size: 0x%lx total_page: %ld unpin_page: %ld\n",
@@ -536,12 +542,13 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 {
 	unsigned long size, addr_start, addr_end, vmr_addr_end;
 	struct emp_vmr *vmr;
+	struct mm_struct *mm = current->mm;
 	int sb_order = bvma_subblock_order(emm), order;
 	unsigned long idx;
 	int block_size;
 	struct blks_ctx ctx;
 	bool force;
-	long ret;
+	long ret = 0, r;
 
 	if (__size >= 0) {
 		size = __size;
@@ -560,17 +567,23 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 	addr_start = addr;
 	addr_end = addr + size;
 
+	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL)
-			return -EINVAL;
+		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+			ret = -EINVAL;
+			goto out;
+		}
+
 		vmr_addr_end = vmr->vm_end < addr_end ? vmr->vm_end : addr_end;
 		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
 
 		while (addr < vmr_addr_end) {
 			block_size = __emp_blk_prefetch(emm, vmr, idx, &ctx);
-			if (unlikely(block_size < 0))
-				return (long) block_size;
+			if (unlikely(block_size < 0)) {
+				ret = (long) block_size;
+				goto out;
+			}
 			if (block_size > 0) {
 				addr += block_size << PAGE_SHIFT;
 				idx += block_size >> sb_order;
@@ -589,7 +602,10 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 		}
 	}
 
-	ret = (long) blks_ctx_flush_prefetch(emm, &ctx, true);
+out:
+	r = (long) blks_ctx_flush_prefetch(emm, &ctx, true);
+	if (ret == 0)
+		ret = r;
 	dprintk("[BLK_PREFETCH] addr: %ld size: %ld force: %d (STAT) called: %ld try: %ld trylock_failed: %ld prefetched: %ld prefetch_once: %ld iomask: %ld stale: %ld promote: %ld remote_fail: %ld remote_succeed: %ld active: %ld inactive: %ld wb: %ld\n",
 			addr_start, size, force,
 			ctx.stat.prefetch_called,
@@ -605,21 +621,29 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 			ctx.stat.prefetch_active,
 			ctx.stat.prefetch_inactive,
 			ctx.stat.prefetch_wb);
-	if (!force)
+	/* the completion pass re-walks the same range. Skip it if the first
+	 * pass already failed; otherwise the error is lost. */
+	if (!force || ret != 0) {
+		mmap_read_unlock(mm);
 		return ret;
+	}
 
 	addr = addr_start;
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL)
-			return -EINVAL;
+		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+			ret = -EINVAL;
+			goto out2;
+		}
 		vmr_addr_end = vmr->vm_end < addr_end ? vmr->vm_end : addr_end;
 		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
 
 		while (addr < vmr_addr_end) {
 			block_size = __emp_blk_prefetch_complete(emm, vmr, idx, &ctx);
-			if (unlikely(block_size < 0))
-				return (long) block_size;
+			if (unlikely(block_size < 0)) {
+				ret = (long) block_size;
+				goto out2;
+			}
 			if (block_size > 0) {
 				addr += block_size << PAGE_SHIFT;
 				idx += block_size >> sb_order;
@@ -638,7 +662,11 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 		}
 	}
 
-	ret = (long) blks_ctx_flush_prefetch(emm, &ctx, true);
+out2:
+	r = (long) blks_ctx_flush_prefetch(emm, &ctx, true);
+	mmap_read_unlock(mm);
+	if (ret == 0)
+		ret = r;
 	dprintk("[BLK_PREFETCH_FORCE] addr: %ld size: %ld force: %d (STAT) called: %ld try: %ld lock_failed: %ld prefetched: %ld remote_fail: %ld remote_succeed: %ld\n",
 			addr_start, size, force,
 			ctx.stat.complete_called,
@@ -762,12 +790,13 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 {
 	unsigned long size, addr_start, addr_end, vmr_addr_end;
 	struct emp_vmr *vmr;
+	struct mm_struct *mm = current->mm;
 	int sb_order = bvma_subblock_order(emm), order;
 	unsigned long idx;
 	int block_size;
 	struct blks_ctx ctx;
 	bool force;
-	long ret;
+	long ret = 0, r;
 
 	if (__size >= 0) {
 		size = __size;
@@ -786,17 +815,22 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 	addr_start = addr;
 	addr_end = addr + size;
 
+	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL)
-			return -EINVAL;
+		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+			ret = -EINVAL;
+			goto out;
+		}
 		vmr_addr_end = vmr->vm_end < addr_end ? vmr->vm_end : addr_end;
 		idx = (addr - vmr->descs->vm_base) >> (PAGE_SHIFT + sb_order);
 
 		while (addr < vmr_addr_end) {
 			block_size = __emp_blk_move_to_inactive(emm, vmr, idx, &ctx);
-			if (unlikely(block_size < 0))
-				return (long) block_size;
+			if (unlikely(block_size < 0)) {
+				ret = (long) block_size;
+				goto out;
+			}
 			if (block_size > 0) {
 				addr += block_size << PAGE_SHIFT;
 				idx += block_size >> sb_order;
@@ -815,7 +849,11 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 		}
 	}
 
-	ret = (long) blks_ctx_flush_dontneed(emm, &ctx, true);
+out:
+	r = (long) blks_ctx_flush_dontneed(emm, &ctx, true);
+	mmap_read_unlock(mm);
+	if (ret == 0)
+		ret = r;
 	dprintk("[BLK_DONTNEED] addr: %ld size: %ld force: %d (STAT) called: %ld try: %ld trylock_failed: %ld prefetched: %ld succeed: %ld active: %ld inactive: %ld wb: %ld remote: %ld\n",
 			addr_start, size, force,
 			ctx.stat.dontneed_called,
