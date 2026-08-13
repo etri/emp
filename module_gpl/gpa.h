@@ -318,6 +318,20 @@ u64 hva_to_gpa(struct emp_mm *, u64, struct kvm_memory_slot **);
 #endif
 
 struct emp_vmdesc *alloc_vmdesc(struct emp_vmdesc *prev);
+#ifdef CONFIG_EMP_USER
+struct emp_vmdesc;
+struct emp_vmdesc_view;
+void emp_vmdesc_view_init(struct emp_vmdesc *desc);
+int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end, struct emp_vmdesc_view **node);
+void emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end);
+bool emp_vmdesc_view_is_covered(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end);
+bool emp_vmdesc_view_find_uncovered(struct emp_vmdesc *desc, unsigned long *__start,
+			unsigned long *__end);
+void emp_vmdesc_view_exit(struct emp_vmdesc *desc);
+#endif /* CONFIG_EMP_USER */
 int gpas_open(struct emp_vmr *);
 void gpas_close(struct emp_vmr *, bool, bool);
 int gpa_init(struct emp_mm *);

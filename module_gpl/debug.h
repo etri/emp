@@ -266,6 +266,9 @@ void debug_unmap_ptes(struct emp_mm *emm, struct emp_gpa *heads, unsigned long s
 void debug_alloc_remote_page(struct emp_mm *emm, struct emp_gpa *head);
 void debug_alloc_remote_page2(struct emp_mm *emm, struct emp_gpa *head);
 void debug_free_gpa_dir_region(struct emp_gpa *head, int desc_order);
+#ifdef CONFIG_EMP_USER
+void debug_check_vmdesc_views(struct emp_vmdesc *desc);
+#endif
 void debug_emp_lp_count_pmd(struct local_page *lp);
 void debug_reclaim_exit_proactive(struct emp_mm *emm, struct slru *proactive);
 void debug_reclaim_exit_active(struct emp_mm *emm, struct slru *active);
@@ -324,6 +327,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_alloc_remote_page(emm, head) do {} while(0)
 #define debug_alloc_remote_page2(emm, head) do {} while (0)
 #define debug_free_gpa_dir_region(head, desc_order) do {} while (0)
+#define debug_check_vmdesc_views(desc) do {} while (0)
 #define debug_emp_lp_count_pmd(lp) do {} while (0)
 #define debug_reclaim_exit_proactive(emm, slru) do {} while (0)
 #define debug_reclaim_exit_active(emm, active) do {} while (0)

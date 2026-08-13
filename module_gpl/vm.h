@@ -167,6 +167,28 @@ struct gpadesc_region {
 #endif
 };
 
+#ifdef CONFIG_EMP_USER
+/*
+ * An aggregated vmr view interval of a vmdesc.
+ *
+ * @start and @end are vmdesc-relative base page coordinates, that is
+ * (vmr->vm_start - descs->vm_base) >> PAGE_SHIFT. They are neither host virtual
+ * addresses nor mm/vma pointers, so an entry stays readable for a vmr living in
+ * another mm without touching that mm.
+ *
+ * One entry represents every vmr whose view is exactly [start, end), and @count
+ * is how many of them there are. Only identical intervals are aggregated:
+ * partially overlapping ones are kept separate so that a close or a split is
+ * always reversible from the closing/splitting vmr's own interval.
+ */
+struct emp_vmdesc_view {
+	unsigned long           start;
+	unsigned long           end;
+	unsigned int            count;
+	struct emp_vmdesc_view  *next;
+};
+#endif /* CONFIG_EMP_USER */
+
 struct emp_vmdesc {
 	// length of vm descriptors
 	unsigned long       	gpa_len;
@@ -189,6 +211,14 @@ struct emp_vmdesc {
 	atomic_t	        refcount;
 	atomic_t                is_closing;
 	wait_queue_head_t       closing_wq;
+	/* Which backing ranges are still viewed through at least one vmr.
+	 * The first entry is embedded because a mapping which is never split
+	 * has exactly one interval, however many processes fork it.
+	 * Protected by @view_lock, whose only job this is: it protects no vma,
+	 * no page table, and no gpa state, and must never nest into an mmap
+	 * lock. */
+	spinlock_t              view_lock;
+	struct emp_vmdesc_view  views;
 #endif
 };
 
@@ -267,6 +297,20 @@ struct emp_vmr {
 #endif /* CONFIG_EMP_DEBUG */
 #endif /* CONFIG_EMP_USER */
 };
+
+#ifdef CONFIG_EMP_USER
+/* [vmr_view_start(), vmr_view_end()) is @vmr's view of its vmdesc, in
+ * vmdesc-relative base page coordinates. vm_base is subblock-rounded down from
+ * the vm_start of the vmr which created the namespace, so it never exceeds
+ * vm_start of any vmr viewing it. */
+static inline unsigned long vmr_view_start(struct emp_vmr *vmr) {
+	return (vmr->vm_start - vmr->descs->vm_base) >> PAGE_SHIFT;
+}
+
+static inline unsigned long vmr_view_end(struct emp_vmr *vmr) {
+	return (vmr->vm_end - vmr->descs->vm_base) >> PAGE_SHIFT;
+}
+#endif /* CONFIG_EMP_USER */
 
 struct emp_ftm {
 	atomic_t            local_cache_pages;

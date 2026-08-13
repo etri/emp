@@ -1935,6 +1935,47 @@ void debug_alloc_remote_page2(struct emp_mm *emm, struct emp_gpa *head)
 	}
 }
 
+#ifdef CONFIG_EMP_USER
+/* Every vmr using a vmdesc contributes exactly one lifetime reference and
+ * exactly one interval count unit. Check that at a stable boundary only: a
+ * close removes the interval and the reference one after the other, and keeps
+ * the reference until its backing cleanup has finished. */
+void debug_check_vmdesc_views(struct emp_vmdesc *desc)
+{
+	struct emp_vmdesc_view *v, *w;
+	unsigned long sum = 0;
+	int refcount;
+
+	spin_lock(&desc->view_lock);
+	for (v = &desc->views; v; v = v->next) {
+		if (v == &desc->views && v->count == 0) {
+			/* an empty embedded entry means an empty list */
+			BUG_ON(v->next != NULL);
+			break;
+		}
+		BUG_ON(v->count == 0);
+		BUG_ON(v->start >= v->end);
+		/* identical intervals must have been aggregated, and the list
+		 * is sorted: ascending start, then ascending end */
+		if (v->next) {
+			BUG_ON(v->next->start < v->start);
+			BUG_ON(v->next->start == v->start
+					&& v->next->end <= v->end);
+		}
+		sum += v->count;
+	}
+	refcount = atomic_read(&desc->refcount);
+	spin_unlock(&desc->view_lock);
+
+	if (unlikely(sum != (unsigned long) refcount)) {
+		printk(KERN_ERR "%s: ERROR: vmdesc(0x%lx) refcount: %d "
+				"sum(view counts): %ld\n", __func__,
+				(unsigned long) desc, refcount, sum);
+		BUG();
+	}
+}
+#endif /* CONFIG_EMP_USER */
+
 void debug_free_gpa_dir_region(struct emp_gpa *head, int desc_order) {
 	int i, end;
 	int refcnt0;

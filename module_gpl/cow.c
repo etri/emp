@@ -2483,6 +2483,13 @@ int dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		desc->gpa_dir = desc->gpa_dir_alloc + gpa_dir_offset;
 
 		new_vmr->descs = desc;
+
+		/* A private fork gets its own namespace, and the child vma has
+		 * the addresses of the parent, so the view is the parent's
+		 * interval in the copied vm_base. The embedded entry of the
+		 * fresh vmdesc is free: no allocation, no failure. */
+		emp_vmdesc_view_add(desc, vmr_view_start(new_vmr),
+					vmr_view_end(new_vmr), NULL);
 	}
 
 	if (dup_dir)

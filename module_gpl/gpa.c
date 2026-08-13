@@ -1686,6 +1686,10 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 #endif /* CONFIG_EMP_VM */
 
 #ifdef CONFIG_EMP_USER
+	/* Drop this vmr's view of the namespace before deciding what is left.
+	 * The lifetime reference is dropped in the same breath, so a concurrent
+	 * checker sees refcount == sum(view counts) at every stable boundary. */
+	emp_vmdesc_view_del(desc, vmr_view_start(vmr), vmr_view_end(vmr));
 	vm_refcnt = atomic_dec_return(&desc->refcount);
 	if (vm_refcnt > 0) { // vm_refcnt > 0
 		spin_lock(&emm->dup_list_lock);
@@ -1809,6 +1813,284 @@ set_gpa_remote(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *g)
 	set_gpa_flags_if_unset(g, GPA_REMOTE_MASK);
 }
 
+#ifdef CONFIG_EMP_USER
+/**
+ * emp_vmdesc_view_init - initialize the vmr view metadata of a vmdesc
+ * @param desc vmdesc
+ *
+ * The view list starts empty. Its owner registers its own interval right after
+ * the backing origin (desc->vm_base) is known. Note that a vmdesc built by
+ * copying another one must be re-initialized here: the copy inherits neither
+ * the intervals nor the overflow entries of the original.
+ */
+void emp_vmdesc_view_init(struct emp_vmdesc *desc)
+{
+	spin_lock_init(&desc->view_lock);
+	desc->views.start = 0;
+	desc->views.end = 0;
+	desc->views.count = 0;
+	desc->views.next = NULL;
+}
+
+/**
+ * emp_vmdesc_view_add - add one vmr view of [@start, @end) to @desc
+ * @param desc vmdesc
+ * @param start start of the view in vmdesc-relative base page coordinates
+ * @param end end of the view, exclusive
+ * @param node preallocated overflow entry. Consumed and set to NULL if used.
+ *             May be NULL when the caller knows no new interval shape can be
+ *             required: a fork reproduces an interval which already exists,
+ *             and the first vmr of a namespace finds the embedded entry free.
+ *
+ * @retval 0: success
+ * @retval -ENOMEM: a new distinct interval was required but @node was empty
+ *
+ * The embedded entry is empty only while the whole list is empty, so an empty
+ * embedded entry is enough to detect the first-vmr case.
+ */
+int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end, struct emp_vmdesc_view **node)
+{
+	struct emp_vmdesc_view *v, *prev, *n;
+	int ret = 0;
+
+	debug_assert(start < end);
+
+	spin_lock(&desc->view_lock);
+	if (desc->views.count == 0) {
+		debug_assert(desc->views.next == NULL);
+		desc->views.start = start;
+		desc->views.end = end;
+		desc->views.count = 1;
+		goto out;
+	}
+
+	/* The list is kept sorted: ascending start, then ascending end among
+	 * equal starts. An identical interval, if present, sits exactly at the
+	 * insertion position, so one walk finds either. Deletion preserves the
+	 * order -- removing a node keeps the sequence, and the embedded-entry
+	 * promotion copies the successor, which is the minimum of what
+	 * remains. find_uncovered() and is_covered() rely on the order to walk
+	 * left to right and to stop at the first entry starting at or after
+	 * their range end. */
+	prev = NULL;
+	for (v = &desc->views; v; prev = v, v = v->next) {
+		if (v->start == start && v->end == end) {
+			v->count++;
+			goto out;
+		}
+		if (v->start > start
+				|| (v->start == start && v->end > end))
+			break;
+	}
+
+	if (unlikely(node == NULL || *node == NULL)) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	n = *node;
+	*node = NULL;
+
+	if (v == &desc->views) {
+		/* The new interval sorts before every existing one, but the
+		 * embedded entry must stay the physical head. So the new
+		 * interval goes into the embedded entry, and the embedded
+		 * entry's previous content moves out into the allocated node
+		 * right behind it: it was the minimum until now, so it still
+		 * precedes every overflow entry and the order holds. */
+		*n = desc->views;	/* start, end, count, next */
+		desc->views.start = start;
+		desc->views.end = end;
+		desc->views.count = 1;
+		desc->views.next = n;
+	} else {
+		n->start = start;
+		n->end = end;
+		n->count = 1;
+		n->next = v;		/* NULL when appending at the tail */
+		prev->next = n;
+	}
+out:
+	spin_unlock(&desc->view_lock);
+	return ret;
+}
+
+/**
+ * emp_vmdesc_view_del - remove one vmr view of [@start, @end) from @desc
+ * @param desc vmdesc
+ * @param start start of the view in vmdesc-relative base page coordinates
+ * @param end end of the view, exclusive
+ *
+ * Never allocates. If the embedded entry empties while overflow entries remain,
+ * one of them is promoted into it and the freed node is released after the lock
+ * is dropped.
+ */
+void emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end)
+{
+	struct emp_vmdesc_view *v, *prev = NULL, *dead = NULL;
+
+	spin_lock(&desc->view_lock);
+	for (v = &desc->views; v; prev = v, v = v->next)
+		if (v->count > 0 && v->start == start && v->end == end)
+			break;
+
+	if (unlikely(v == NULL)) {
+		spin_unlock(&desc->view_lock);
+		printk(KERN_ERR "%s: ERROR: no view entry for [0x%lx, 0x%lx)\n",
+				__func__, start, end);
+		return;
+	}
+
+	if (--v->count > 0)
+		goto out;
+
+	if (v != &desc->views) {
+		prev->next = v->next;
+		dead = v;
+	} else if (desc->views.next) {
+		/* promote an overflow entry into the embedded one */
+		dead = desc->views.next;
+		desc->views.start = dead->start;
+		desc->views.end = dead->end;
+		desc->views.count = dead->count;
+		desc->views.next = dead->next;
+	}
+	/* else, the last view is gone and the embedded entry stays empty */
+out:
+	spin_unlock(&desc->view_lock);
+	if (dead)
+		emp_kfree(dead);
+}
+
+/**
+ * emp_vmdesc_view_find_uncovered - is [@start, @end) still viewed through some vmr?
+ * @param desc vmdesc
+ * @param *start start of the range in vmdesc-relative base page coordinates
+ * @param *end end of the range, exclusive
+ *
+ * @retval true: the result is fine. [*start, *end) is not covered by any other
+ *               views. If the whole range is covered, *start == *end.
+ * @retval false: conservative -- the uncovered remainder may need multiple
+ *                ranges. The caller falls back to emp_vmdesc_view_is_covered()
+ *                on finer ranges, where the verdict is exact at block
+ *                granularity because no block straddles a view boundary.
+ *
+ * Relies on the view list being sorted by ascending start (then end): the walk
+ * consumes coverage left to right, and stops at the first view beginning at or
+ * after the range end.
+ */
+bool emp_vmdesc_view_find_uncovered(struct emp_vmdesc *desc, unsigned long *__start,
+			unsigned long *__end)
+{
+	struct emp_vmdesc_view *v;
+	unsigned long start = *__start, end = *__end;
+	bool fine = true;
+
+	spin_lock(&desc->view_lock);
+	for (v = &desc->views; v; v = v->next) {
+		if (unlikely(v->count == 0)) /* only for initial state */
+			continue;
+		if (v->end <= start)
+			continue;
+		if (v->start >= end)
+			break;	/* sorted by start: nothing later intersects */
+		if (v->start <= start && v->end >= end) {
+			/* fully covered */
+			*__start = 0;
+			*__end = 0;
+			goto out;
+		}
+		if (start < v->start && v->end < end) {
+			/* v splits the remainder in two */
+			fine = false;
+			goto out;
+		}
+
+		/* A one-sided overlap: reduce the bound v anchors, and only
+		 * that one. Updating both bounds at once would compute the gap
+		 * between v's own edges, which is inverted by construction --
+		 * a left overlap would return "fully covered" while the right
+		 * part of the range has no view at all. */
+		if (v->start <= start) {
+			/* left: v->end < end, or the full-cover case above
+			 * would have taken it */
+			start = v->end;
+			debug_assert(start < end);
+		} else {
+			/* right: v->start > start, or the left case would
+			 * have taken it. Sorted by start, every later view
+			 * begins at or beyond the new end. */
+			end = v->start;
+			debug_assert(start < end);
+			break;
+		}
+	}
+	*__start = start;
+	*__end = end;
+out:
+	spin_unlock(&desc->view_lock);
+	return fine;
+}
+
+/**
+ * emp_vmdesc_view_is_covered - does any live view intersect [@start, @end)?
+ * @param desc vmdesc
+ * @param start start of the range in vmdesc-relative base page coordinates
+ * @param end end of the range, exclusive
+ *
+ * @retval true: at least one live view intersects the range
+ * @retval false: no live view touches it
+ *
+ * The conservative fallback for emp_vmdesc_view_find_uncovered(): when the
+ * uncovered remainder cannot be represented as one range, the caller asks this
+ * about a smaller range and keeps whatever intersects. At block granularity
+ * the verdict is exact rather than conservative, because no block straddles a
+ * view boundary.
+ */
+bool emp_vmdesc_view_is_covered(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end)
+{
+	struct emp_vmdesc_view *v;
+	bool covered = false;
+
+	spin_lock(&desc->view_lock);
+	for (v = &desc->views; v; v = v->next) {
+		if (unlikely(v->count == 0)) /* only for initial state */
+			continue;
+		if (v->start >= end)
+			break;	/* sorted by start: nothing later intersects */
+		if (v->end > start) {
+			covered = true;
+			break;
+		}
+	}
+	spin_unlock(&desc->view_lock);
+	return covered;
+}
+
+/**
+ * emp_vmdesc_view_exit - release the view metadata of a dying vmdesc
+ * @param desc vmdesc
+ *
+ * The last close empties every interval, so this normally frees nothing.
+ */
+void emp_vmdesc_view_exit(struct emp_vmdesc *desc)
+{
+	struct emp_vmdesc_view *v, *next;
+
+	debug_assert(desc->views.count == 0);
+	v = desc->views.next;
+	desc->views.next = NULL;
+	while (v) {
+		next = v->next;
+		emp_kfree(v);
+		v = next;
+	}
+}
+#endif /* CONFIG_EMP_USER */
+
 struct emp_vmdesc *alloc_vmdesc(struct emp_vmdesc *prev)
 {
 	struct emp_vmdesc *desc;
@@ -1820,6 +2102,7 @@ struct emp_vmdesc *alloc_vmdesc(struct emp_vmdesc *prev)
 #ifdef CONFIG_EMP_USER
 	atomic_set(&desc->refcount, 1);
 	init_waitqueue_head(&desc->closing_wq);
+	emp_vmdesc_view_init(desc);
 #endif
 	return desc;
 }
@@ -1845,6 +2128,15 @@ int gpas_open(struct emp_vmr *vmr)
 		vmr->descs = NULL;
 		goto out;
 	}
+
+#ifdef CONFIG_EMP_USER
+	/* The first vmr of a new backing namespace. allocate_gpas() has just
+	 * set vm_base, so the view coordinates are known now. The embedded
+	 * entry is free, so this cannot fail and cannot allocate. */
+	emp_vmdesc_view_add(vmr->descs, vmr_view_start(vmr),
+					vmr_view_end(vmr), NULL);
+	debug_check_vmdesc_views(vmr->descs);
+#endif
 
 out:
 	return ret;
@@ -1875,9 +2167,13 @@ void COMPILER_DEBUG gpas_close(struct emp_vmr *vmr, bool do_unmap, bool must_wai
 	if (!vmr->descs)
 		return;
 
-	if (close_and_free_gpas(vmr, do_unmap) == 0)
+	if (close_and_free_gpas(vmr, do_unmap) == 0) {
 		/* No other vmr use the vm_desc. Free it */
+#ifdef CONFIG_EMP_USER
+		emp_vmdesc_view_exit(vmr->descs);
+#endif
 		emp_kfree(vmr->descs);
+	}
 
 	vmr->descs = NULL;
 	if (atomic_read(&vmr->gpas_closing) > 1)

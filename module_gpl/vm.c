@@ -1680,6 +1680,8 @@ static int split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 #ifdef CONFIG_EMP_USER
 	atomic_set(&desc->refcount, 1);
 	init_waitqueue_head(&desc->closing_wq);
+	/* the copy inherits neither the intervals nor the overflow entries */
+	emp_vmdesc_view_init(desc);
 #endif
 
 	desc->gpa_dir_alloc = emp_vzalloc(desc->gpa_dir_alloc_size);
@@ -1777,6 +1779,17 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	if (vm_shared) {
 		new_vmr->descs = prev_vmr->descs;
 		atomic_inc(&prev_vmr->descs->refcount);
+		/* One lifetime reference and one view interval unit per vmr.
+		 * A shared fork reproduces the parent's interval exactly, so an
+		 * identical entry is already there and nothing is allocated. */
+		if (unlikely(emp_vmdesc_view_add(new_vmr->descs,
+						vmr_view_start(new_vmr),
+						vmr_view_end(new_vmr), NULL)))
+			printk(KERN_ERR "%s: ERROR: no view entry to share. "
+					"vmr: [0x%lx, 0x%lx) vm_base: 0x%lx\n",
+					__func__, new_vmr->vm_start,
+					new_vmr->vm_end,
+					new_vmr->descs->vm_base);
 		dup_list_add(new_vmr, prev_vmr, vm_shared);
 		new_vmdesc = false;
 		dup_dir = false;
@@ -1797,6 +1810,8 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		(unsigned long) new_vmr, vm_shared, vm_wipeonfork);
 
 	if (dup_vmdesc(new_vmr, prev_vmr, new_vmdesc, dup_dir)) {
+		/* If vm_shared, dup_vmdesc() do nothing.
+		 * We don't need to handle errors for vm_shared. */
 		new_vma->vm_private_data = NULL;
 		emp_vmr_release(new_vmr);
 		new_vmr->host_vma = NULL;
@@ -1804,6 +1819,8 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		emp_kfree(new_vmr);
 		return NULL;
 	}
+
+	debug_check_vmdesc_views(new_vmr->descs);
 
 	return new_vmr;
 }
@@ -1842,9 +1859,20 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
 static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 				struct vm_area_struct *new_vma)
 {
+	/* the interval prev_vmr had before the split, in the coordinates its
+	 * vmdesc uses before split_set_gpadesc_regions() rebases vm_base */
+	unsigned long prev_start = vmr_view_start(prev_vmr);
+	unsigned long prev_end = vmr_view_end(prev_vmr);
+	struct emp_vmdesc_view *node;
+
 	debug_assert(prev_vmr->split_addr = new_vmr->split_addr);
 	debug_assert(new_vmr->split_addr == new_vma->vm_start
 			|| new_vmr->split_addr == new_vma->vm_end);
+
+	/* A split is the only operation which can need a new interval shape.
+	 * Allocate the candidate before anything irreversible happens; it is
+	 * released again below if an identical interval turns up. */
+	node = emp_kzalloc(sizeof(struct emp_vmdesc_view), GFP_KERNEL);
 
 	__copy_vma_info(new_vmr, new_vma);
 
@@ -1870,6 +1898,27 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	split_vmdesc(new_vmr, prev_vmr);
 	split_set_gpadesc_regions(prev_vmr);
 	split_set_gpadesc_regions(new_vmr);
+
+	/* INTERIM. The split still gives each half its own vmdesc and rebases
+	 * both, so prev's view has to be moved into the new coordinates of its
+	 * own namespace, and the new half registers the first view of its copy.
+	 * Step 4 shares one vmdesc across the split and deletes the second
+	 * allocation, the rebase, and this move with it: what remains there is
+	 * one interval partitioned into two on a single namespace. */
+	emp_vmdesc_view_del(prev_vmr->descs, prev_start, prev_end);
+	if (unlikely(emp_vmdesc_view_add(prev_vmr->descs,
+					vmr_view_start(prev_vmr),
+					vmr_view_end(prev_vmr), &node)))
+		printk(KERN_ERR "%s: ERROR: no view entry for the shrinking "
+				"half. vmr: [0x%lx, 0x%lx) vm_base: 0x%lx\n",
+				__func__, prev_vmr->vm_start, prev_vmr->vm_end,
+				prev_vmr->descs->vm_base);
+	if (likely(new_vmr->descs))
+		emp_vmdesc_view_add(new_vmr->descs, vmr_view_start(new_vmr),
+					vmr_view_end(new_vmr), NULL);
+	if (node)
+		emp_kfree(node);
+	debug_check_vmdesc_views(prev_vmr->descs);
 
 	/* both halves of the split keep the fork policy of the original range */
 	new_vmr->fork_policy = prev_vmr->fork_policy;
