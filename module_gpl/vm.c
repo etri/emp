@@ -1784,7 +1784,7 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		 * identical entry is already there and nothing is allocated. */
 		if (unlikely(emp_vmdesc_view_add(new_vmr->descs,
 						vmr_view_start(new_vmr),
-						vmr_view_end(new_vmr), NULL)))
+						vmr_view_end(new_vmr), true)))
 			printk(KERN_ERR "%s: ERROR: no view entry to share. "
 					"vmr: [0x%lx, 0x%lx) vm_base: 0x%lx\n",
 					__func__, new_vmr->vm_start,
@@ -1863,16 +1863,10 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	 * vmdesc uses before split_set_gpadesc_regions() rebases vm_base */
 	unsigned long prev_start = vmr_view_start(prev_vmr);
 	unsigned long prev_end = vmr_view_end(prev_vmr);
-	struct emp_vmdesc_view *node;
 
 	debug_assert(prev_vmr->split_addr = new_vmr->split_addr);
 	debug_assert(new_vmr->split_addr == new_vma->vm_start
 			|| new_vmr->split_addr == new_vma->vm_end);
-
-	/* A split is the only operation which can need a new interval shape.
-	 * Allocate the candidate before anything irreversible happens; it is
-	 * released again below if an identical interval turns up. */
-	node = emp_kzalloc(sizeof(struct emp_vmdesc_view), GFP_KERNEL);
 
 	__copy_vma_info(new_vmr, new_vma);
 
@@ -1908,16 +1902,15 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	emp_vmdesc_view_del(prev_vmr->descs, prev_start, prev_end);
 	if (unlikely(emp_vmdesc_view_add(prev_vmr->descs,
 					vmr_view_start(prev_vmr),
-					vmr_view_end(prev_vmr), &node)))
+					vmr_view_end(prev_vmr),
+					false)))
 		printk(KERN_ERR "%s: ERROR: no view entry for the shrinking "
 				"half. vmr: [0x%lx, 0x%lx) vm_base: 0x%lx\n",
 				__func__, prev_vmr->vm_start, prev_vmr->vm_end,
 				prev_vmr->descs->vm_base);
 	if (likely(new_vmr->descs))
 		emp_vmdesc_view_add(new_vmr->descs, vmr_view_start(new_vmr),
-					vmr_view_end(new_vmr), NULL);
-	if (node)
-		emp_kfree(node);
+					vmr_view_end(new_vmr), true);
 	debug_check_vmdesc_views(prev_vmr->descs);
 
 	/* both halves of the split keep the fork policy of the original range */

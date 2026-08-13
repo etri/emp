@@ -323,9 +323,11 @@ struct emp_vmdesc;
 struct emp_vmdesc_view;
 void emp_vmdesc_view_init(struct emp_vmdesc *desc);
 int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
-			unsigned long end, struct emp_vmdesc_view **node);
+			unsigned long end, bool first_or_shared);
 void emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
 			unsigned long end);
+int emp_vmdesc_view_split(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end, unsigned long mid);
 bool emp_vmdesc_view_is_covered(struct emp_vmdesc *desc, unsigned long start,
 			unsigned long end);
 bool emp_vmdesc_view_find_uncovered(struct emp_vmdesc *desc, unsigned long *__start,

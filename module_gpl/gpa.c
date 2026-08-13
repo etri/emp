@@ -1557,16 +1557,29 @@ __unlock_max_block(struct emp_gpa *max_head, unsigned long num)
 #endif
 }
 
-/* desc_refcnt: after decrement */
+/* desc_refcnt: after decrement
+ * [idx_start, idx_end): the WALK range -- the closing vmr's view, where its
+ *                       mapping records must be stripped; clipped to the
+ *                       region on the region's own block grid
+ * [unc_start, unc_end): the RELEASE range -- subblocks no surviving view
+ *                       covers; empty means strip only
+ * perblock_check:       the uncovered remainder was not one range; decide
+ *                       release per block by querying the views
+ */
 static unsigned long
 free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 		struct emp_gpa **gpa_dir, struct gpadesc_region *region,
-		int vm_refcnt, bool do_unmap, struct emp_vmr *next_vmr_shared)
+		int vm_refcnt, bool do_unmap, struct emp_vmr *next_vmr_shared,
+		unsigned long idx_start, unsigned long idx_end,
+		unsigned long unc_start, unsigned long unc_end,
+		bool perblock_check)
 {
 	struct emp_mm *emm = vmr->emm;
 	unsigned long num_allocated = 0;
 	struct emp_gpa *max_head;
-	unsigned long i, step;
+	unsigned long i, step, start, end;
+	int put_refcnt;
+	int sb_order = bvma_subblock_order(emm);
 	int desc_order = region->block_order - bvma_subblock_order(emm);
 	struct kmem_cache *cachep = get_gpadesc_alloc(emm, desc_order);
 	bool may_dirty = false;
@@ -1584,12 +1597,52 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 	}
 
 	step = 1UL << desc_order;
+	/* Clip the walk to [idx_start, idx_end) on this region's own block
+	 * grid: blocks align from region->start (block_aligned_start for the
+	 * main region), not from index zero, so an absolute mask could start
+	 * the scan mid-group and mistake a member descriptor for a head.
+	 * Rounding OUT keeps a block shared with a neighboring view visited:
+	 * nothing is released for it while a view covers it, and only this
+	 * vmr's own mapping is removed. */
+	if (idx_end <= region->start || idx_start >= region->end)
+		return 0;
+	start = idx_start > region->start
+		? region->start + ((idx_start - region->start) & ~(step - 1))
+		: region->start;
+	end = idx_end < region->end
+		? region->start + (((idx_end - region->start) + step - 1)
+					& ~(step - 1))
+		: region->end;
+
 	// Don't use for_all_gpa_heads_range() here. desc_order may be different
 	// from gpa_block_order(head) due to elastic block.
-	for (i = region->start; i < region->end; i += step) {
+	for (i = start; i < end; i += step) {
 		if (!gpa_dir[i])
 			continue;
 		max_head = gpa_dir[i];
+
+		/* Every block in the walk is processed -- the strip of this
+		 * vmr's mapping records is unconditional. Coverage decides
+		 * only whether the slots may be RELEASED: __put_max_block()
+		 * releases when its refcnt argument is zero. */
+		put_refcnt = vm_refcnt;
+#ifdef CONFIG_EMP_USER
+		if (vm_refcnt > 0) {
+			if (perblock_check) {
+				/* view coordinates are vmdesc-relative pages */
+				if (!emp_vmdesc_view_is_covered(vmr->descs,
+							i << sb_order,
+							(i + step) << sb_order))
+					put_refcnt = 0;
+			} else if (i >= unc_start && i + step <= unc_end) {
+				/* wholly inside the uncovered remainder; a
+				 * block straddling its edge stays kept, which
+				 * is conservative and cleaned by a later or
+				 * the final close */
+				put_refcnt = 0;
+			}
+		}
+#endif
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
 		gpadesc_alloc_at_insert(&max_head->alloc_at, table);
 #endif
@@ -1622,7 +1675,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 			}
 		}
 #endif
-		if (__put_max_block(emm, cpu, vmr, vm_refcnt, may_dirty,
+		if (__put_max_block(emm, cpu, vmr, put_refcnt, may_dirty,
 					next_vmr_shared, max_head, step,
 					gpa_dir, i) > 0) {
 			__unlock_max_block(max_head, step);
@@ -1664,6 +1717,9 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	struct emp_vmdesc *desc = vmr->descs;
 	int vm_refcnt;
 	struct emp_vmr *next_vmr_shared = NULL;
+	unsigned long idx_start = 0, idx_end = desc->gpa_len;
+	unsigned long unc_start = 0, unc_end = 0; /* empty: release nothing */
+	bool perblock_check = false;
 
 	if (unlikely(!desc->gpa_dir_alloc))
 		return 0;
@@ -1671,7 +1727,15 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 #ifdef CONFIG_EMP_USER
 	if (atomic_cmpxchg(&desc->is_closing, 0, 1) != 0)
 		/* The other thread is closing this vmdesc. Wait for it. */
-		wait_event_interruptible(desc->closing_wq,
+		/* Uninterruptibly: two vmrs sharing a vmdesc are usually torn
+		 * down by a dying process group, so every closer has a fatal
+		 * signal pending; an interruptible wait returns at once and
+		 * both closers walk the one gpa_dir together, one of them
+		 * freeing blocks the other still maps. It cannot hang: a
+		 * waiter still holds a vmr referencing this vmdesc, so the
+		 * holder always takes the vm_refcnt > 0 path, which clears
+		 * is_closing and wakes this queue. */
+		wait_event(desc->closing_wq,
 				atomic_cmpxchg(&desc->is_closing, 0, 1) == 0);
 #endif
 	cpu = emp_this_cpu_ptr(emm->pcpus);
@@ -1692,10 +1756,43 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	emp_vmdesc_view_del(desc, vmr_view_start(vmr), vmr_view_end(vmr));
 	vm_refcnt = atomic_dec_return(&desc->refcount);
 	if (vm_refcnt > 0) { // vm_refcnt > 0
+		bool fine;
+		unsigned long addr_start, addr_end;
 		spin_lock(&emm->dup_list_lock);
-		next_vmr_shared = list_next_entry(vmr, dup_shared);
+		if (!list_empty(&vmr->dup_shared))
+			next_vmr_shared = list_next_entry(vmr, dup_shared);
 		spin_unlock(&emm->dup_list_lock);
 		debug_assert(next_vmr_shared != vmr);
+
+		/* The WALK range and the RELEASE range are different things.
+		 *
+		 * The walk must cover this vmr's whole view: the vmr's own
+		 * mapped-pmd entries and lp->vmr_id ownership live on blocks
+		 * in that range and must be stripped before the vmr is freed,
+		 * whatever the coverage says -- a covered block skipped here
+		 * keeps a pointer to a vmr about to be released, and the next
+		 * consumer of that stale id (els, reclaim owner lookups)
+		 * dereferences emm->vmrs[id] after it went NULL.
+		 *
+		 * Release is decided per block, from the surviving views:
+		 * inside the uncovered remainder when one range describes it,
+		 * or by a per-block coverage query when it does not. Fully
+		 * covered means release nothing -- but still walk. */
+		idx_start = vmr_view_start(vmr) >> desc->subblock_order;
+		idx_end = (vmr_view_end(vmr) + bvma_subblock_size(emm) - 1)
+						>> desc->subblock_order;
+
+		addr_start = vmr_view_start(vmr);
+		addr_end = vmr_view_end(vmr);
+		fine = emp_vmdesc_view_find_uncovered(desc, &addr_start, &addr_end);
+		if (fine && addr_start < addr_end) {
+			/* release only whole subblocks inside the uncovered
+			 * range: round inward */
+			unc_start = (addr_start + bvma_subblock_size(emm) - 1)
+						>> desc->subblock_order;
+			unc_end = addr_end >> desc->subblock_order;
+		} else if (!fine)
+			perblock_check = true;
 	}
 #else /* !CONFIG_EMP_USER */
 	vm_refcnt = 0;
@@ -1719,11 +1816,15 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	for (r = 0; r < desc->num_region; r++)
 		num_allocated += free_gpa_dir_region(vmr, cpu, desc->gpa_dir,
 						&desc->regions[r], vm_refcnt,
-						do_unmap, next_vmr_shared);
+						do_unmap, next_vmr_shared,
+						idx_start, idx_end,
+						unc_start, unc_end,
+						perblock_check);
 
 	if (do_unmap)
 		kernel_tlb_finish_mmu(&vmr->close_tlb,
 					vmr->vm_start, vmr->vm_end);
+
 #ifdef CONFIG_EMP_USER
 	dup_list_del(vmr);
 #endif
@@ -1741,7 +1842,11 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	if (vm_refcnt > 0) {
 		debug_assert(atomic_read(&desc->is_closing) == 1);
 		atomic_set(&desc->is_closing, 0);
-		wake_up_interruptible(&desc->closing_wq);
+		/* wake_up(), not wake_up_interruptible(): the waiter sleeps
+		 * in TASK_UNINTERRUPTIBLE, which an interruptible wake does
+		 * not touch -- it would sleep forever on an already-true
+		 * condition */
+		wake_up(&desc->closing_wq);
 		return vm_refcnt;
 	}
 #endif
@@ -1833,7 +1938,7 @@ void emp_vmdesc_view_init(struct emp_vmdesc *desc)
 }
 
 /**
- * emp_vmdesc_view_add - add one vmr view of [@start, @end) to @desc
+ * __emp_vmdesc_view_add - add one vmr view of [@start, @end) to @desc
  * @param desc vmdesc
  * @param start start of the view in vmdesc-relative base page coordinates
  * @param end end of the view, exclusive
@@ -1848,21 +1953,19 @@ void emp_vmdesc_view_init(struct emp_vmdesc *desc)
  * The embedded entry is empty only while the whole list is empty, so an empty
  * embedded entry is enough to detect the first-vmr case.
  */
-int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
+static int __emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
 			unsigned long end, struct emp_vmdesc_view **node)
 {
 	struct emp_vmdesc_view *v, *prev, *n;
-	int ret = 0;
 
 	debug_assert(start < end);
 
-	spin_lock(&desc->view_lock);
 	if (desc->views.count == 0) {
 		debug_assert(desc->views.next == NULL);
 		desc->views.start = start;
 		desc->views.end = end;
 		desc->views.count = 1;
-		goto out;
+		return 0;
 	}
 
 	/* The list is kept sorted: ascending start, then ascending end among
@@ -1877,17 +1980,14 @@ int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
 	for (v = &desc->views; v; prev = v, v = v->next) {
 		if (v->start == start && v->end == end) {
 			v->count++;
-			goto out;
+			return 0;
 		}
 		if (v->start > start
 				|| (v->start == start && v->end > end))
 			break;
 	}
 
-	if (unlikely(node == NULL || *node == NULL)) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	debug_assert(node != NULL && *node != NULL);
 
 	n = *node;
 	*node = NULL;
@@ -1911,13 +2011,31 @@ int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
 		n->next = v;		/* NULL when appending at the tail */
 		prev->next = n;
 	}
-out:
+	return 0;
+}
+
+int emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end, bool first_or_shared)
+{
+	int ret;
+	struct emp_vmdesc_view *node = NULL;
+
+	if (!first_or_shared) {
+		node = emp_kzalloc(sizeof(struct emp_vmdesc_view), GFP_KERNEL);
+		if (node == NULL)
+			return -ENOMEM;
+	}
+
+	spin_lock(&desc->view_lock);
+	ret = __emp_vmdesc_view_add(desc, start, end, &node);
 	spin_unlock(&desc->view_lock);
+	if (node)
+		emp_kfree(node);
 	return ret;
 }
 
 /**
- * emp_vmdesc_view_del - remove one vmr view of [@start, @end) from @desc
+ * __emp_vmdesc_view_del - remove one vmr view of [@start, @end) from @desc
  * @param desc vmdesc
  * @param start start of the view in vmdesc-relative base page coordinates
  * @param end end of the view, exclusive
@@ -1926,25 +2044,24 @@ out:
  * one of them is promoted into it and the freed node is released after the lock
  * is dropped.
  */
-void emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
+static struct emp_vmdesc_view *
+__emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
 			unsigned long end)
 {
 	struct emp_vmdesc_view *v, *prev = NULL, *dead = NULL;
 
-	spin_lock(&desc->view_lock);
 	for (v = &desc->views; v; prev = v, v = v->next)
 		if (v->count > 0 && v->start == start && v->end == end)
 			break;
 
 	if (unlikely(v == NULL)) {
-		spin_unlock(&desc->view_lock);
 		printk(KERN_ERR "%s: ERROR: no view entry for [0x%lx, 0x%lx)\n",
 				__func__, start, end);
-		return;
+		return NULL;
 	}
 
 	if (--v->count > 0)
-		goto out;
+		return NULL;
 
 	if (v != &desc->views) {
 		prev->next = v->next;
@@ -1958,10 +2075,79 @@ void emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
 		desc->views.next = dead->next;
 	}
 	/* else, the last view is gone and the embedded entry stays empty */
-out:
+	return dead;
+}
+
+void emp_vmdesc_view_del(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end)
+{
+	struct emp_vmdesc_view *dead;
+
+	spin_lock(&desc->view_lock);
+	dead = __emp_vmdesc_view_del(desc, start, end);
+ 	spin_unlock(&desc->view_lock);
+ 	if (dead)
+ 		emp_kfree(dead);
+ }
+
+/**
+ * emp_vmdesc_view_split - partition one vmr view of [@start, @end) at @mid
+ * @param desc vmdesc
+ * @param start start of the view being split
+ * @param end end of the view being split, exclusive
+ * @param mid split boundary, start < mid < end
+ *
+ * @retval 0: success
+ * @retval -ENOMEM: a new interval shape was required but its candidate entry
+ *                  was empty. The view metadata is left consistent, but the
+ *                  missing half's coverage is lost.
+ *
+ * One interval count unit becomes one unit of [start, mid) and one of
+ * [mid, end) without releasing the lock, so a close running in another mm sees
+ * either the whole interval or both halves and never the boundary as
+ * uncovered. The union of coverage is identical before and after.
+ */
+int emp_vmdesc_view_split(struct emp_vmdesc *desc, unsigned long start,
+			unsigned long end, unsigned long mid)
+{
+	struct emp_vmdesc_view *dead, *n1, *n2;
+	int ret;
+
+	debug_assert(start < mid && mid < end);
+
+	/* One interval unit is removed and two are added, but TWO new nodes can
+	 * be needed -- not one. The deletion frees a node only when the entry
+	 * it decremented reached count 0, so the removed interval may not actually
+	 * remove the corresponding entry.
+	 */
+	n1 = emp_kzalloc(sizeof(struct emp_vmdesc_view), GFP_KERNEL);
+	n2 = emp_kzalloc(sizeof(struct emp_vmdesc_view), GFP_KERNEL);
+	if (n1 == NULL || n2 == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	spin_lock(&desc->view_lock);
+	dead = __emp_vmdesc_view_del(desc, start, end);
+	if (dead != NULL) { /* prefer to use earlier allocation */
+		struct emp_vmdesc_view *n = n2;
+		n2 = n1;
+		n1 = dead;
+		dead = n;
+	}
+	ret = __emp_vmdesc_view_add(desc, start, mid, &n1);
+	if (ret == 0)
+		ret = __emp_vmdesc_view_add(desc, mid, end, &n2);
 	spin_unlock(&desc->view_lock);
+
 	if (dead)
 		emp_kfree(dead);
+out:
+	if (n1)
+		emp_kfree(n1);
+	if (n2)
+		emp_kfree(n2);
+	return ret;
 }
 
 /**
@@ -2156,8 +2342,11 @@ void COMPILER_DEBUG gpas_close(struct emp_vmr *vmr, bool do_unmap, bool must_wai
 	if (atomic_fetch_inc(&vmr->gpas_closing) > 0) {
 		/* other thread have started closing gpas. */
 		if (must_wait)
-			wait_event_interruptible(vmr->gpas_close_wq,
-							vmr->descs == NULL);
+			/* uninterruptibly, for the reason in
+			 * close_and_free_gpas(): returning early here lets
+			 * emp_vma_close() free this vmr while another thread
+			 * is still inside close_and_free_gpas() using it */
+			wait_event(vmr->gpas_close_wq, vmr->descs == NULL);
 		else
 			/* I will not wait. Restore the value. */
 			atomic_dec(&vmr->gpas_closing);
@@ -2180,7 +2369,8 @@ void COMPILER_DEBUG gpas_close(struct emp_vmr *vmr, bool do_unmap, bool must_wai
 		/* Other thread is waiting for me.
 		 * Note that we do not decrement gpas_closing.
 		 * It marks that the gpas are closed. */
-		wake_up_interruptible(&vmr->gpas_close_wq);
+		/* uninterruptible waiter; see close_and_free_gpas() */
+		wake_up(&vmr->gpas_close_wq);
 
 #ifdef CONFIG_EMP_BLOCKDEV
 	/* NOTE: io_schedule() should be called after all locks have been released.
