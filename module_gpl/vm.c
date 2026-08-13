@@ -566,19 +566,6 @@ static void emp_vma_close(struct vm_area_struct *vma)
 }
 
 #ifdef CONFIG_EMP_USER
-#define set_gpa_dir(vmr, gpa_dir, idx, new) ({ \
-	struct emp_gpa *____g = (struct emp_gpa *) atomic64_cmpxchg( \
-						(atomic64_t *) &((gpa_dir)[idx]), \
-						(s64) NULL, (s64) (new)); \
-	if (unlikely(____g != NULL)) \
-		dprintk_ratelimited(KERN_ERR "%s(%s:%d): race at set_gpa_dir() " \
-				"is detected. vmr: %d index: 0x%lx " \
-				"new: 0x%016lx prev: 0x%016lx\n", \
-				__func__, __FILE__, __LINE__,(vmr)->id, (idx), \
-				(unsigned long) (new), (unsigned long) ____g); \
-	____g; \
-})
-
 #define replace_gpa_dir(vmr, gpa_dir, idx, old, new) do { \
 	struct emp_gpa *____prev, *____old_head; \
 	____old_head = emp_get_block_head(old); \
@@ -754,299 +741,6 @@ reduce_fail:
 	}
 
 	return false;
-}
-
-static inline void split_sort_boundaries(unsigned long *boundary, int num_boundary)
-{
-	int i, j, min_idx;
-	unsigned long min_val;
-
-	for (i = 0; i < num_boundary; i++) {
-		min_val = boundary[i];
-		min_idx = i;
-		for (j = i + 1; j < num_boundary; j++) {
-			if (min_val > boundary[j]) {
-				min_val = boundary[j];
-				min_idx = j;
-			}
-		}
-
-		if (min_idx == i)
-			continue;
-
-		// swap two values
-		boundary[min_idx] = boundary[i];
-		boundary[i] = min_val;
-	}
-}
-
-/* sort gpadesc regions by its range size */
-static inline void split_sort_regions(struct gpadesc_region *regions, int num_region)
-{
-	int i, j, max_idx;
-	unsigned long val, max_val;
-	struct gpadesc_region tmp;
-
-	for (i = 0; i < num_region; i++) {
-		max_val = regions[i].end - regions[i].start;
-		max_idx = i;
-		for (j = i + 1; j < num_region; j++) {
-			val = regions[j].end - regions[j].start;
-			if (max_val < val) {
-				max_val = val;
-				max_idx = j;
-			}
-		}
-
-		if (max_idx == i)
-			continue;
-
-		memcpy(&tmp, &regions[i], sizeof(struct gpadesc_region));
-		memcpy(&regions[i], &regions[max_idx], sizeof(struct gpadesc_region));
-		memcpy(&regions[max_idx], &tmp, sizeof(struct gpadesc_region));
-	}
-}
-
-#ifdef CONFIG_EMP_VM
-static unsigned long split_get_num_low_memory_pages(struct emp_mm *e)
-{
-	int low_memory_pages = LOW_MEMORY_REGION_SIZE >> PAGE_SHIFT;
-	debug_assert(e->ekvm.kvm != NULL);
-	if (bvma_block_size(e) > low_memory_pages)
-		return bvma_block_size(e);
-	else
-		return low_memory_pages;
-}
-#endif
-
-static void
-split_set_gpadesc_regions(struct emp_vmr *vmr)
-{
-#if defined(CONFIG_EMP_VM) || defined(CONFIG_EMP_BLOCK)
-	struct emp_mm *emm = vmr->emm;
-#endif
-	struct emp_vmdesc *desc = vmr->descs;
-	struct gpadesc_region *regions = desc->regions;
-	unsigned long gpa_len = desc->gpa_len;
-	unsigned long gpa_len_vm_base, gpa_offset;
-	unsigned long boundary[GPADESC_MAX_REGION];
-	int num_boundary, i, num_region;
-	u8 b_order, sb_order;
-	unsigned long block_aligned_start, block_aligned_end;
-	unsigned long vpn_start, vpn_end, vpn_base, index_start;
-#ifdef CONFIG_EMP_USER
-	bool partial_at_head, partial_at_tail;
-#endif
-#ifdef CONFIG_EMP_VM
-	u8 low_order;
-	unsigned long low_memory_end;
-#endif
-	unsigned long vm_start, vm_end, vm_base;
-	unsigned long sb_at_head; // number of subblocks which are not block-aligned at head
-	unsigned long sb_at_tail; // number of subblocks which are not block-aligned at tail
-	unsigned long va_sb_order;
-
-	/* start index in gpa_dir */
-	vpn_start = vmr->vm_start >> PAGE_SHIFT;
-	vpn_end = vmr->vm_end >> PAGE_SHIFT;
-	vpn_base = vmr->descs->vm_base >> PAGE_SHIFT;
-	index_start = (vpn_start - vpn_base) >> bvma_subblock_order(emm);
-
-	va_sb_order = bvma_va_subblock_order(emm);
-
-	vm_start = VA_ROUND_DOWN_ORDER(vmr->vm_start, va_sb_order);
-	vm_end = VA_ROUND_UP_ORDER(vmr->vm_end, va_sb_order);
-
-	vm_base = VA_ROUND_DOWN_ORDER(vmr->descs->vm_base, va_sb_order);
-
-	/* number of subblocks in the first partial block.
-	 * If vm_start is aligned in block size, this is 0.
-	 * If vm_end - vm_start <= block size, this counts the number of subblocks
-	 *					in [vm_start, block aligned vm_end]
-	 */
-	sb_at_head = (vm_start >> va_sb_order) & bvma_sib_mask(emm);
-	sb_at_head = sb_at_head > 0 ? bvma_sib_size(emm) - sb_at_head : 0;
-
-	/* number of subblocks in the last partial block.
-	 * If vm_end is aligned in block size, this is 0.
-	 * If vm_end - vm_start <= block size, this counts the number of subblocks
-	 * 					in [block aligned vm_start, vm_end]
-	 */
-	sb_at_tail = (vm_end >> va_sb_order) & bvma_sib_mask(emm);
-
-	/* For partial subblock, its block order should be same with subblock
-	 * order. If there is no partial block but partial subblock, we split
-	 * the block that the partial subblocks belong to.
-	 * The partial subblocks exist when vmr->vm_start/end != vm_start/end.
-	 */
-	if (sb_at_head == 0 && vmr->vm_start != vm_start)
-		sb_at_head = bvma_sib_size(emm);
-	if (sb_at_tail == 0 && vmr->vm_end != vm_end)
-		sb_at_tail = bvma_sib_size(emm);
-
-	gpa_len = (vm_end - vm_start) >> va_sb_order;
-	gpa_len_vm_base = (vm_end - vm_base) >> va_sb_order;
-	gpa_offset = gpa_len_vm_base - gpa_len;
-
-	might_sleep();
-
-	/********************************************************/
-	/* set gpadesc region					*/
-	/********************************************************/
-
-	/* init region */
-	num_region = vmr->descs->num_region;
-	for (i = 0; i < num_region; i++) {
-		struct gpadesc_region *r = &regions[i];
-		memset(r, 0, sizeof(struct gpadesc_region));
-	}
-
-	b_order = bvma_block_order(emm);
-	sb_order = bvma_subblock_order(emm);
-
-#ifdef CONFIG_EMP_VM
-	low_order = (u8) LOW_MEMORY_MAX_ORDER;
-
-	/* Set low memory end */
-	if (emm->ekvm.kvm && vmr->id == 0) {
-		/* TODO: how can we know GFN of vm_start?
-		 * low memory region is the first 2MB of VM, and we need to
-		 * restrict the maximum order of the region. Unfortunately, we
-		 * only know HVA range here. Thus, we use a heuristic: if vmr_id
-		 * is 0, it is the first memory region (numa node) and its GFN
-		 * is started from 0.
-		 * We need to revise this. For example, add an IOCTL and let
-		 * EMP know the GFN of each memory region (numa node) before VM
-		 * starts.
-		 */
-		low_memory_end = split_get_num_low_memory_pages(emm) >> sb_order;
-	} else
-		low_memory_end = 0;
-#endif
-
-	/* gather information */
-#ifdef CONFIG_EMP_USER
-	partial_at_head = vmr->vm_start != vm_start ? true : false;
-	partial_at_tail = vmr->vm_end != vm_end ? true : false;
-#endif
-	block_aligned_start = sb_at_head;
-	block_aligned_end = sb_at_tail < gpa_len ? gpa_len - sb_at_tail : 0;
-
-	/* add boundaries */
-	num_boundary = 0;
-#ifdef CONFIG_EMP_VM
-	if (low_memory_end > 0)
-		boundary[num_boundary++] = low_memory_end;
-#endif
-
-#ifdef CONFIG_EMP_USER
-	if (partial_at_head && gpa_len > 0)
-		boundary[num_boundary++] = 1;
-
-	// partial_at_tail makes new boundary only if gpa_len > 1
-	if (partial_at_tail && gpa_len > 1)
-		boundary[num_boundary++] = gpa_len - 1;
-#endif
-
-	// if gpa_len < num_subblock_in_block,
-	// sb_at_head and sb_at_tail is larger than gpa_len,
-	// and no new boundaries are made.
-	// See the comment at allocate_gpas()
-	if (sb_at_head > 0 && sb_at_head < gpa_len)
-		boundary[num_boundary++] = block_aligned_start;
-
-	if (sb_at_tail > 0 && sb_at_tail < gpa_len)
-		boundary[num_boundary++] = block_aligned_end;
-
-	boundary[num_boundary++] = gpa_len;
-
-	/* sort boundaries */
-	split_sort_boundaries(boundary, num_boundary);
-
-	num_region = 0;
-	for (i = 0; i < num_boundary; i++) {
-		struct gpadesc_region *curr;
-		struct gpadesc_region *prev;
-		u8 order;
-		curr = &regions[num_region];
-		prev = num_region > 0 ? &regions[num_region - 1] : NULL;
-
-		// skip duplicated boundaries
-		if (prev && prev->end == boundary[i])
-			continue;
-
-		curr->start = prev ? prev->end : 0;
-		curr->end = boundary[i];
-		// if gpa_len < num_subblock_in_block,
-		// block_aligned_start > gpa_len and block_aligned_end < gpa_len.
-		// Thus, always fall into the first condition.
-		order = b_order;
-		if ((curr->end <= block_aligned_start
-				|| curr->start >= block_aligned_end)
-					&& order > sb_order)
-			order = sb_order;
-
-#ifdef CONFIG_EMP_VM
-		if (curr->end <= low_memory_end && order > low_order)
-			order = low_order;
-#endif
-
-		curr->block_order = order;
-
-#ifdef CONFIG_EMP_VM
-		curr->lowmem_block = curr->end <= low_memory_end
-						? true : false;
-#endif
-#ifdef CONFIG_EMP_USER
-		if (unlikely(partial_at_head && curr->end <= 1))
-			curr->partial_map = true;
-		else if (unlikely(partial_at_tail && curr->start >= gpa_len - 1))
-			curr->partial_map = true;
-		else
-			curr->partial_map = false;
-#endif
-
-		num_region++;
-	}
-
-	/* sort regions by its range (end - start) */
-	split_sort_regions(regions, num_region);
-
-	/* set desc */
-	desc->num_region = num_region;
-	desc->gpa_dir = &desc->gpa_dir[index_start];
-	desc->gpa_len = gpa_len;
-	desc->vm_base = vm_start;
-	desc->block_aligned_start = block_aligned_start;
-
-	for (i = 0; i < gpa_len; i++) {
-		if (desc->gpa_dir[i] && desc->gpa_dir[i]->local_page)
-			desc->gpa_dir[i]->local_page->gpa_index = i;
-	}
-
-#ifdef CONFIG_EMP_DEBUG
-	for (i = 0; i < num_region; i++) {
-		struct gpadesc_region *r = &regions[i];
-		printk(KERN_INFO "%s: emm(%d) vmr(%d) region(%d) "
-					"start: %ld end: %ld "
-					"block_order: %d lowmem: %d partial: %d\n",
-					__func__,
-					emm->id, vmr->id, i,
-					r->start, r->end,
-					r->block_order,
-#ifdef CONFIG_EMP_VM
-					r->lowmem_block ? 1 : 0,
-#else
-					-1,
-#endif
-#ifdef CONFIG_EMP_USER
-					r->partial_map ? 1 : 0
-#else
-					-1
-#endif
-					);
-	}
-#endif
 }
 
 static void split_update_pte(struct vm_area_struct *vma, struct page *page,
@@ -1375,7 +1069,6 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
 	struct emp_mm *emm = new_vmr->emm;
 	struct mm_struct *new_mm = new_vmr->host_mm;
-	struct emp_vmdesc *desc = new_vmr->descs;
 	unsigned long head_idx, idx, next_head_idx;
 	struct emp_gpa *gpa, *head;
 	struct emp_gpa *front_head, *back_head;
@@ -1557,21 +1250,9 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			}
 		}
 
-		idx = head_idx;
-		for_each_gpas(gpa, head) {
-			if (unlikely(idx < index_start)) {
-				idx++;
-				continue;
-			}
-
-			if (unlikely(idx >= index_end))
-				break;
-
-			/* gpa_dir is initialized with zeros by emp_vzalloc(). */
-			set_gpa_dir(new_vmr, desc->gpa_dir, idx, gpa);
-			debug_assert(new_vmr->descs->gpa_dir[idx] == gpa);
-			idx++;
-		}
+		/* Both halves view one namespace, so there is no directory to
+		 * populate and no gpa reference to take: the slots the new vmr
+		 * views are the slots which are already there. */
 
 		if (INIT_BLOCK(head))
 			goto next_head;
@@ -1649,53 +1330,22 @@ next_head:
 		emp_unlock_block(head);
 		head_idx = next_head_idx;
 	}
-
-	// clear prev_vmr->desc->gpa_dir[] which are not included in prev_vmr
-	for (idx = 0; idx < desc->gpa_len; idx++) {
-		if (unlikely(idx < prev_index_start))
-			prev_vmr->descs->gpa_dir[idx] = NULL;
-		if (unlikely(idx >= prev_index_end))
-			prev_vmr->descs->gpa_dir[idx] = NULL;
-	}
 }
 
+/*
+ * A vma split makes a second view of one backing namespace, not a second
+ * namespace. The two halves therefore share prev's vmdesc: its directory, its
+ * regions[], and its vm_base origin all describe the backing, which the split
+ * does not touch. Only the view metadata and the mapping ownership change, and
+ * no gpa reference changes hands.
+ */
 static int split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
-	struct emp_vmdesc *desc;
-	unsigned long gpa_dir_offset;
-
+	struct emp_vmdesc *desc = prev_vmr->descs;
 	dprintk("%s: new: %016lx prev: %016lx \n",
 		__func__, (unsigned long) new_vmr, (unsigned long) prev_vmr);
 
-	new_vmr->descs = NULL;
-
-	desc = emp_kzalloc(sizeof(struct emp_vmdesc), GFP_KERNEL);
-	if (unlikely(desc == NULL)) {
-		printk("%s: ERROR: failed to allocate vm descriptor.\n",
-				__func__);
-		return -ENOMEM;
-	}
-
-	memcpy(desc, prev_vmr->descs, sizeof(struct emp_vmdesc));
-#ifdef CONFIG_EMP_USER
-	atomic_set(&desc->refcount, 1);
-	init_waitqueue_head(&desc->closing_wq);
-	/* the copy inherits neither the intervals nor the overflow entries */
-	emp_vmdesc_view_init(desc);
-#endif
-
-	desc->gpa_dir_alloc = emp_vzalloc(desc->gpa_dir_alloc_size);
-	if (unlikely(desc->gpa_dir_alloc == NULL)) {
-		printk("%s: ERROR: failed to allocate gpa directory. size: %ld\n",
-				__func__, desc->gpa_dir_alloc_size);
-		emp_kfree(desc);
-		return -ENOMEM;
-	}
-
-	gpa_dir_offset = ((unsigned long) prev_vmr->descs->gpa_dir)
-				- ((unsigned long) prev_vmr->descs->gpa_dir_alloc);
-	desc->gpa_dir = desc->gpa_dir_alloc + gpa_dir_offset;
-
+	atomic_inc(&desc->refcount);
 	new_vmr->descs = desc;
 
 	__split_vmdesc(new_vmr, prev_vmr);
@@ -1859,10 +1509,11 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
 static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 				struct vm_area_struct *new_vma)
 {
-	/* the interval prev_vmr had before the split, in the coordinates its
-	 * vmdesc uses before split_set_gpadesc_regions() rebases vm_base */
+	/* the interval prev_vmr views before the split. vm_base does not move,
+	 * so this stays valid in the shared namespace afterwards. */
 	unsigned long prev_start = vmr_view_start(prev_vmr);
 	unsigned long prev_end = vmr_view_end(prev_vmr);
+	unsigned long mid;
 
 	debug_assert(prev_vmr->split_addr = new_vmr->split_addr);
 	debug_assert(new_vmr->split_addr == new_vma->vm_start
@@ -1878,11 +1529,16 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	if (prev_vmr->vm_start == new_vmr->vm_start) {
 		debug_assert(new_vmr->vm_end == new_vmr->split_addr);
 		prev_vmr->vm_start = new_vmr->vm_end;
+		mid = new_vmr->vm_end;
 	} else {
 		debug_assert(new_vmr->vm_start == new_vmr->split_addr);
 		debug_assert(prev_vmr->vm_end == new_vmr->vm_end);
 		prev_vmr->vm_end = new_vmr->vm_start;
+		mid = new_vmr->vm_start;
 	}
+	/* the boundary, in the coordinates of the namespace both halves view.
+	 * new_vmr has no vmdesc of its own yet, so use prev's origin. */
+	mid = (mid - prev_vmr->descs->vm_base) >> PAGE_SHIFT;
 
 	dprintk("%s  (AFTER) prev: vm_start=%016lx vm_end=%016lx "
 		"new_vmr: vm_start=%016lx, vm_end=%016lx\n",
@@ -1890,27 +1546,16 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 			new_vmr->vm_start, new_vmr->vm_end);
 
 	split_vmdesc(new_vmr, prev_vmr);
-	split_set_gpadesc_regions(prev_vmr);
-	split_set_gpadesc_regions(new_vmr);
 
-	/* INTERIM. The split still gives each half its own vmdesc and rebases
-	 * both, so prev's view has to be moved into the new coordinates of its
-	 * own namespace, and the new half registers the first view of its copy.
-	 * Step 4 shares one vmdesc across the split and deletes the second
-	 * allocation, the rebase, and this move with it: what remains there is
-	 * one interval partitioned into two on a single namespace. */
-	emp_vmdesc_view_del(prev_vmr->descs, prev_start, prev_end);
-	if (unlikely(emp_vmdesc_view_add(prev_vmr->descs,
-					vmr_view_start(prev_vmr),
-					vmr_view_end(prev_vmr),
-					false)))
-		printk(KERN_ERR "%s: ERROR: no view entry for the shrinking "
-				"half. vmr: [0x%lx, 0x%lx) vm_base: 0x%lx\n",
-				__func__, prev_vmr->vm_start, prev_vmr->vm_end,
-				prev_vmr->descs->vm_base);
-	if (likely(new_vmr->descs))
-		emp_vmdesc_view_add(new_vmr->descs, vmr_view_start(new_vmr),
-					vmr_view_end(new_vmr), true);
+	/* One view interval unit becomes two, on the same namespace. The union
+	 * of coverage is unchanged, so a close in another mm may run against
+	 * either side of this without losing a slot either half still views.
+	 * Backing geometry is not touched here: the gpa refcounts, the
+	 * directory, and regions[] are properties of the namespace. */
+	if (unlikely(emp_vmdesc_view_split(prev_vmr->descs, prev_start, prev_end, mid)))
+		printk(KERN_ERR "%s: ERROR: cannot partition the view of "
+				"[0x%lx, 0x%lx) at 0x%lx\n", __func__,
+				prev_start, prev_end, mid);
 	debug_check_vmdesc_views(prev_vmr->descs);
 
 	/* both halves of the split keep the fork policy of the original range */
