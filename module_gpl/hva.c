@@ -253,7 +253,7 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	if (lp->vmr_id != vmr->id)
 		emp_update_rss_add(vmr, page_len,
 				DEBUG_RSS_ADD_INSTALL_HPTES,
-				head, DEBUG_UPDATE_RSS_BLOCK);
+				gpa, DEBUG_UPDATE_RSS_BLOCK);
 
 	return ret;
 }

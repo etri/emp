@@ -1666,7 +1666,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 				if (__head->r_state != GPA_ACTIVE)
 					continue;
 				debug_assert(__head->local_page);
-				if (!emp_lp_lookup_vmr_id(__head->local_page, vmr->id))
+				if (!emp_lp_lookup_vmr_id(__head, vmr->id))
 					continue;
 				emp_update_rss_sub_kernel(vmr,
 					__local_block_to_page_len(vmr, __head),
