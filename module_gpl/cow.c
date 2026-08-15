@@ -518,17 +518,22 @@ static void __cow_pmd_populate(struct mm_struct *mm, pmd_t *pmd, unsigned long h
 
 static void
 __cow_update_pte(struct vm_area_struct *vma, struct page *page,
-			pmd_t *pmd, unsigned long addr, unsigned long len)
+			pmd_t *pmd, unsigned long addr, unsigned int offset,
+			unsigned long len)
 {
 	pte_t pte_entry;
 	pte_t *_pte, *pte;
 	unsigned long i;
 
-	pte = emp_pte_map(pmd, addr);
 	emp_set_page_mapping_and_index(vma, addr, page);
 
+	/* @addr is the address of @page; @offset selects the first of its pages
+	 * to rewrite. Refer to pte_install(). */
+	addr += (unsigned long) offset << PAGE_SHIFT;
+	pte = emp_pte_map(pmd, addr);
+
 	/* change the pages */
-	for (i = 0, _pte = pte;
+	for (i = 0, _pte = pte, page += offset;
 			i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
 		/* Clear the pte entry and flush it first.
 		 * Refer to __wp_page_copy() in the kernel */
@@ -586,8 +591,8 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
-		__cow_update_pte(vmr->host_vma, gpa_page(gpa),
-					pmd, addr, page_len);
+		__cow_update_pte(vmr->host_vma, gpa_page(gpa), pmd, addr,
+					0, page_len);
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
 

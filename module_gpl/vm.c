@@ -744,7 +744,8 @@ reduce_fail:
 }
 
 static void split_update_pte(struct vm_area_struct *vma, struct page *page,
-			pmd_t *pmd, unsigned long addr, unsigned long len)
+			pmd_t *pmd, unsigned long addr, unsigned int offset,
+			unsigned long len)
 {
 	spinlock_t *ptl;
 	pte_t pte_entry;
@@ -753,12 +754,16 @@ static void split_update_pte(struct vm_area_struct *vma, struct page *page,
 
 	// ptl is spinlock of pmd page
 	ptl = pte_lockptr(vma->vm_mm, pmd);
-	pte = emp_pte_map(pmd, addr);
 	emp_set_page_mapping_and_index(vma, addr, page);
+
+	/* @addr is the address of @page; @offset selects the first of its pages
+	 * to rewrite. Refer to pte_install(). */
+	addr += (unsigned long) offset << PAGE_SHIFT;
+	pte = emp_pte_map(pmd, addr);
 
 	spin_lock(ptl);
 	/* change the pages */
-	for (i = 0, _pte = pte;
+	for (i = 0, _pte = pte, page += offset;
 			i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
 		/* Clear the pte entry and flush it first.
 		 * Refer to __wp_page_copy() in the kernel */
@@ -912,7 +917,8 @@ static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr 
 		debug_page_ref_mark_map(back_vmr->id, back_gpa->local_page);
         
 		// udate pte
-		split_update_pte(back_vmr->host_vma, dst_page, pmd, back_hva, back_page_len);
+		split_update_pte(back_vmr->host_vma, dst_page, pmd, back_hva,
+					0, back_page_len);
         
 		// update LRU lists
 #ifdef CONFIG_EMP_EXT
