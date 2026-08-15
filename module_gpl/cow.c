@@ -638,12 +638,14 @@ __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
 static inline void
 cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *head)
 {
+	unsigned int ____off;
 	pmd_t *pmd = NULL;
 	spinlock_t *ptl = NULL;
 	unsigned long addr, page_len;
 	struct emp_gpa *gpa;
 
-	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
+	____gpa_to_hva_len_off(vmr, head, head_idx, addr, page_len, ____off);
+	addr += (unsigned long) ____off << PAGE_SHIFT;
 	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
@@ -746,12 +748,14 @@ static inline void
 cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
 		struct emp_gpa *head, struct debug_lazy_fork_stat *lfs)
 {
+	unsigned int ____off;
 	pmd_t *pmd = NULL;
 	spinlock_t *ptl = NULL;
 	unsigned long addr, page_len;
 	struct emp_gpa *gpa;
 
-	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
+	____gpa_to_hva_len_off(vmr, head, head_idx, addr, page_len, ____off);
+	addr += (unsigned long) ____off << PAGE_SHIFT;
 	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
@@ -805,12 +809,14 @@ static unsigned long
 debug_lf_count_writable(struct emp_vmr *vmr, unsigned long head_idx,
 			struct emp_gpa *head)
 {
+	unsigned int ____off;
 	pmd_t *pmd;
 	spinlock_t *ptl = NULL;
 	unsigned long addr, page_len, nr = 0;
 	struct emp_gpa *gpa;
 
-	____gpa_to_hva_and_len(vmr, head, head_idx, addr, page_len);
+	____gpa_to_hva_len_off(vmr, head, head_idx, addr, page_len, ____off);
+	addr += (unsigned long) ____off << PAGE_SHIFT;
 
 	for_each_gpas(gpa, head) {
 		pte_t *pte, *_pte;
@@ -897,6 +903,7 @@ __dup_partial_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 				struct emp_vmr *dst_vmr, unsigned long idx,
 				struct emp_gpa *src, struct emp_gpa *dst)
 {
+	unsigned int ____off;
 	struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
 	struct page *page;
 	unsigned long addr, page_len;
@@ -906,8 +913,9 @@ __dup_partial_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 	debug_assert(gpa_block_order(src) == gpa_subblock_order(src));
 
 	/* NOTE: src_vmr and dst_vmr have same address range */
-	____gpa_to_hva_and_len(dst_vmr ? dst_vmr : src_vmr,
-					src, idx, addr, page_len);
+	____gpa_to_hva_len_off(dst_vmr ? dst_vmr : src_vmr,
+					src, idx, addr, page_len, ____off);
+	addr += (unsigned long) ____off << PAGE_SHIFT;
 
 	/* duplicate memory pages */
 	page = dup_subblock_pages(emm, src, idx, page_len, cpu,
@@ -1027,6 +1035,7 @@ static int
 dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 			struct emp_gpa *old_head, struct emp_gpa *new_head)
 {
+	unsigned int ____off;
 	struct emp_mm *emm = vmr->emm;
 	pmd_t *pmd;
 	unsigned long idx;
@@ -1036,7 +1045,8 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 
 	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
 
-	____gpa_to_hva_and_len(vmr, old_head, head_idx, addr, page_len);
+	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
+	addr += (unsigned long) ____off << PAGE_SHIFT;
 
 	// Duplicate old_head's local page to new_head
 	ret = dup_block_local_page(emm, NULL, vmr,
@@ -1140,6 +1150,7 @@ static int
 dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 				struct emp_gpa *old_head, struct emp_gpa *new_head)
 {
+	unsigned int ____off;
 	struct emp_mm *emm = vmr->emm;
 	unsigned long idx;
 	struct emp_gpa *old, *new;
@@ -1159,7 +1170,8 @@ dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 		return ret;
 	}
 
-	____gpa_to_hva_and_len(vmr, old_head, head_idx, addr, page_len);
+	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
+	addr += (unsigned long) ____off << PAGE_SHIFT;
 	pmd = get_pmd(vmr->host_mm, addr);
 
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {

@@ -830,6 +830,7 @@ static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr 
 	unsigned long sb_page_len;
 	unsigned long vm_start, vm_end;
 	unsigned long va_sb_order;
+	unsigned int front_off = 0, back_off = 0;
 	bool partial_at_head, partial_at_tail;
 	struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
 
@@ -855,8 +856,12 @@ static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr 
 		front_hva = GPN_OFFSET_TO_HVA(front_vmr, split_index, gpa_subblock_order(front_gpa));
 		back_hva = GPN_OFFSET_TO_HVA(back_vmr, split_index, gpa_subblock_order(back_gpa));
 
-		front_page_len = ____partial_gpa_to_page_len(front_vmr, front_gpa, split_index, front_hva);
-		back_page_len = ____partial_gpa_to_page_len(back_vmr, back_gpa, split_index, back_hva);
+		____partial_gpa_len_off(front_vmr, front_gpa, split_index,
+					front_hva, front_page_len, front_off);
+		front_hva += (unsigned long) front_off << PAGE_SHIFT;
+		____partial_gpa_len_off(back_vmr, back_gpa, split_index,
+					back_hva, back_page_len, back_off);
+		back_hva += (unsigned long) back_off << PAGE_SHIFT;
 
 		offset = front_page_len;
 		set_gpa_flags_if_unset(back_gpa, GPA_PARTIAL_MAP_MASK);
@@ -870,7 +875,9 @@ static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr 
 
 			sb_page_len = gpa_subblock_size(back_gpa);
 			set_gpa_flags_if_unset(back_gpa, GPA_PARTIAL_MAP_MASK);
-			back_page_len = ____partial_gpa_to_page_len(back_vmr, back_gpa, split_index, back_hva);
+			____partial_gpa_len_off(back_vmr, back_gpa, split_index,
+					back_hva, back_page_len, back_off);
+			back_hva += (unsigned long) back_off << PAGE_SHIFT;
 			offset =  sb_page_len - back_page_len;
 
 			set_gpa_flags_if_unset(front_gpa, GPA_PARTIAL_MAP_MASK);
@@ -960,11 +967,13 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 	unsigned long pg_len = 0;
 	unsigned long front_pg_len = 0;
 	unsigned long back_pg_len = 0;
+	unsigned int pg_off;
 	bool reduced = false;
 
 	dprintk("%s new_vmr = %d prev_vmr = %d, front_vmr = %d, back_vmr = %d, split_head_index = %ld, split_index = %ld\n", __func__, new_vmr->id, prev_vmr->id, front_vmr->id, back_vmr->id, split_head_index, split_index);
 	// get split gpa's page length
-	____gpa_to_hva_and_len(prev_vmr, prev_vmr->descs->gpa_dir[split_index], split_index, addr, pg_len);
+	____gpa_to_hva_len_off(prev_vmr, prev_vmr->descs->gpa_dir[split_index],
+				split_index, addr, pg_len, pg_off);
 
 	// reduce block
 	reduced = split_reduce_block(emm, new_vmr, prev_vmr, split_head, split_head_index, hs);

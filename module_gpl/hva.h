@@ -25,6 +25,14 @@ static inline void emp_set_page_mapping_and_index(struct vm_area_struct *vma, un
 {
 	/* compound page: set mapping/index only on head */
 	debug_check_head(page);
+	/* ...and @addr is the head's own address, so it is aligned to the size
+	 * of the allocation. get_futex_key() derives the key as
+	 * folio->index + folio_page_idx(folio, page), adding the faulting
+	 * page's offset within the folio itself, so indexing the head by
+	 * anything else places the key that far out. Everything which maps a
+	 * subblock now hands over the subblock's own address and says
+	 * separately which page inside it the mapping starts at. */
+	debug_assert((addr & ((PAGE_SIZE << compound_order(page)) - 1)) == 0);
 	if (vma->vm_flags & VM_SHARED) {
 		page->mapping = vma->vm_file->f_mapping;
 		page->index   = linear_page_index(vma, addr);

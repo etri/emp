@@ -521,6 +521,7 @@ void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 {
 	unsigned long hva;
 	unsigned long page_len;
+	unsigned int page_off;
 	struct emp_gpa *gpa;
 	unsigned long subidx, idx;
 	unsigned long _hva, i;
@@ -535,7 +536,8 @@ void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	for_each_gpas_index(gpa, subidx, head) {
 		idx = head_idx + subidx;
-		____gpa_to_hva_and_len(vmr, gpa, idx, hva, page_len);
+		____gpa_to_hva_len_off(vmr, gpa, idx, hva, page_len, page_off);
+		hva += (unsigned long) page_off << PAGE_SHIFT;
 		pte = emp_pte_map(pmd, hva);
 		for (i = 0, _pte = pte, _hva = hva;
 				i < page_len;

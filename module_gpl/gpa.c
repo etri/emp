@@ -855,11 +855,15 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	struct mm_struct *mm = vmr->host_mm;
 	struct vm_area_struct *vma = vmr->host_vma;
 	unsigned long hva, addr, pfn;
-	unsigned int pages_len;
+	unsigned int pages_len, page_off;
 	bool mapped, accessed, dirty;
 	int i;
 
-	____local_gpa_to_hva_and_len(vmr, head, hva, pages_len);
+	/* @hva is the address of the subblock itself; @page_off is where the
+	 * pages this vmr maps start inside it. A partial map holds a single
+	 * subblock, so one offset covers the loop below. */
+	____local_gpa_to_hva_len_off(vmr, head, hva, pages_len, page_off);
+	hva += (unsigned long) page_off << PAGE_SHIFT;
 
 	// block-grained dirty management. need to more finer?
 	dirty = false;
@@ -1255,10 +1259,13 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, gpa_subblock_order(head));
 #ifdef CONFIG_EMP_USER
 		if (unlikely(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK))) {
-			sb_page_len = ____partial_gpa_to_page_len(vmr, head,
-							head_idx, head_hva);
-			dirty = __unmap_subblock_single_vmr(vmr, head, head_hva,
-							sb_page_len, pmd);
+			unsigned int sb_page_off;
+			____partial_gpa_len_off(vmr, head, head_idx, head_hva,
+						sb_page_len, sb_page_off);
+			dirty = __unmap_subblock_single_vmr(vmr, head,
+					head_hva + ((unsigned long) sb_page_off
+							<< PAGE_SHIFT),
+					sb_page_len, pmd);
 			if (dirty)
 				set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 			emp_update_rss_sub(vmr, sb_page_len,

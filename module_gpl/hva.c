@@ -235,8 +235,8 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
  */
 static inline int COMPILER_DEBUG
 __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
-			unsigned long hva, unsigned int page_len,
-			pmd_t *pmd, bool is_write)
+			unsigned long hva, unsigned int offset,
+			unsigned int page_len, pmd_t *pmd, bool is_write)
 {
 	struct local_page *lp = gpa->local_page;
 	struct page *page = lp->page;
@@ -246,7 +246,7 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	__emp_get_pages_map(vmr, gpa, page_len);
 	debug_page_ref_will_pte_end(lp, page_len);
 
-	ret = pte_install(vmr->host_vma, pmd, page, hva, 0, page_len,
+	ret = pte_install(vmr->host_vma, pmd, page, hva, offset, page_len,
 					is_write, __is_cow_gpa(gpa));
 
 	debug_check_notnull_pointer(lp->w);
@@ -274,7 +274,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 	struct emp_gpa *gpa;
 	int ret = VM_FAULT_NOPAGE;
 	unsigned long hva;
-	unsigned int page_len;
+	unsigned int page_len, page_off;
 #ifdef CONFIG_EMP_BLOCK
 	bool csf_prefetching, cpf_prefetching;
 #endif
@@ -297,7 +297,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 
 	if (cpf_prefetching) {
 		struct page *page;
-		int sb_offset;
+		unsigned int sb_offset;
 		struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);
 		if (bvma_transition_csf(bvma) &&
 				(bvma->sops.try_wait_read_async(bvma, cpu, demand))) {
@@ -313,14 +313,17 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 		} else {
 			debug_assert(demand);
 			debug_assert(!emp_lp_lookup_vmr_id(demand, vmr->id));
-			____local_gpa_to_hva_and_len(vmr, demand, hva, page_len);
+			____local_gpa_to_hva_len_off(vmr, demand, hva, page_len,
+								page_off);
+			/* demand_offset counts from the subblock's own start,
+			 * which is where @hva now is, so the two compose. */
 			sb_offset = head->local_page->demand_offset
 						& gpa_subblock_mask(demand);
-			hva += PAGE_SIZE * sb_offset;
-			page = demand->local_page->page + sb_offset;
+			page = demand->local_page->page;
 			spin_lock(ptl);
-			ret = pte_install(vmr->host_vma, pmd, page, hva, 0, 1,
-						is_write, __is_cow_gpa(demand));
+			ret = pte_install(vmr->host_vma, pmd, page, hva,
+						sb_offset, 1, is_write,
+						__is_cow_gpa(demand));
 			spin_unlock(ptl);
 			return ret;
 		}
@@ -330,9 +333,10 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 		// if csf_prefetching is true, demand should exist.
 		debug_assert(demand);
 		debug_assert(!emp_lp_lookup_vmr_id(demand, vmr->id));
-		____local_gpa_to_hva_and_len(vmr, demand, hva, page_len);
+		____local_gpa_to_hva_len_off(vmr, demand, hva, page_len,
+								page_off);
 		spin_lock(ptl);
-		ret = __emp_install_hptes(vmr, demand, hva, page_len,
+		ret = __emp_install_hptes(vmr, demand, hva, page_off, page_len,
 							pmd, is_write);
 		spin_unlock(ptl);
 		emp_update_rss_cached(vmr);
@@ -340,7 +344,9 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 	}
 #endif
 
-	____local_gpa_to_hva_and_len(vmr, head, hva, page_len);
+	/* A partial map holds a single subblock, so the offset reported for the
+	 * head covers every iteration below. */
+	____local_gpa_to_hva_len_off(vmr, head, hva, page_len, page_off);
 
 	spin_lock(ptl);
 	for_each_gpas(gpa, head) {
@@ -348,7 +354,8 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 		if (emp_lp_lookup_vmr_id(gpa, vmr->id))
 			goto next;
 
-		ret &= __emp_install_hptes(vmr, gpa, hva, page_len, pmd, is_write);
+		ret &= __emp_install_hptes(vmr, gpa, hva, page_off, page_len,
+							pmd, is_write);
 
 next:
 		/* for the next iteration */
