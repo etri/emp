@@ -801,7 +801,10 @@ static inline void split_copy_pages(struct page *dst, struct page *src, int offs
 
 	preempt_disable();
 	pagefault_disable();
-	for (i = 0, _dst = dst, _src = src + offset; i < len; i++, _dst++, _src++) {
+	/* @offset is where these pages belong in the subblock, on both sides:
+	 * the copy re-bases nothing now that the mapping honours it. */
+	for (i = 0, _dst = dst + offset, _src = src + offset;
+					i < len; i++, _dst++, _src++) {
 		from = page_address(_src);
 		to = page_address(_dst);
 		copy_page(to, from);
@@ -924,8 +927,10 @@ static unsigned long split_local_page(struct emp_vmr *front_vmr, struct emp_vmr 
 		debug_page_ref_mark_map(back_vmr->id, back_gpa->local_page);
         
 		// udate pte
-		split_update_pte(back_vmr->host_vma, dst_page, pmd, back_hva,
-					0, back_page_len);
+		split_update_pte(back_vmr->host_vma, dst_page, pmd,
+					back_hva - ((unsigned long) back_off
+							<< PAGE_SHIFT),
+					back_off, back_page_len);
         
 		// update LRU lists
 #ifdef CONFIG_EMP_EXT

@@ -348,16 +348,24 @@ dup_subblock_pages(struct emp_mm *emm, struct emp_gpa *gpa,
 			struct vcpu_var *cpu, bool is_stale)
 {
 	struct page *page;
+	/* The WHOLE subblock, not the mapped part of it. The allocation is the
+	 * unit everything else moves: a fetch fills it from remote offset 0 and
+	 * a writeback sends all of it, and the mapping reads it at the offset
+	 * the pages belong at. Copying only the first @page_len would take the
+	 * wrong pages of the source and leave the ones the duplicate will be
+	 * mapped through undefined. */
+	unsigned long sb_len = 1UL << gpa_subblock_order(gpa);
+
 	page = _alloc_pages(emm, gpa_subblock_order(gpa), 0, cpu);
 	if (unlikely(IS_ERR_OR_NULL(page)))
 		return page;
 
 	if (unlikely(is_stale)) {
-		__clear_pages(page, page_len);
+		__clear_pages(page, sb_len);
 		return page;
 	}
 
-	__copy_pages(page, gpa_page(gpa), page_len);
+	__copy_pages(page, gpa_page(gpa), sb_len);
 	return page;
 }
 
@@ -561,7 +569,8 @@ __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 
 static inline void
 cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
-			unsigned long addr, unsigned long page_len)
+			unsigned long addr, unsigned int offset,
+			unsigned long page_len)
 {
 	pmd_t *pmd;
 	spinlock_t *ptl;
@@ -592,7 +601,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
 		__cow_update_pte(vmr->host_vma, gpa_page(gpa), pmd, addr,
-					0, page_len);
+					offset, page_len);
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
 
@@ -1046,7 +1055,6 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
 
 	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
-	addr += (unsigned long) ____off << PAGE_SHIFT;
 
 	// Duplicate old_head's local page to new_head
 	ret = dup_block_local_page(emm, NULL, vmr,
@@ -1088,7 +1096,7 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 	}
 
 	/* update (clear and map) pte (writable) */
-	cow_update_pte(vmr, new_head, addr, page_len);
+	cow_update_pte(vmr, new_head, addr, ____off, page_len);
 
 	/* NOTE: the remote page is removed at __dup_cow_gpadesc() */
 
@@ -1171,7 +1179,7 @@ dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 	}
 
 	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
-	addr += (unsigned long) ____off << PAGE_SHIFT;
+	/* a subblock cannot cross a pmd, so the offset does not change it */
 	pmd = get_pmd(vmr->host_mm, addr);
 
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
@@ -1198,7 +1206,7 @@ dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
 	emp_update_rss_cached(vmr);
 
 	/* update (clear and map) pte (writable) */
-	cow_update_pte(vmr, new_head, addr, page_len);
+	cow_update_pte(vmr, new_head, addr, ____off, page_len);
 
 	return DUP_COW_ADD_ACTIVE;
 
