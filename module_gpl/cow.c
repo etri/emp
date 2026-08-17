@@ -1554,7 +1554,7 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 	int num_add_to_active = 0, size_add_to_active = 0;
 
 	debug_assert(gpa_max_block_order(demand) ==
-			get_gpadesc_region(vmr->descs, demand_idx)->block_order);
+			get_gpadesc_region(vmr->descs, demand_idx)->alloc_order);
 
 	/* Set variables related to max_block */
 	max_old_head = _emp_get_block_head(demand, max_desc_order);

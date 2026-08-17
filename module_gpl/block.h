@@ -384,7 +384,7 @@ __get_next_exist_head_gpadesc(struct emp_vmr *vmr, unsigned long *indexp)
 
 	// We already check raw_get_gpadesc(vmr, index) == NULL.
 	// Thus, raw_get_gpadesc(vmr, _emp_get_block_head_index(vmr, index, desc_order)) == NULL.
-	desc_order = region->block_order - bvma_subblock_order(emm);
+	desc_order = region->alloc_order - bvma_subblock_order(emm);
 	index = _emp_get_block_head_index(vmr, index, desc_order);
 	index += 1UL << desc_order;
 	gpa = raw_get_gpadesc(vmr, index);
@@ -394,7 +394,7 @@ __get_next_exist_head_gpadesc(struct emp_vmr *vmr, unsigned long *indexp)
 			*indexp = index;
 			return NULL;
 		}
-		desc_order = region->block_order - bvma_subblock_order(emm);
+		desc_order = region->alloc_order - bvma_subblock_order(emm);
 		index += 1UL << desc_order;
 		gpa = raw_get_gpadesc(vmr, index);
 	}

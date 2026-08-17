@@ -301,16 +301,20 @@ unlock:
 	return ret;
 }
 
-static inline int __get_max_block_order(struct emp_vmr *vmr, unsigned long idx) {
+/* The ALLOCATION order of the descriptor group covering @idx: region->
+ * alloc_order, which is the right stride for skipping untouched space because
+ * a slot is populated with the rest of its group or NULL with the rest of it.
+ */
+static inline int __get_alloc_order(struct emp_vmr *vmr, unsigned long idx) {
 	struct gpadesc_region *region;
 	region = get_gpadesc_region(vmr->descs, idx);
 	/* NOTE: idx should reside in the vmr */
 	debug_assert(region != NULL);
-	return region->block_order;
+	return region->alloc_order;
 }
 
-static inline int __get_max_block_size(struct emp_vmr *vmr, unsigned long idx) {
-	return 1 << __get_max_block_order(vmr, idx);
+static inline int __get_alloc_size(struct emp_vmr *vmr, unsigned long idx) {
+	return 1 << __get_alloc_order(vmr, idx);
 }
 
 long emp_madv_pin(struct emp_mm *emm, unsigned long addr, long size)
@@ -481,7 +485,7 @@ long emp_madv_unpin(struct emp_mm *emm, unsigned long addr, long size)
 			// If gpa is null, don't touch it
 			gpa = raw_get_gpadesc(vmr, idx);
 			if (gpa == NULL) {
-				order = __get_max_block_order(vmr, idx) - sb_order;
+				order = __get_alloc_order(vmr, idx) - sb_order;
 				if (idx == _emp_get_block_head_index(vmr, idx, order)) {
 					// aligned to max_block
 					addr += 1UL << (order + sb_order + PAGE_SHIFT);
@@ -589,7 +593,7 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 				idx += block_size >> sb_order;
 				continue;
 			}
-			order = __get_max_block_order(vmr, idx) - sb_order;
+			order = __get_alloc_order(vmr, idx) - sb_order;
 			if (idx == _emp_get_block_head_index(vmr, idx, order)) {
 				// aligned to max_block
 				addr += 1UL << (order + sb_order + PAGE_SHIFT);
@@ -649,7 +653,7 @@ out:
 				idx += block_size >> sb_order;
 				continue;
 			}
-			order = __get_max_block_order(vmr, idx) - sb_order;
+			order = __get_alloc_order(vmr, idx) - sb_order;
 			if (idx == _emp_get_block_head_index(vmr, idx, order)) {
 				// aligned to max_block
 				addr += 1UL << (order + sb_order + PAGE_SHIFT);
@@ -836,7 +840,7 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 				idx += block_size >> sb_order;
 				continue;
 			}
-			order = __get_max_block_order(vmr, idx) - sb_order;
+			order = __get_alloc_order(vmr, idx) - sb_order;
 			if (idx == _emp_get_block_head_index(vmr, idx, order)) {
 				// aligned to max_block
 				addr += 1UL << (order + sb_order + PAGE_SHIFT);

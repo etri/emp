@@ -155,10 +155,24 @@ struct emp_mrs {
 };
 
 #define GPADESC_MAX_REGION (6)
+/* One range of the namespace and the order its descriptors are allocated at.
+ *
+ * @alloc_order is the size of one descriptor object, in pages: new_gpadesc()
+ * allocates a group of 1 << (alloc_order - subblock_order) descriptors and
+ * fills that many gpa_dir slots, prepare_gpadesc_alloc() makes one kmem_cache
+ * per distinct order, and free_gpa_dir_region() walks gpa_dir on that grid and
+ * frees each slot's object back to it. A slot is therefore populated with the
+ * rest of its group or NULL with the rest of it.
+ *
+ * It is neither of the two orders a gpa carries. gpa_block_order() is what a
+ * block currently is, which elastic block lowers and raises;
+ * gpa_max_block_order() is how far it may be raised, which a vma split lowers.
+ * Both are seeded from here and then move on their own.
+ */
 struct gpadesc_region {
 	unsigned long start;
 	unsigned long end;
-	u8 block_order;
+	u8 alloc_order;
 #ifdef CONFIG_EMP_VM
 	bool lowmem_block;
 #endif

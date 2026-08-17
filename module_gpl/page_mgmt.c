@@ -589,8 +589,8 @@ int emp_mark_free_pages(struct kvm *kvm, gfn_t gfn, long num_pages)
 			/* nothing to do with untouched subblock */
 			struct gpadesc_region *region;
 			region = get_gpadesc_region(vmr->descs, req_offset);
-			gfn = gfn - (gfn & ((1UL << region->block_order) - 1))
-					+ (1UL << region->block_order);
+			gfn = gfn - (gfn & ((1UL << region->alloc_order) - 1))
+					+ (1UL << region->alloc_order);
 			continue;
 		}
 		head = emp_lock_block(vmr, &req, req_offset);

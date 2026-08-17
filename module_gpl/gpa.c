@@ -192,7 +192,7 @@ __set_gpadesc(struct emp_mm *emm, unsigned long idx, struct emp_gpa *g,
 					struct gpadesc_region *region)
 {
 	emp_init_gpa(emm, g);
-	update_gpa_order(g, region->block_order);
+	update_gpa_order(g, region->alloc_order);
 #ifdef CONFIG_EMP_VM
 	if (region->lowmem_block)
 		set_gpa_flags_if_unset(g, GPA_LOWMEM_BLOCK_MASK);
@@ -218,7 +218,7 @@ new_gpadesc(struct emp_vmr *vmr, unsigned long idx) {
 		return NULL;
 
 	region = get_gpadesc_region(vmr->descs, idx);
-	desc_order = region->block_order - bvma_subblock_order(emm);
+	desc_order = region->alloc_order - bvma_subblock_order(emm);
 	head_idx = _emp_get_block_head_index(vmr, idx, desc_order);
 	len = 1UL << desc_order;
 	end_idx = head_idx + len;
@@ -443,7 +443,7 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 			order = low_order;
 #endif
 
-		curr->block_order = order;
+		curr->alloc_order = order;
 
 #ifdef CONFIG_EMP_VM
 		curr->lowmem_block = curr->end <= low_memory_end
@@ -474,7 +474,7 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 					__func__,
 					emm->id, vmr->id, i,
 					r->start, r->end,
-					r->block_order,
+					r->alloc_order,
 #ifdef CONFIG_EMP_VM
 					r->lowmem_block ? 1 : 0,
 #else
@@ -522,7 +522,7 @@ static void prepare_gpadesc_alloc(struct emp_mm *emm, struct emp_vmdesc *desc)
 	int order;
 
 	for (r = 0; r < desc->num_region; r++) {
-		order = desc->regions[r].block_order - bvma_subblock_order(emm);
+		order = desc->regions[r].alloc_order - bvma_subblock_order(emm);
 		__prepare_gpadesc_alloc(emm, order);
 	}
 
@@ -1587,7 +1587,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 	unsigned long i, step, start, end;
 	int put_refcnt;
 	int sb_order = bvma_subblock_order(emm);
-	int desc_order = region->block_order - bvma_subblock_order(emm);
+	int desc_order = region->alloc_order - bvma_subblock_order(emm);
 	struct kmem_cache *cachep = get_gpadesc_alloc(emm, desc_order);
 	bool may_dirty = false;
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
