@@ -218,6 +218,7 @@ const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
 const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
 	"FREE_GPA_DIR",
 	"COW_MULTI_ACTIVE",
+	"VMA_SPLIT",
 };
 
 void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
