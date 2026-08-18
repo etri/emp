@@ -47,6 +47,50 @@ emp_get_block_offset(struct emp_gpa *head, struct emp_gpa *demand, pgoff_t pgoff
 		+ (pgoff & (gpa_subblock_size(head) - 1));
 }
 
+/**
+ * __gpa_fit_order - largest block order which does not straddle a cut point
+ * @param head_idx index of the first subblock of the group being shaped
+ * @param i index of the subblock being placed
+ * @param max_order the group's own descriptor order
+ * @param cuts subblock indices which must not fall inside a block
+ * @param n_cuts number of entries in @cuts
+ *
+ * @return descriptor order for the block which should contain @i
+ *
+ * A cut names the left edge of that subblock, so a block may start or end on
+ * one but must not contain one: [start, end) is clean when every cut is <=
+ * start or >= end, and straddles when one falls strictly between. That is what
+ * lets the pieces on either side abut the boundary at full size instead of
+ * both collapsing to subblock order.
+ *
+ * Blocks are aligned inside their group, so the block containing @i at a given
+ * order is fixed and either holds a cut point in its interior or does not.
+ * Walking the orders downwards therefore yields the largest aligned block on
+ * either side of every cut, which is what a vma boundary needs: a block must
+ * not span two vmrs viewing one namespace, and nothing smaller has to change.
+ *
+ * A cut outside the group never triggers, so a caller may name one past the
+ * end without clamping it.
+ */
+static inline int
+__gpa_fit_order(unsigned long head_idx, unsigned long i, int max_order,
+		const unsigned long *cuts, int n_cuts)
+{
+	int order, c;
+
+	for (order = max_order; order > 0; order--) {
+		unsigned long start = head_idx
+				+ ((i - head_idx) & ~((1UL << order) - 1));
+		unsigned long end = start + (1UL << order);
+		for (c = 0; c < n_cuts; c++)
+			if (cuts[c] > start && cuts[c] < end)
+				break;
+		if (c == n_cuts)
+			return order;
+	}
+	return 0;
+}
+
 static inline unsigned long
 _emp_get_block_head_index(struct emp_vmr *vmr, unsigned long index, int order)
 {
@@ -172,6 +216,7 @@ static inline void _emp_unlock_block(struct emp_gpa *head)
 #else /* !CONFIG_EMP_BLOCK */
 
 #define emp_get_block_offset(head, demand, pgoff) (0)
+#define __gpa_fit_order(head_idx, i, max_order, cuts, n_cuts) (0)
 #define _emp_get_block_head_index(vmr, index, order) \
 				({ debug_assert((order) == 0); (index); })
 #define emp_get_block_head_index(vmr, index) (index)
