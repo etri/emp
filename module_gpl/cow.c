@@ -215,12 +215,13 @@ static inline void __clear_pages(struct page *page, int len)
 	memset(addr, 0, PAGE_SIZE * len);
 }
 
-static inline void __remove_rmap_on_pages(struct page *page, struct vm_area_struct *vma, unsigned long len)
+static inline void __remove_rmap_on_pages(struct page *page, unsigned int offset,
+			struct vm_area_struct *vma, unsigned long len)
 {
 	struct page *_page;
 	unsigned long i;
 	/* TODO: batched remove rmap? */
-	for (i = 0, _page = page; i < len; i++, _page++)
+	for (i = 0, _page = page + offset; i < len; i++, _page++)
 		kernel_page_remove_rmap(_page, vma, false);
 }
 
@@ -614,17 +615,22 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 
 static void COMPILER_DEBUG
 __cow_mkwrite_pte(struct vm_area_struct *vma, struct page *page,
-		pmd_t *pmd, unsigned long addr, unsigned long len)
+		pmd_t *pmd, unsigned long addr, unsigned int offset,
+		unsigned long len)
 {
 	pte_t pte_entry;
 	pte_t *_pte, *pte;
 	unsigned long i;
 	unsigned long pfn;
 
+	/* @addr is the address of @page; @offset selects the first of its pages
+	 * to make writable. Refer to pte_install(). */
+	addr += (unsigned long) offset << PAGE_SHIFT;
 	pte = emp_pte_map(pmd, addr);
 
 	/* make ptes writable */
-	for (i = 0, _pte = pte; i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
+	for (i = 0, _pte = pte, page += offset;
+			i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
 		/* Following the wp_page_reuse() in the kernel.
 		 * However, since we can assume that the pages still
 		 * belong to the same process, we skip clearing the
@@ -654,7 +660,6 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 	struct emp_gpa *gpa;
 
 	____gpa_to_hva_len_off(vmr, head, head_idx, addr, page_len, ____off);
-	addr += (unsigned long) ____off << PAGE_SHIFT;
 	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
@@ -681,8 +686,8 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
-		__cow_mkwrite_pte(vmr->host_vma, gpa_page(gpa),
-						pmd, addr, page_len);
+		__cow_mkwrite_pte(vmr->host_vma, gpa_page(gpa), pmd, addr,
+						____off, page_len);
 next:
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
@@ -729,16 +734,20 @@ struct debug_lazy_fork_stat { char __unused_lfs; };
 
 static void COMPILER_DEBUG
 __cow_wrprotect_pte(struct vm_area_struct *vma, struct page *page,
-		pmd_t *pmd, unsigned long addr, unsigned long len,
-		struct debug_lazy_fork_stat *lfs)
+		pmd_t *pmd, unsigned long addr, unsigned int offset,
+		unsigned long len, struct debug_lazy_fork_stat *lfs)
 {
 	pte_t *_pte, *pte;
 	unsigned long i;
 
+	/* @addr is the address of @page; @offset selects the first of its pages
+	 * to write protect. Refer to pte_install(). */
+	addr += (unsigned long) offset << PAGE_SHIFT;
 	pte = emp_pte_map(pmd, addr);
 
 	/* make ptes read-only so the next write faults into EMP's CoW */
-	for (i = 0, _pte = pte; i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
+	for (i = 0, _pte = pte, page += offset;
+			i < len; i++, _pte++, page++, addr += PAGE_SIZE) {
 		if (pte_present(*_pte))
 			lfs_inc(lfs, pte_present);
 		if (!pte_write(*_pte)) {
@@ -764,7 +773,6 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
 	struct emp_gpa *gpa;
 
 	____gpa_to_hva_len_off(vmr, head, head_idx, addr, page_len, ____off);
-	addr += (unsigned long) ____off << PAGE_SHIFT;
 	debug_BUG_ON((page_len != (1 << gpa_subblock_order(head)))
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
@@ -797,8 +805,8 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
 
 		/* we does not update page_len since partial map gpa block
 		 * can have only single subblock. */
-		__cow_wrprotect_pte(vmr->host_vma, gpa_page(gpa),
-						pmd, addr, page_len, lfs);
+		__cow_wrprotect_pte(vmr->host_vma, gpa_page(gpa), pmd, addr,
+						____off, page_len, lfs);
 next:
 		addr += PAGE_SIZE << gpa_subblock_order(gpa);
 	}
@@ -1102,7 +1110,8 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 
 	for_each_gpas(old, old_head) {
 		/* decrease ref_count and map_count of old page */
-		__remove_rmap_on_pages(gpa_page(old), vmr->host_vma, page_len);
+		__remove_rmap_on_pages(gpa_page(old), ____off, vmr->host_vma,
+					page_len);
 		__emp_put_pages_map(vmr, old, page_len);
 
 		/* we does not update page_len since partial map gpa block
