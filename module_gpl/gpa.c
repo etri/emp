@@ -871,10 +871,24 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	for_each_gpas(gpa, head) {
 		pte_t *ptep, pte, *ptep_base;
 		int pte_clear_count;
-		struct page *sb_page, *page;
+		struct page *sb_page, *map_page, *page;
 
+		/* @sb_page is the head: the reference count and the page flags
+		 * live there. @map_page is the first page this vmr's ptes
+		 * actually map, which is where the rmap walk starts. */
 		sb_page = gpa->local_page->page;
-		if (page_mapcount(sb_page) == 0) {
+		map_page = sb_page + page_off;
+		/* Fully-unmapped shortcut. Only for a subblock every mapper sees
+		 * whole: there, one page's map count of zero means nobody maps
+		 * the subblock, so this vmr is the sole owner and its record can
+		 * simply be retired. A PARTIAL subblock may be viewed by two
+		 * vmrs over disjoint pages, so a zero on THIS vmr's first page
+		 * says nothing about the other's -- taking the shortcut there
+		 * would assert sole ownership falsely. The normal walk below
+		 * handles it: zapped ptes are skipped one by one and only this
+		 * vmr's record is removed. */
+		if (page_mapcount(map_page) == 0
+			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
 			gpa->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->id);
 			emp_lp_remove_pmd(emm, gpa->local_page, vmr->id);
@@ -909,7 +923,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		pfn = pte_pfn(*ptep);
 
 		pte_clear_count = 0;
-		for (i = 0, addr = hva, page = sb_page; i < pages_len;
+		for (i = 0, addr = hva, page = map_page; i < pages_len;
 				i++, addr += PAGE_SIZE, ptep++, pfn++, page++) {
 			pte = *ptep;
 			/* kernel may be closing vma and concurrently unmap pte.
@@ -928,10 +942,10 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 					__func__,
 					addr,
 					i, pte_val(pte), pte_pfn(pte),
-					(unsigned long) sb_page, page_to_pfn(sb_page),
-					sb_page->flags,
-					i, (unsigned long) (sb_page + i),
-					page_to_pfn(sb_page + i), (sb_page + i)->flags,
+					(unsigned long) map_page, page_to_pfn(map_page),
+					map_page->flags,
+					i, (unsigned long) (map_page + i),
+					page_to_pfn(map_page + i), (map_page + i)->flags,
 					vmr->vm_start, vmr->vm_end,
 					vma->vm_flags,
 					vmr->descs->vm_base);
@@ -1181,7 +1195,8 @@ static inline void __lock_max_block(struct emp_gpa *max_head, int num)
 /* return true if any pages are dirty. return false otherwise. */
 static inline bool
 __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
-			unsigned long hva, unsigned long page_len, pmd_t *pmd)
+			unsigned long hva, unsigned int offset,
+			unsigned long page_len, pmd_t *pmd)
 {
 	pte_t *ptep, pte, *ptep_base;
 	bool dirty = false;
@@ -1199,7 +1214,9 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	ptep = emp_pte_map(pmd, hva);
 	ptep_base = ptep;
 	pfn = pte_pfn(*ptep);
-	page = gpa->local_page->page;
+	/* the first page the ptes at @hva map, which is not the head of the
+	 * allocation when the subblock is clipped at its head */
+	page = gpa->local_page->page + offset;
 	for (i = 0; i < page_len; i++, hva += PAGE_SIZE, ptep++, pfn++, page++) {
 		/* kernel may be unmap this PTE due to the splitted vma
 		 * Then, just skip the unmap. */
@@ -1265,7 +1282,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 			dirty = __unmap_subblock_single_vmr(vmr, head,
 					head_hva + ((unsigned long) sb_page_off
 							<< PAGE_SHIFT),
-					sb_page_len, pmd);
+					sb_page_off, sb_page_len, pmd);
 			if (dirty)
 				set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 			emp_update_rss_sub(vmr, sb_page_len,
@@ -1285,7 +1302,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 					emp_lp_lookup_pmd(gpa, vmr->id) == pmd);
 #endif
 			dirty |= __unmap_subblock_single_vmr(vmr, gpa, head_hva,
-							sb_page_len, pmd);
+							0, sb_page_len, pmd);
 			head_hva += sb_page_len << PAGE_SHIFT;
 		}
 		if (dirty)
