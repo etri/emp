@@ -959,7 +959,7 @@ static struct emp_gpa *
 __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		struct emp_vmr *front_vmr, struct emp_vmr *back_vmr,
 		unsigned long split_addr, struct emp_gpa *split_head,
-		unsigned long split_head_index, unsigned long split_index,
+		unsigned long split_head_index, unsigned long boundary,
 		pmd_t *pmd)
 {
 	struct emp_mm *emm = new_vmr->emm;
@@ -975,10 +975,10 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 	unsigned int pg_off;
 	bool reduced = false;
 
-	dprintk("%s new_vmr = %d prev_vmr = %d, front_vmr = %d, back_vmr = %d, split_head_index = %ld, split_index = %ld\n", __func__, new_vmr->id, prev_vmr->id, front_vmr->id, back_vmr->id, split_head_index, split_index);
+	dprintk("%s new_vmr = %d prev_vmr = %d, front_vmr = %d, back_vmr = %d, split_head_index = %ld, boundary = %ld\n", __func__, new_vmr->id, prev_vmr->id, front_vmr->id, back_vmr->id, split_head_index, boundary);
 	// get split gpa's page length
-	____gpa_to_hva_len_off(prev_vmr, prev_vmr->descs->gpa_dir[split_index],
-				split_index, addr, pg_len, pg_off);
+	____gpa_to_hva_len_off(prev_vmr, prev_vmr->descs->gpa_dir[boundary],
+				boundary, addr, pg_len, pg_off);
 
 	// reduce block
 	reduced = split_reduce_block(emm, new_vmr, prev_vmr, split_head, split_head_index, hs);
@@ -994,7 +994,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		 */
 		// allocate gpadesc of which desc_order is 0 for back_vmr
 		back_gpa = alloc_gpadesc(emm, 0);
-		dprintk("%s alloc_gpadesc: back_gpa = %p split_index = %ld\n", __func__, back_gpa, split_index);
+		dprintk("%s alloc_gpadesc: back_gpa = %p boundary = %ld\n", __func__, back_gpa, boundary);
 		if (unlikely(!back_gpa)) {
 			printk(KERN_ERR "ERROR: cannot allocate gpa descriptor. "
 				"emm: %d desc_order: %d\n",
@@ -1003,19 +1003,19 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		}
 
 		// copy old gpa to new gpa
-		memcpy(back_gpa, back_vmr->descs->gpa_dir[split_index], sizeof(struct emp_gpa));
+		memcpy(back_gpa, back_vmr->descs->gpa_dir[boundary], sizeof(struct emp_gpa));
 
 		// set new gpa to back_vmr
-		back_vmr->descs->gpa_dir[split_index] = back_gpa;
+		back_vmr->descs->gpa_dir[boundary] = back_gpa;
 
 		// alloc back_gpa's local_page and copy its pages
-		front_pg_len = split_local_page(front_vmr, back_vmr, split_index, pmd);
+		front_pg_len = split_local_page(front_vmr, back_vmr, boundary, pmd);
 
 		// free back_gpa's remote page value
 		set_gpa_remote_page_free(back_gpa);
 
 		/* update front_gpa */
-		front_gpa = front_vmr->descs->gpa_dir[split_index];
+		front_gpa = front_vmr->descs->gpa_dir[boundary];
 		//if (front_gpa->local_page) {
 		if (ACTIVE_BLOCK(front_gpa)) {
 #ifdef CONFIG_EMP_DEBUG
@@ -1042,18 +1042,18 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 			if (front_vmr == prev_vmr) {
 				emp_update_rss_sub_kernel(new_vmr, front_pg_len,
 					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
-					new_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+					new_vmr->descs->gpa_dir[boundary], DEBUG_UPDATE_RSS_SUBBLOCK);
 				emp_update_rss_add_kernel(prev_vmr, front_pg_len,
 					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
-					prev_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+					prev_vmr->descs->gpa_dir[boundary], DEBUG_UPDATE_RSS_SUBBLOCK);
 			} else {
 				back_pg_len = pg_len - front_pg_len;
 				emp_update_rss_sub_kernel(new_vmr, back_pg_len,
 					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
-					new_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+					new_vmr->descs->gpa_dir[boundary], DEBUG_UPDATE_RSS_SUBBLOCK);
 				emp_update_rss_add_kernel(prev_vmr, back_pg_len,
 					DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
-					prev_vmr->descs->gpa_dir[split_index], DEBUG_UPDATE_RSS_SUBBLOCK);
+					prev_vmr->descs->gpa_dir[boundary], DEBUG_UPDATE_RSS_SUBBLOCK);
 			}
 		}
 
@@ -1099,6 +1099,13 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 	unsigned long prev_vpn_base, prev_vpn_start, prev_vpn_end;
 	pmd_t *pmd;
 	unsigned long split_index;
+	/* Index of the first subblock on the UPPER vma's side of the split:
+	 * the cut point. It is not always @split_index, which names the
+	 * subblock to treat as partial. When the split address is subblock
+	 * aligned and the new vma is the lower half, index_end is rounded up,
+	 * so @split_index is the last subblock of the lower half while the cut
+	 * is one further on. */
+	unsigned long boundary;
 
 #ifdef CONFIG_EMP_DEBUG
 	if (prev_vmr->vm_end == new_vmr->vm_start) {
@@ -1150,6 +1157,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				split_index = index_start;
 			}
 		}
+		boundary = index_start;
 
 	} else { /* [new_vmr] + [prev_wmr] */
 		dprintk("%s new_vmr(%d) index_start = %ld index_end = %ld prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld\n",
@@ -1165,6 +1173,10 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				split_index = index_end - 1;
 			}
 		}
+		/* prev is the upper half here, and its first subblock is
+		 * index_end - 1 when the split address falls inside a subblock
+		 * and index_end when it is aligned. */
+		boundary = prev_index_start;
 	}
 
 	dprintk("%s split head = %p split index = %ld\n", __func__, split_head, split_index);
@@ -1340,9 +1352,15 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 		if (head == split_head) {
 			if (prev_vmr->vm_end == new_vmr->vm_start) { /* [prev_vmr] + [new_wmr] */
-				head = __split_gpadesc(new_vmr, prev_vmr, prev_vmr, new_vmr, new_vmr->vm_start, split_head, head_idx, index_start, pmd);
+				head = __split_gpadesc(new_vmr, prev_vmr,
+						prev_vmr, new_vmr,
+						new_vmr->vm_start, split_head,
+						head_idx, boundary, pmd);
 			} else { /* [new_vmr] + [prev_wmr] */
-				head = __split_gpadesc(new_vmr, prev_vmr, new_vmr, prev_vmr, new_vmr->vm_end, split_head, head_idx, index_end - 1, pmd);
+				head = __split_gpadesc(new_vmr, prev_vmr,
+						new_vmr, prev_vmr,
+						new_vmr->vm_end, split_head,
+						head_idx, boundary, pmd);
 			}
 		}
 
