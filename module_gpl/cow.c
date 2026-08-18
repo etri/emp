@@ -1544,7 +1544,13 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 #endif
 {
 	int ret = 0;
-	int max_desc_order = gpa_max_block_order(demand)
+	/* The ALLOCATION order, which is the region's -- not the block's, and
+	 * not the block's ceiling. A descriptor group is allocated, published
+	 * into gpa_dir and freed as one object of this size, see new_gpadesc()
+	 * and free_gpa_dir_region(), so a CoW replacement has to cover exactly
+	 * one whole group. gpa_max_block_order() named the same number only
+	 * because nothing ever lowered it; a vma split is about to. */
+	int max_desc_order = get_gpadesc_region(vmr->descs, demand_idx)->alloc_order
 					- gpa_subblock_order(demand);
 	struct emp_gpa **gpa_dir = vmr->descs->gpa_dir;
 	unsigned long idx, max_head_idx, end_idx;
@@ -1553,7 +1559,7 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 	struct emp_gpa *add_to_active[1 << max_desc_order];
 	int num_add_to_active = 0, size_add_to_active = 0;
 
-	debug_assert(gpa_max_block_order(demand) ==
+	debug_assert(gpa_max_block_order(demand) <=
 			get_gpadesc_region(vmr->descs, demand_idx)->alloc_order);
 
 	/* Set variables related to max_block */
@@ -1739,8 +1745,15 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	/* Assert that demand is the block head */
 	debug_assert(head_idx == emp_get_block_head_index(vmr, head_idx));
 
-	/* To support elastic block */
-	if (gpa_block_order(head) != gpa_max_block_order(head))
+	/* Take the fast path only when this block IS the whole descriptor group,
+	 * because that path re-allocates gpa_desc_order(head) descriptors and
+	 * publishes them into gpa_dir. Compare against the region's order --
+	 * the allocation order -- and not against the block's ceiling: elastic
+	 * block lowers the block order below the group, a vma split lowers the
+	 * ceiling as well, and in both cases the whole group still has to be
+	 * replaced at once. */
+	if (gpa_block_order(head)
+			!= get_gpadesc_region(vmr->descs, head_idx)->alloc_order)
 #ifdef CONFIG_EMP_DEBUG
 		return __handle_emp_cow_fault_reduced(emm, vmr, head, head_idx,
 							va, caller, vmf_page);
