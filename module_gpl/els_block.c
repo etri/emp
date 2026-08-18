@@ -203,6 +203,15 @@ static struct emp_gpa *_els_is_stretchable(struct emp_gpa *shead, struct emp_gpa
 #endif
 
 	buddy = (shead == chead)? (shead + num_subblock_in_block(shead)): shead;
+	/* The buddy's own ceiling matters as much as @chead's, because
+	 * __els_stretch() raises the block order of every member of the merged
+	 * block: a buddy which has already reached its ceiling cannot take
+	 * part. A no-op while every gpa in a region shares one ceiling. It is
+	 * what will hold a vma split boundary, where the blocks cut to fit it
+	 * have their ceiling lowered so they can never be merged back across
+	 * it. */
+	if (gpa_block_order(buddy) >= gpa_max_block_order(buddy))
+		return NULL;
 	if (is_gpa_flags_set(buddy, GPA_PREFETCHED_MASK | GPA_PINNED_MASK))
 		return NULL;
 	if ((buddy->r_state != state) || 
