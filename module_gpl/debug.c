@@ -329,6 +329,33 @@ static void ____debug_update_rss_warn_once_vmr_id(const char *func, int vmr_id) 
 				func, vmr_id, CONFIG_EMP_DEBUG_RSS_MAX_VMRS);
 }
 
+#ifdef CONFIG_EMP_DEBUG_PAGE_REF
+/* Refer to the declaration in debug.h: the debug count is taken in person from
+ * the mapper records, never from the maintained counter it is checking. */
+int debug_emp_lp_mapped_page_len(struct emp_mm *emm, struct local_page *lp)
+{
+	struct mapped_pmd *p;
+	int sum = 0;
+
+	if (EMP_LP_PMDS_EMPTY(&lp->pmds))
+		return 0;
+	if (unlikely(!lp->gpa))
+		return 0;
+
+	p = &lp->pmds;
+	do {
+		struct emp_vmr *vmr;
+		if (unlikely(p->vmr_id < 0 || p->vmr_id >= EMP_VMRS_MAX))
+			continue;
+		vmr = emm->vmrs[p->vmr_id];
+		if (likely(vmr))
+			sum += __gpa_to_page_len(vmr, lp->gpa, lp->gpa_index);
+	} while ((p = p->next) != &lp->pmds);
+	return sum;
+}
+EXPORT_SYMBOL(debug_emp_lp_mapped_page_len);
+#endif /* CONFIG_EMP_DEBUG_PAGE_REF */
+
 static void COMPILER_DEBUG __debug_update_rss_add(struct emp_vmr *vmr, struct local_page *lp, char *file, int line) {
 	int vmr_id = vmr->id;
 	int i = vmr_id / (sizeof(u64)*8);

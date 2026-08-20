@@ -191,9 +191,8 @@ static inline bool is_debug_page_ref_correct(struct local_page *lp, int *refcnt,
 	u64 t = 0;
 retry:
 	ref = page_count(lp->page) + known_diff;
-	/* we simply read _mapcount value to use this on pro module. */ \
-	map = debug_page_mapcount(lp->page);
-	correct = 1 + (map * lp->debug_page_ref_page_len)
+	map = debug_emp_lp_mapped_page_len(lp->emm, lp);
+	correct = 1 + map
 			+ lp->debug_page_ref_in_mmu_noti
 			+ lp->debug_page_ref_in_io
 			+ lp->debug_page_ref_in_will_pte

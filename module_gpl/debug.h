@@ -52,6 +52,8 @@ void debug_update_rss_free_local_page(struct local_page *lp);
 
 /**************************** EMP DEBUG PAGE REF ************************/
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
+/* Count the pages the mapper set holds, in person */
+int debug_emp_lp_mapped_page_len(struct emp_mm *emm, struct local_page *lp);
 void __debug_page_ref_print_all(struct local_page *lp);
 void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 			unsigned long head_idx, pmd_t *pmd, bool map_expected);
