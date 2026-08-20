@@ -362,7 +362,6 @@ bool els_stretch_rep(struct emp_mm *bvma, struct vcpu_var *cpu,
  */
 bool els_reduce(struct emp_mm *bvma, struct emp_gpa *s, struct emp_gpa *hs[])
 {
-	bool dirty_block;
 	struct emp_gpa *buddy, *g;
 	int curr_order, next_order;
 	unsigned int flag;
@@ -379,7 +378,6 @@ bool els_reduce(struct emp_mm *bvma, struct emp_gpa *s, struct emp_gpa *hs[])
 	debug_progress_start(buddy, s);
 
 	flag = get_gpa_flags(s);
-	dirty_block = flag & GPA_DIRTY_MASK;
 
 	for (g = s; g < s + num_sb; g++)
 		set_gpa_block_order(g, next_order);
