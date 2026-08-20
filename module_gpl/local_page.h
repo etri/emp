@@ -92,6 +92,7 @@ struct local_page {
 	u64               dma_addr;
 	int               vmr_id;
 	int               num_pmds;
+	int               page_map_count; /* page->_refcount held because of mapping */
 	struct mapped_pmd pmds;
 	// for inactive queue for cpu and stat
 	s16             cpu;

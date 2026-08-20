@@ -969,6 +969,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		emp_pte_unmap(ptep_base);
 
 		page_ref_sub(sb_page, pte_clear_count);
+		gpa->local_page->page_map_count -= pte_clear_count;
 		debug_page_ref_mark(vmr->id, gpa->local_page, -pte_clear_count);
 		debug_check_lessthan(page_count(sb_page), 1);
 		if (mapped && accessed &&

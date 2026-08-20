@@ -203,6 +203,7 @@ ____emp_get_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 	struct page *page = gpa->local_page->page;
 	debug_check_head(page);
 	page_ref_add(page, page_len);
+	gpa->local_page->page_map_count += page_len;
 }
 
 #define __emp_get_pages_map(vmr, gpa, page_len) do { \
@@ -224,6 +225,7 @@ ____emp_put_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 	struct page *page = gpa->local_page->page;
 	debug_check_head(page);
 	page_ref_sub(page, page_len);
+	gpa->local_page->page_map_count -= page_len;
 }
 
 #define __emp_put_pages_map(vmr, gpa, page_len) do { \

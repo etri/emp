@@ -371,7 +371,6 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 	struct emp_gpa *pf_sb;
 #endif
 	struct page *p;
-	int page_size;
 	int count_page, count_max, count_def;
 
 #ifdef CONFIG_EMP_VM
@@ -395,13 +394,11 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 		count_def = 1;
 	}
 
-	page_size = __local_gpa_to_page_len(vmr, head);
-
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
 
 		count_page = emp_page_count(p);
-		count_max = count_def + page_size * emp_lp_count_pmd(g->local_page);
+		count_max = count_def + g->local_page->page_map_count;
 
 #ifdef CONFIG_EMP_BLOCK
 		// prefetched subblock in CSF has been handled its I/O

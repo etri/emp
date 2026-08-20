@@ -172,6 +172,7 @@ static inline void emp_init_local_page(struct local_page *lp, int vmr_id,
 
 	set_local_page_cpu_only(lp, EMP_UNKNOWN_CPU_ID);
 	lp->demand_offset = 0;
+	lp->page_map_count = 0;
 	lp->w = NULL;
 }
 
