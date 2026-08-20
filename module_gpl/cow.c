@@ -1584,10 +1584,7 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 	for (idx = max_head_idx; idx < end_idx;
 			idx += num_subblock_in_block(old_head)) {
 		old_head = emp_lock_block(vmr, NULL, idx);
-		// Since we lock max_block in increasing order,
-		// re-locking in __clear_gpa_for_cow() does not
-		// modify the old_head.
-		__clear_gpa_for_cow(emm, vmr, old_head, idx);
+		clear_block_for_reduction(emm, vmr, old_head, idx);
 #ifdef CONFIG_EMP_BLOCK
 		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_PREFETCHED_CSF_MASK));
 		debug_BUG_ON(is_gpa_flags_set(old_head, GPA_PREFETCHED_CPF_MASK));

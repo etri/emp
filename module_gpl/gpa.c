@@ -1881,6 +1881,67 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	return 0;
 }
 
+#ifdef CONFIG_EMP_USER
+/* Clear block's intermediate states before split a block to several blocks.
+ * Currently, the callers are CoW and split, enabled by CONFIG_EMP_USER.
+ */
+void clear_block_for_reduction(struct emp_mm *emm, struct emp_vmr *vmr,
+			struct emp_gpa *head, unsigned long head_idx)
+{
+#ifdef CONFIG_EMP_EXT
+	bool check_map = false;
+#endif
+#ifdef CONFIG_EMP_BLOCK
+	/* Support CSF and CPF
+	 * - We should wait for fetching whole block and install ptes. */
+	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+#ifdef CONFIG_EMP_VM
+		/* Since VM does not use fork */
+		debug_assert(is_gpa_flags_set(head, GPA_EPT_MASK) == false);
+#endif
+		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
+			clear_gpa_prefetched_hpt(emm, vmr, head, head_idx);
+#ifdef CONFIG_EMP_EXT
+			check_map = true;
+#endif
+		}
+		clear_gpa_flags_if_set(head, GPA_PREFETCHED_MASK);
+		emp_stat_inc(emm, csf_fault);
+	}
+#endif /* CONFIG_EMP_BLOCK */
+#ifdef CONFIG_EMP_EXT
+	if (check_map == false && emp_ext.prepare_install_hptes)
+		emp_ext.prepare_install_hptes(emm, vmr, head, NULL, false, true);
+#endif
+
+/* NOTE: CONFIG_EMP_IO is enabled only with CONFIG_EMP_VM.
+ *       Currently, all callers of this function are enabled when CONFIG_EMP_USER
+ *       is true. Elastic block management may reduce a block with CONFIG_EMP_VM,
+ *       but it reduces block at inactive list. They do not need to clear
+ *       the blocks.
+ *
+ *       However, we remain this part for the future.
+ *       Note that this part may re-lock the head.
+ */
+#ifdef CONFIG_EMP_IO
+	// wait for completion of IO in progress
+	if (is_gpa_flags_set(head, GPA_IO_IP_MASK)) {
+		struct page *page;
+		debug_BUG_ON(!head->local_page);
+		debug_BUG_ON(!head->local_page->page);
+		page = head->local_page->page;
+		emp_unlock_block(head);
+
+		wait_on_page_locked(page);
+
+		head = emp_lock_block(vmr, NULL, head_idx);
+		debug_BUG_ON(!head); // gpa has existed.
+	}
+#endif
+}
+#endif /* CONFIG_EMP_USER */
+
+
 /**
  * cleanup_gpa - Reinitialize the gpa data structure
  * @param bvma bvma data structure

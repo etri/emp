@@ -213,6 +213,7 @@ const char *debug_rss_sub_str[NUM_DEBUG_RSS_SUB_ID] = {
 const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
 	"VMA_OPEN",
 	"COW_MULTI_ACTIVE",
+	"VMA_SPLIT",
 };
 
 const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {

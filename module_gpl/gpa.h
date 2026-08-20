@@ -333,6 +333,9 @@ bool emp_vmdesc_view_is_covered(struct emp_vmdesc *desc, unsigned long start,
 bool emp_vmdesc_view_find_uncovered(struct emp_vmdesc *desc, unsigned long *__start,
 			unsigned long *__end);
 void emp_vmdesc_view_exit(struct emp_vmdesc *desc);
+
+void clear_block_for_reduction(struct emp_mm *emm, struct emp_vmr *vmr,
+			struct emp_gpa *head, unsigned long head_idx);
 #endif /* CONFIG_EMP_USER */
 int gpas_open(struct emp_vmr *);
 void gpas_close(struct emp_vmr *, bool, bool);
