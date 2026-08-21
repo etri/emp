@@ -335,7 +335,7 @@ __add_to_writeback(struct emp_mm *emm, struct emp_gpa *gpa)
 	ret = emp_writeback_block(emm, gpa, cpu);
 #endif
 #ifdef CONFIG_EMP_BLOCKDEV
-	if (emm->mrs.blockdev_used)
+	if (ret > 0 && emm->mrs.blockdev_used)
 		io_schedule();
 #endif
 	/* TODO: els_stat_writeback_add() */
