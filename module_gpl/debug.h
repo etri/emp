@@ -58,6 +58,7 @@ void __debug_page_ref_print_all(struct local_page *lp);
 void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 			unsigned long head_idx, pmd_t *pmd, bool map_expected);
 #else
+#define debug_emp_lp_mapped_page_len(emm, lp) do {} while (0)
 #define __debug_page_ref_print_all(lp) do {} while (0)
 #define debug_check_page_map_status(vmr, head, head_idx, pmd, map_expected) do {} while (0)
 #endif
