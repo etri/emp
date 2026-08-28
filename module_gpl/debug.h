@@ -8,6 +8,9 @@
 #include "lru.h"
 #include "debug_assert.h"
 #include "alloc.h"
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+#include <linux/gfp.h>
 
 /******************** EMP DEBUG BULK MESSAGE LOCK ***********************/
 void emp_debug_bulk_msg_lock(void);
@@ -96,14 +99,14 @@ void __debug_cache_destroy(void *__addr, const char *file, const int line);
 void emp_debug_alloc_init(void);
 void emp_debug_alloc_exit(void);
 #define __emp_alloc(func, size, ...) ({\
-	void *____ret = (func)(__VA_ARGS__); \
+	void *____ret = func(__VA_ARGS__); \
 	emp_debug_alloc(____ret, size); \
 	____ret; \
 })
 
 #define __emp_free(func, addr, ...) do {\
 	emp_debug_free(addr); \
-	(func)(__VA_ARGS__); \
+	func(__VA_ARGS__); \
 } while (0)
 
 #define __emp_cache_create(name, size, align, flags, ctor) ({\
@@ -155,8 +158,8 @@ void emp_debug_alloc_exit(void);
 #else /* !CONFIG_EMP_DEBUG_ALLOC */
 #define emp_debug_alloc_init() do{} while(0)
 #define emp_debug_alloc_exit() do{} while(0)
-#define __emp_alloc(func, size, ...) (func)(__VA_ARGS__)
-#define __emp_free(func, addr, ...) (func)(__VA_ARGS__)
+#define __emp_alloc(func, size, ...) func(__VA_ARGS__)
+#define __emp_free(func, addr, ...) func(__VA_ARGS__)
 #define __emp_cache_create(name, size, align, flags, ctor) kmem_cache_create(name, size, align, flags, ctor)
 #define __emp_cache_destroy(cachep) kmem_cache_destroy(cachep)
 #define __emp_cache_alloc(cachep, flags) kmem_cache_alloc(cachep, flags)
