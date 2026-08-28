@@ -67,8 +67,14 @@ struct local_page {
 	} debug_lru_history[DEBUG_LRU_SIZE];
 	unsigned long debug_lru_next;
 #endif
-#ifdef CONFIG_EMP_DEBUG
+	/* The descriptor this local page belongs to, for its whole lifetime.
+	 * Written once by alloc_local_page() and never again: backing may be
+	 * handed from one descriptor to another, but the local_page object is
+	 * not transferable, so a reader never has to re-validate that the
+	 * descriptor it just resolved is still the owner. Reclaim reaches a
+	 * local page from an lru list and names its descriptor directly. */
 	struct emp_gpa *gpa;
+#ifdef CONFIG_EMP_DEBUG
 	struct emp_mm *emm;
 	unsigned long page_pfn;
 #endif

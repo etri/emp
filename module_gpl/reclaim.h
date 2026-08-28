@@ -80,11 +80,7 @@ int update_lru_lists(struct emp_mm *, struct vcpu_var *, struct emp_gpa **, int,
 static inline struct emp_gpa *
 __get_gpa_from_local_page(struct emp_mm *emm, struct local_page *lp)
 {
-#ifdef CONFIG_EMP_DEBUG
 	return lp->gpa;
-#else
-	return get_exist_gpadesc(emm->vmrs[lp->vmr_id], lp->gpa_index);
-#endif
 }
 
 void reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas);

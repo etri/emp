@@ -212,8 +212,9 @@ alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
 	list_add(&local_page->elem, &bvma->ftm.local_page_list);
 	spin_unlock(&bvma->ftm.local_page_list_lock);
 #endif
-#ifdef CONFIG_EMP_DEBUG
+	/* the only writer of ->gpa in the tree */
 	local_page->gpa = gpa;
+#ifdef CONFIG_EMP_DEBUG
 	local_page->emm = bvma;
 #endif
 
@@ -228,6 +229,11 @@ alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
 static void free_local_page(struct emp_mm *bvma,
 			struct local_page *local_page)
 {
+	/* Delist before destroy. Reclaim reaches a local page from an lru list
+	 * and then names its descriptor through ->gpa, so a listed local page
+	 * must still exist and must still be bound; whoever destroys one has
+	 * to have taken it off its list under the list lock first. */
+	debug_assert(list_empty(&local_page->lru_list));
 #ifdef CONFIG_EMP_DEBUG_LRU_LIST
 	spin_lock(&bvma->ftm.local_page_list_lock);
 	list_del_init(&local_page->elem);

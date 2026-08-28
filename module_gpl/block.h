@@ -472,42 +472,39 @@ get_next_exist_head_gpadesc(struct emp_vmr *vmr, unsigned long *indexp) {
 static inline struct emp_gpa *
 _emp_trylock_local_page(struct emp_mm *emm, struct local_page *lp)
 {
-	int vmr_id = lp->vmr_id;
-	unsigned long gpa_idx = lp->gpa_index;
-	struct emp_vmr *vmr;
-	struct emp_gpa *gpa, *head;
+	struct emp_gpa *gpa = lp->gpa;
+	struct emp_gpa *head;
 
-	/* Before locking, local_page can be in any state */
-	if (unlikely(vmr_id < 0))
-		return NULL;
-	vmr = emm->vmrs[vmr_id];
-	if (unlikely(vmr == NULL || vmr->vmr_closing == true))
-		return NULL;
-	/* the caller have the list lock. Thus, even if the local page has been
-	 * removing by gpas_close(), gpas_close() cannot free the local page
-	 * and cannot free vmr since both requires the list lock.
-	 */
-	gpa = get_exist_gpadesc(vmr, gpa_idx);
-	head = _emp_trylock_block(vmr, &gpa, gpa_idx);
-	if (head == NULL)
-		return NULL;
-	if (likely(gpa->local_page == lp && vmr->vmr_closing == false))
-		return head;
-	else {
-		/* local_page may be migrated */
-		_emp_unlock_block(head);
-		return NULL;
+	/* @lp->gpa is written once, when @lp is created, and never again, so
+	 * it needs neither a lookup nor a re-validation and no vmr has to be
+	 * alive for reclaim to name this descriptor. The caller holds the list
+	 * lock, and a local page is delisted before it is destroyed, so both
+	 * @lp and its descriptor are alive here. */
+	debug_assert(gpa != NULL);
+
+	while (1) {
+		head = ___emp_trylock_block(emp_get_block_head(gpa));
+		if (head == NULL)
+			return NULL;
+		if (likely(head == emp_get_block_head(gpa)))
+			break;
+		/* The block order changed between deriving the head and
+		 * acquiring it, so the head moved. This is about geometry, not
+		 * about who owns the page. */
+		___emp_unlock_block(head);
+		cond_resched();
 	}
+
+	debug_assert(gpa->local_page == lp);
+	return head;
 }
 
 static inline void
 _emp_unlock_local_page(struct emp_mm *emm, struct local_page *lp)
 {
-	struct emp_gpa *gpa, *head;
-	debug_assert(lp->vmr_id >= 0);
-	gpa = get_exist_gpadesc(emm->vmrs[lp->vmr_id], lp->gpa_index);
-	debug_assert(gpa->local_page == lp);
-	head = emp_get_block_head(gpa);
+	/* the same derivation the trylock made, and it cannot have moved: an
+	 * order change locks every member of the block first */
+	struct emp_gpa *head = emp_get_block_head(lp->gpa);
 	debug_assert(____emp_gpa_is_locked(head));
 	_emp_unlock_block(head);
 }
@@ -521,25 +518,18 @@ _emp_trylock_work_request(struct emp_mm *emm, struct work_request *w)
 
 	/* before locking, anything can happen on @lp. Check anything. */
 	lp = w->gpa->local_page;
-	if (unlikely(lp->w != w))
+	if (unlikely(lp == NULL || lp->w != w))
 		return NULL;
-
-	if (lp->vmr_id < 0) {
-		head = emp_get_block_head(w->gpa);
-		head = ___emp_trylock_block(head);
-		if (head && w->gpa->local_page->w == w)
-			return head;
-		else
-			return NULL;
-	}
 
 	head = _emp_trylock_local_page(emm, lp);
 	if (head == NULL)
 		return NULL;
-	/* NOTE: lp == w->gpa->local_page.
-	 *       Otherwise, emp_trylock_local_page() returns NULL. */
+
+	if (unlikely(w->gpa->local_page != lp || lp->w != w)) {
+		_emp_unlock_block(head);
+		return NULL;
+	}
 	debug_assert(head == emp_get_block_head(w->gpa));
-	debug_assert(lp->w == w);
 
 	return head;
 }
@@ -586,11 +576,7 @@ _emp_trylock_work_request(struct emp_mm *emm, struct work_request *w)
 	if (____ret) debug_progress_gpa_lock(____ret, lp); \
 	____ret; })
 #define emp_unlock_local_page(emm, lp) do { \
-	struct emp_gpa *____gpa, *____head; \
-	debug_assert((lp)->vmr_id >= 0); \
-	____gpa = get_exist_gpadesc((emm)->vmrs[(lp)->vmr_id], (lp)->gpa_index); \
-	____head = emp_get_block_head(____gpa); \
-	debug_progress_gpa_lock(____head, lp); \
+	debug_progress_gpa_lock(emp_get_block_head((lp)->gpa), lp); \
 	_emp_unlock_local_page(emm, lp); \
 } while (0)
 #define emp_trylock_work_request(emm, w) ({ \
