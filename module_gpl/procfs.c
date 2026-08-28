@@ -1676,6 +1676,40 @@ static struct emp_proc_entry emp_proc_global[] = {
 	emp_proc_entry_END,
 };
 
+#ifdef CONFIG_EMP_DEBUG_SYNC_HPT
+/* Per-observation-point counts for the hpt mapper-set checker: how often each
+ * point was reached, and how often it found the subblocks of a block
+ * disagreeing about who maps them, or a just-installed vmr missing from some
+ * of them. */
+static ssize_t debug_sync_hpt_read(struct file *file, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	/* header + one row per point. A row is "%5d %7d %7d %7d\n", but those
+	 * are MINIMUM widths: a counter wider than its field expands it, and %d
+	 * of an int runs to 11 characters. Worst case is 30 + 3 * 48 = 174, so
+	 * size for that rather than truncate a row away exactly when the counts
+	 * have grown interesting. */
+	char buffer[PROC_BUF_SIZE * 4];
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	ssize_t len = 0;
+	int i;
+
+	if (bvma == NULL)
+		return 0;
+
+	len = snprintf(buffer, sizeof(buffer),
+			"point checked unequal partial\n");
+	for (i = 0; i < NUM_DEBUG_SYNC_HPT_POINTS && len < sizeof(buffer); i++)
+		len += snprintf(buffer + len, sizeof(buffer) - len,
+				"%5d %7d %7d %7d\n", i,
+				atomic_read(&bvma->debug_sync_hpt_checked[i]),
+				atomic_read(&bvma->debug_sync_hpt_unequal[i]),
+				atomic_read(&bvma->debug_sync_hpt_partial[i]));
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+#endif /* CONFIG_EMP_DEBUG_SYNC_HPT */
+
 static struct emp_proc_entry emp_proc_vm[] = {
 	emp_proc_entry_ro(online),
 	emp_proc_entry_ro(local_cache_size),
@@ -1708,6 +1742,9 @@ static struct emp_proc_entry emp_proc_vm[] = {
 #endif
 #ifdef CONFIG_EMP_RDMA
 	emp_proc_entry_ro(donor_info),
+#endif
+#ifdef CONFIG_EMP_DEBUG_SYNC_HPT
+	emp_proc_entry_ro(debug_sync_hpt),
 #endif
 	emp_proc_entry_ro(mem_alloc_pages_len),
 	emp_proc_entry_ro(mem_proactive_len),

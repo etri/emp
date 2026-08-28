@@ -314,6 +314,11 @@ struct emp_vmr {
 #endif /* CONFIG_EMP_USER */
 };
 
+/* The diagnostics index of @vmr, or -1 when there is none. While the
+ * production registry exists (Series B-F), the registry id doubles as the
+ * diagnostics id; Series G replaces this with a debug-only id. */
+#define emp_vmr_dbgid(vmr) ((vmr) ? (vmr)->id : -1)
+
 #ifdef CONFIG_EMP_USER
 /* [vmr_view_start(), vmr_view_end()) is @vmr's view of its vmdesc, in
  * vmdesc-relative base page coordinates. vm_base is subblock-rounded down from
@@ -578,6 +583,11 @@ struct emp_mm {
 #endif
 	struct emp_config   config;
 
+#ifdef CONFIG_EMP_DEBUG_SYNC_HPT
+	atomic_t            debug_sync_hpt_checked[NUM_DEBUG_SYNC_HPT_POINTS];
+	atomic_t            debug_sync_hpt_unequal[NUM_DEBUG_SYNC_HPT_POINTS];
+	atomic_t            debug_sync_hpt_partial[NUM_DEBUG_SYNC_HPT_POINTS];
+#endif
 	spinlock_t          vmrs_lock; // protect vmrs_bitmap, vmrs_len, vmrs
 	DECLARE_BITMAP(vmrs_bitmap, EMP_VMRS_MAX);
 	int                 vmrs_len;

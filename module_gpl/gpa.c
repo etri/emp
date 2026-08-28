@@ -1527,6 +1527,7 @@ __wait_for_prefetch_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		 *       NOT theoretically required. But, the following codes
 		 *       assume that hpt map in block is synchronized.*/
 		sync_hpt_map_in_block(emm, gpa, false);
+		debug_check_sync_hpt(emm, gpa, NULL, DEBUG_SYNC_HPT_AT_UNMAP);
 	}
 }
 #endif /* CONFIG_EMP_BLOCK */

@@ -351,6 +351,13 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_alloc_exit(emm) do {} while (0)
 #endif /* !CONFIG_EMP_DEBUG */
 
+#ifdef CONFIG_EMP_DEBUG_SYNC_HPT
+void debug_check_sync_hpt(struct emp_mm *emm, struct emp_gpa *head,
+			struct emp_vmr *vmr, int point);
+#else
+#define debug_check_sync_hpt(emm, head, vmr, point) do {} while (0)
+#endif
+
 #ifdef CONFIG_EMP_DEBUG_LRU_LIST
 void __debug_add_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa, char *file, int line);
 void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa, char *file, int line);

@@ -2012,6 +2012,141 @@ void debug_check_vmdesc_views(struct emp_vmdesc *desc)
 }
 #endif /* CONFIG_EMP_USER */
 
+#ifdef CONFIG_EMP_DEBUG_SYNC_HPT
+static bool __debug_sync_hpt_has(struct local_page *lp, int vmr_id)
+{
+	struct mapped_pmd *p;
+
+	if (!lp)
+		return false;
+	for (p = emp_lp_first_mapped_pmd(lp); p;
+			p = emp_lp_next_mapped_pmd(lp, p))
+		if (p->vmr_id == vmr_id)
+			return true;
+	return false;
+}
+
+static void __debug_sync_hpt_show(struct emp_gpa *g, const char *what)
+{
+	struct local_page *lp = g->local_page;
+	struct mapped_pmd *p;
+	char buf[128];
+	int n = 0;
+
+	/* Every subblock reaching the dump is expected to be resident: the
+	 * caller has already walked this block. Check it anyway rather than
+	 * trust it -- emp_lp_first_mapped_pmd() would dereference a NULL @lp,
+	 * and this is the diagnostic path, where an oops would destroy the very
+	 * report it was asked to produce. Print the anomaly instead of skipping
+	 * the line, so an unexpected non-resident subblock shows up as evidence
+	 * rather than as a silent gap in the dump. */
+	if (!lp) {
+		printk(KERN_ERR "[SYNC_HPT]   %s gpa: %016lx idx: - state: %d "
+				"flags: 0x%x num_pmds: - mappers: <no local_page>\n",
+				what, (unsigned long) g, g->r_state,
+				__get_gpa_flags(g));
+		return;
+	}
+
+	for (p = emp_lp_first_mapped_pmd(lp); p && n < sizeof(buf) - 16;
+			p = emp_lp_next_mapped_pmd(lp, p))
+		n += snprintf(buf + n, sizeof(buf) - n, "%d ", p->vmr_id);
+	buf[n] = '\0';
+	printk(KERN_ERR "[SYNC_HPT]   %s gpa: %016lx idx: %ld state: %d "
+			"flags: 0x%x num_pmds: %d mappers: %s\n",
+			what, (unsigned long) g,
+			lp->gpa_index, g->r_state,
+			__get_gpa_flags(g), lp->num_pmds, buf);
+}
+
+/**
+ * debug_check_sync_hpt - are all subblocks of a block mapped by the same vmrs?
+ * @param emm emm data structure
+ * @param head head of the block, locked
+ * @param vmr if non-NULL, the vmr which has just installed its mapping
+ * @param point which observation point this is
+ *
+ * Two questions, counted separately because they can fail independently.
+ *
+ * Mapper-set equality: every subblock of a block should have the same set of
+ * mapping vmrs as its head. This is what sync_hpt_map_in_block() exists to
+ * establish, and the code which runs after it assumes it holds.
+ *
+ * Per-vmr completeness: if @vmr has just installed, every subblock should carry
+ * a mapping for it. This is hypothesis P1 -- that a faulting vmr's own full
+ * block installation repairs its own membership -- stated as a check.
+ *
+ * Membership is a pairwise scan. Mapper sets are small and this is a debug
+ * build, so nothing is gained by being cleverer, and a scan works the same
+ * before and after the ids become pointers.
+ */
+void debug_check_sync_hpt(struct emp_mm *emm, struct emp_gpa *head,
+			struct emp_vmr *vmr, int point)
+{
+	struct emp_gpa *end, *g;
+	struct local_page *lp_head;
+	struct mapped_pmd *p;
+	bool unequal = false, partial = false;
+
+	if (unlikely(point < 0 || point >= NUM_DEBUG_SYNC_HPT_POINTS))
+		return;
+	if (!head || !head->local_page)
+		return;
+
+	lp_head = head->local_page;
+	end = head + num_subblock_in_block(head);
+	atomic_inc(&emm->debug_sync_hpt_checked[point]);
+
+	for (g = head + 1; g < end; g++) {
+		if (!g->local_page)
+			continue;
+		if (emp_lp_count_pmd(g->local_page)
+				!= emp_lp_count_pmd(lp_head)) {
+			unequal = true;
+			break;
+		}
+		for (p = emp_lp_first_mapped_pmd(lp_head); p;
+				p = emp_lp_next_mapped_pmd(lp_head, p))
+			if (!__debug_sync_hpt_has(g->local_page, p->vmr_id)) {
+				unequal = true;
+				break;
+			}
+		if (unequal)
+			break;
+	}
+
+	if (vmr) {
+		for (g = head; g < end; g++) {
+			if (!g->local_page)
+				continue;
+			if (!__debug_sync_hpt_has(g->local_page, vmr->id)) {
+				partial = true;
+				break;
+			}
+		}
+	}
+
+	if (!unequal && !partial)
+		return;
+
+	if (unequal)
+		atomic_inc(&emm->debug_sync_hpt_unequal[point]);
+	if (partial)
+		atomic_inc(&emm->debug_sync_hpt_partial[point]);
+
+	emp_debug_bulk_msg_lock();
+	printk(KERN_ERR "[SYNC_HPT] emm: %d point: %d unequal: %d partial: %d "
+			"vmr: %016lx debug_id: %d block_order: %d\n",
+			emm->id, point, unequal ? 1 : 0, partial ? 1 : 0,
+			(unsigned long) vmr, emp_vmr_dbgid(vmr),
+			gpa_block_order(head));
+	__debug_sync_hpt_show(head, "head   ");
+	for (g = head + 1; g < end; g++)
+		__debug_sync_hpt_show(g, "subblk ");
+	emp_debug_bulk_msg_unlock();
+}
+#endif /* CONFIG_EMP_DEBUG_SYNC_HPT */
+
 void debug_free_gpa_dir_region(struct emp_gpa *head, int desc_order) {
 	int i, end;
 	int refcnt0;

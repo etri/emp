@@ -410,8 +410,10 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	emp_hpt_fetch_barrier(emm, vmr, head, demand, demand_off,
 				prefetched_sb, fetch);
 
-	if (clear_gpa_flags_if_set(head, GPA_STRETCHED_MASK) || prefetch_hit)
+	if (clear_gpa_flags_if_set(head, GPA_STRETCHED_MASK) || prefetch_hit) {
 		sync_hpt_map_in_block(emm, head, is_write);
+		debug_check_sync_hpt(emm, head, NULL, DEBUG_SYNC_HPT_AFTER_SYNC);
+	}
 	
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.prepare_install_hptes)
@@ -424,6 +426,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 
 	ret = emp_install_hptes(emm, vmr, head, demand, pmd,
 							prefetch_hit, is_write);
+	debug_check_sync_hpt(emm, head, vmr, DEBUG_SYNC_HPT_AFTER_INSTALL);
 	vmf->page = demand->local_page->page
 			+ (vmf->pgoff & gpa_subblock_mask(demand));
 

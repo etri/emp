@@ -28,6 +28,7 @@
 //#define CONFIG_EMP_DEBUG_RSS
 //#define CONFIG_EMP_DEBUG_RSS_PROGRESS
 #define CONFIG_EMP_DEBUG_RSS_MAX_VMRS (128) // maximum number of vmr supported by RSS debugger
+//#define CONFIG_EMP_DEBUG_SYNC_HPT // check that every subblock of a block has the same mapper set
 //#define CONFIG_EMP_DEBUG_PF_HISTORY
 //#define CONFIG_EMP_DEBUG_TRIGGER_REDUCE // Skip setting referenced flag on gpa at exit. More reduce operations will occur.
 #endif
@@ -54,6 +55,18 @@
  * permanent change: ex)$ vi /etc/sysctl.conf
  *                      $ sysctl -p
  */
+#ifdef CONFIG_EMP_DEBUG_SYNC_HPT
+/* Where a mapper-set check was made. The names describe the moment, not the
+ * code: the point of the checker is to say which of them the current
+ * synchronization policy actually needs. */
+enum debug_sync_hpt_point {
+	DEBUG_SYNC_HPT_AFTER_SYNC,	/* just after sync_hpt_map_in_block() */
+	DEBUG_SYNC_HPT_AFTER_INSTALL,	/* after the faulting vmr's installation */
+	DEBUG_SYNC_HPT_AT_UNMAP,	/* at the unmap-time synchronization */
+	NUM_DEBUG_SYNC_HPT_POINTS,
+};
+#endif
+
 #define EMP_VMRS_MAX    (262144)
 
 #ifdef CONFIG_EMP_VM
