@@ -33,7 +33,7 @@
  *    ->__wp_page_copy()->mmu_notifier_invalidate_range()
  *  - copy-on-write the vmr who tries to write.
  *
- * Cases for duplicating gpa descriptors and how to handle them
+ * Duplicating gpa descriptors
  *
  * NOTE: @new will belongs to a single vmr. In addition, @old may belongs to
  *       multiple vmrs and some of them may not be mapped. Thus, @new should
@@ -41,92 +41,59 @@
  *
  * NOTE: @old may not have its remote page since it has never been evicted.
  *       Thus, we can use remote page only when @old has its remote page,
- *       e.g., @old's state is GPA_INIT or GPA_WB. Note that if @old's state
- *       is GPA_INIT and its remote page is invalid, it is zero subblock.
- *       In addtion, if @old's state is GPA_WB, we should wait until its
- *       writeback is finished.
+ *       e.g., @old's state is GPA_INIT. Note that if @old's state is
+ *       GPA_INIT and its remote page is invalid, it is zero subblock.
  *
- * CASE1: state=ACTIVE. @vmr is mapped and other vmrs are also mapped.
- *  - ENTRY2: __wp_page_copy()->mmu_notifier_invalidate_range()
- *  - allocate memory pages
- *  - copy memory pages
- *  - make local_page of @new
- *  - move mapped_pmd of @vmr from @old to @new
- *  - update (clear and map) pte (writable)
- *  - remove the remote page (writeback will allocate it)
- *  - decrement ref_count and map_count of old page
- *  - insert @new to the lru chain.
- *  - RESULT: @old and @new are both ACTIVE.
+ * @new ALWAYS gets its own freshly allocated local pages; the local_page of
+ * @old is never handed over. A local_page is bound to its gpa descriptor for
+ * its whole lifetime, so nothing has to be migrated between descriptors (lru
+ * position, w, sptep, the pmds chain), and reclaim may name the descriptor
+ * of any listed local page directly through local_page->gpa. The copy also
+ * removes the need to wait for an in-flight writeback of @old: the writer
+ * touches @new's pages only, so @old's pages, and thus the remote page the
+ * writeback is filling, stay intact.
  *
- * CASE2: state=ACTIVE. @vmr is mapped and no other vmrs are mapped.
- *  - ENTRY2: __wp_page_copy()->mmu_notifier_invalidate_range()
- *  - move local_page to @new. (lru elem is moved too.)
- *  - make pte writable
- *  - remove the remote page (writeback will allocate it)
- *  - if @old's remote page is valid,
- *    * change the state of @old to GPA_INIT.
- *    * RESULT: @old is GPA_INIT(remote) and @new is ACTIVE.
- *  - else (@old's remote page is not valid)
- *    * allocate memory pages
- *    * copy memory pages
- *    * make local_page of @old
- *    * insert @old to inactive list
- *    * update lru list
- *    * RESULT: @old is GPA_INACTIVE, and @new is ACTIVE.
+ * dup_cow_gpadesc() picks the path by the state of @old:
  *
- * CASE3: state=ACTIVE. @vmr is not mapped but other vmr is mapped.
- *  - ENTRY1: emp_page_fault_hva() with FAULT_FLAG_WRITE
- *  - allocate memory pages
- *  - copy memory pages
- *  - make local_page of @new
- *  - insert pmd of @vmr to @new
- *  - update (clear and map) pte (writable)
- *  - remove the remote page (writeback will allocate it)
- *  - insert @new to the lru chain.
- *  - RESULT: @old and @new are both ACTIVE.
- *  - NOTE: In this case, installing ptes is not necessary. If we don't install
- *          ptes, emp_page_fault_hva() will install them. However, it requires
- *          inserting @new to inactive list and updating lru lists. Then,
- *          emp_page_fault_hva() moves @new to active list and update lru lists
- *          again. Installing ptes here removes such duplicated overhead.
+ * PATH1: @old->r_state != GPA_INIT  =>  dup_cow_gpadesc_local()
+ *  - @old holds local pages. This covers GPA_ACTIVE, GPA_INACTIVE and GPA_WB,
+ *    and every mapping shape of @old, because the work does not depend on
+ *    them: allocate and copy, then move @vmr's mapping from @old to @new.
+ *  - allocate local pages for @new and copy the contents of @old
+ *    (zero-fill instead if @old is a stale block).
+ *  - classify @vmr against @old, per subblock:
+ *    * MAPPED: @vmr has a mapped_pmd on @old. Its pte is being replaced, so
+ *      the total RSS of @vmr does not change; the pages turn from shared to
+ *      private (kernel-ledger entries only).
+ *    * UNMAPPED and NOT OWNED: e.g., a fault of a child vmr right after
+ *      fork, while another vmr owns the residency. @vmr gains a mapping, so
+ *      its RSS grows by @new. The pmd is taken from the page table.
+ *    * UNMAPPED and OWNED: e.g., a fault on a block the reclaim unmapped
+ *      earlier, whose residency charge stayed with @vmr. No RSS change:
+ *      @new reuses the charge @vmr already holds for @old (the carry), and
+ *      @old is about to become an orphan that set_gpa_remote() will not
+ *      release a charge for.
+ *  - for each subblock: pop the mapped_pmd of @vmr from @old if it exists,
+ *    hand the ownership of @old to the next mapper (pmds.vmr_id, -1 when no
+ *    mapper is left), insert the mapped_pmd of @vmr on @new, and take the
+ *    reference of the pages of @new for the mapping.
+ *  - update (clear and map) the ptes of @new as writable.
+ *  - if @vmr was MAPPED, drop the rmap and the mapping reference on the
+ *    pages of @old.
+ *  - finally, look at the ownership of @old:
+ *    * @old has no owner left (@vmr was the only mapper): @old is an orphan
+ *      no vmr can reclaim. Move it out of the lru chain to the writeback
+ *      list, which allows orphan gpas. emp_writeback_block() skips the I/O
+ *      if @old has a valid remote page. A block already on GPA_WB is left
+ *      alone, as its writeback is running.
+ *    * @old still has an owner: it stays where it is. Nothing to do.
+ *  - RESULT: @new is ACTIVE (the caller inserts it on the lru chain).
+ *    @old keeps its state, or becomes GPA_WB if it turned into an orphan.
  *
- * CASE4: state=INACTIVE. no vmrs are mapped.
- *  - ENTRY1: emp_page_fault_hva() with FAULT_FLAG_WRITE
- *  - move local_page to @new. (lru elem is moved too.)
- *  - remove the remote page (writeback will allocate it)
- *  - if @old's remote page is valid,
- *    * change the state of @old to GPA_INIT.
- *    * RESULT: @old is GPA_INIT(remote) and @new is INACTIVE.
- *  - else (@old's remote page is not valid)
- *    * allocate memory pages
- *    * copy memory pages
- *    * make local_page of @old
- *    * insert @old to inactive list
- *    * update lru list
- *    * RESULT: @old and @new are both INACTIVE.
- *
- * CASE5: state=WB. no vmrs are mapped.
- *  - ENTRY1-1: emp_page_fault_hva() with FAULT_FLAG_WRITE
- *  - wait for work_request completion
- *    * NOTE: if we do not wait the completion, update on the local page may
- *      corrupt the remote page, which is @old's data.
- *    * memory page duplication may prevent wating the completion, but it
- *      increases the memory pressure on cold pages (for @old).
- *  - remove the remote page from @new.
- *  - move local_page to @new (likely to be accessed soon)
- *  - move @new to inactive list from writeback list.
- *    * As writeback list is conceptually the part of inactive list, moving
- *      to inactive list removes the need of update lru lists and its length.
- *      In addition, both lists have same mapping state (unmapped).
- *  - change the state of @new to GPA_INACTIVE
- *  - change the state of @old to GPA_INIT(remote)
- *  - RESULT: @old is GPT_INIT(remote), @new is INACTIVE
- *
- * CASE6: state=INIT(remote). no vmrs are mapped.
- *  - ENTRY1-1: emp_page_fault_hva() with FAULT_FLAG_WRITE
- *  - if @old does not have CoW remote page structure, get CoW remote page.
- *  - change the state of @new to GPA_INIT.
- *  - get CoW remote page for @new.
+ * PATH2: @old->r_state == GPA_INIT  =>  dup_cow_gpadesc_remote()
+ *  - @old has no local page, so there is nothing to copy. @old and @new
+ *    share the remote page through a refcounted cow_remote_page.
+ *  - this is the only case where @new is at remote after CoW.
  *  - RESULT: @old and @new are GPA_INIT(CoW).
  *
  * NOTE1: Case that state=INIT(not initialized), e.g., gpa_dir[i] == NULL
