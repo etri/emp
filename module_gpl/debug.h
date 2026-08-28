@@ -7,6 +7,7 @@
 #include "vm.h"
 #include "lru.h"
 #include "debug_assert.h"
+#include "alloc.h"
 
 /******************** EMP DEBUG BULK MESSAGE LOCK ***********************/
 void emp_debug_bulk_msg_lock(void);
@@ -178,13 +179,9 @@ void emp_debug_alloc_exit(void);
 #define emp_alloc_pages_node(nid, gfp, page_order) __emp_alloc(alloc_pages_node, PAGE_SIZE << (page_order), nid, gfp, page_order)
 #define emp_alloc_pages(gfp, page_order) __emp_alloc(alloc_pages, PAGE_SIZE << (page_order), gfp, page_order)
 #define emp_alloc_page(gfp) emp_alloc_pages(gfp, 0)
-#define emp_free_pages(page) do { \
-	debug_BUG_ON(PageCompound(page) && !PageHead(page));\
-	debug_BUG_ON(page_ref_count(page) != 1); \
-	emp_put_page(page); \
-} while (0)
+
+#define emp_free_pages(page) __emp_free(__emp_free_pages, page, page)
 #define emp_free_page(page) emp_free_pages(page)
-#define emp_put_page(page) __emp_free(put_page, page, page)
 
 #define emp_kmem_cache_create(name, size, align, flags, ctor) __emp_cache_create(name, size, align, flags, ctor)
 #define emp_kmem_cache_destroy(cachep) __emp_cache_destroy(cachep)
