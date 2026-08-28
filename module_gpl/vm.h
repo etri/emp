@@ -954,7 +954,6 @@ struct emp_ext {
 	void (*init_gpa)(struct emp_mm *, struct emp_gpa *, unsigned long);
 #ifdef CONFIG_EMP_USER
 	void (*dup_cow_gpa)(struct emp_mm *, unsigned long, struct emp_gpa *, struct emp_gpa *);
-	void (*migrate_local_page)(struct emp_vmr *, struct emp_gpa *, struct emp_gpa *);
 #endif
 	void (*cleanup_gpa)(struct emp_mm *, struct emp_gpa *);
 #ifdef CONFIG_EMP_USER

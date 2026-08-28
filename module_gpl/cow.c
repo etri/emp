@@ -139,8 +139,6 @@
  *    page for the dirty local page.
  */
 #ifdef CONFIG_EMP_DEBUG
-#define single_mapped_gpa(gpa) ((gpa)->local_page \
-				&& EMP_LP_PMDS_SINGLE(&(gpa)->local_page->pmds))
 #define vmr_offset_to_hva(vmr, idx) GPN_OFFSET_TO_HVA(vmr, idx, bvma_subblock_order((vmr)->emm))
 #define debug_progress_cow(old, new, data) do { \
 		debug_progress(old, data); \
@@ -181,16 +179,8 @@ emp_ext_dup_cow_gpa(struct emp_mm *e, unsigned long i, struct emp_gpa *o, struct
 	if (emp_ext.dup_cow_gpa)
 		emp_ext.dup_cow_gpa(e, i, o, n);
 }
-
-static inline void
-emp_ext_migrate_local_page(struct emp_vmr *v, struct emp_gpa *o, struct emp_gpa *n)
-{
-	if (emp_ext.migrate_local_page)
-		emp_ext.migrate_local_page(v, o, n);
-}
 #else
 #define emp_ext_dup_cow_gpa(e, i, o, n) do {} while(0)
-#define emp_ext_migrate_local_page(v, o, n) do {} while(0)
 #endif
 
 static inline void __copy_pages(struct page *dst, struct page *src, int len)
@@ -223,34 +213,6 @@ static inline void __remove_rmap_on_pages(struct page *page, unsigned int offset
 	/* TODO: batched remove rmap? */
 	for (i = 0, _page = page + offset; i < len; i++, _page++)
 		kernel_page_remove_rmap(_page, vma, false);
-}
-
-static inline void __migrate_local_page(struct emp_vmr *vmr,
-				struct emp_gpa *old, struct emp_gpa *new)
-{
-	new->local_page = old->local_page;
-	if (likely(new->local_page)) {
-		new->local_page->vmr_id = vmr->id;
-		debug_lru_set_vmr_id_mark(new->local_page, vmr->id);
-		new->local_page->page->private = (unsigned long) new;
-#ifdef CONFIG_EMP_DEBUG_LRU_LIST
-		new->local_page->gpa = new;
-		new->contrib_inactive_len = old->contrib_inactive_len;
-		new->contrib_last_file = old->contrib_last_file;
-		new->contrib_last_line = old->contrib_last_line;
-		new->contrib_last_val = old->contrib_last_val;
-		init_gpa_contrib_inactive(old);
-#endif
-	}
-	/* gpa_offset is not changed during duplication */
-	old->local_page = NULL;
-#ifdef CONFIG_EMP_VM
-	/* Since VM does not use fork */
-	debug_assert(is_gpa_flags_set(old, GPA_EPT_MASK) == false);
-#endif
-	if (clear_gpa_flags_if_set(old, GPA_HPT_MASK))
-		set_gpa_flags_if_unset(new, GPA_HPT_MASK);
-	emp_ext_migrate_local_page(vmr, old, new);
 }
 
 static inline void
@@ -287,37 +249,13 @@ static inline void __set_block_remote_flag(struct emp_gpa *head) {
 	}
 }
 
-static inline void __set_block_state(struct emp_gpa *head, int state) {
-	struct emp_gpa *gpa;
-	for_each_gpas(gpa, head)
-		gpa->r_state = state;
-}
-
-static inline int ____add_to_inactive(struct emp_mm *emm,
-				struct vcpu_var *cpu, struct emp_gpa *gpa)
+static inline void __remove_from_lru(struct emp_mm *emm, struct emp_gpa *head)
 {
 #ifdef CONFIG_EMP_EXT
-	return emp_ops.add_gpas_to_inactive(emm, cpu, &gpa, 1);
+	emp_ops.remove_gpa_from_lru(emm, head);
 #else
-	return add_gpas_to_inactive(emm, cpu, &gpa, 1);
+	remove_gpa_from_lru(emm, head);
 #endif
-}
-
-static inline int __add_to_inactive(struct emp_mm *emm,
-					struct emp_gpa *gpa)
-{
-	struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
-	return ____add_to_inactive(emm, cpu, gpa);
-}
-
-static inline int __move_to_inactive(struct emp_mm *emm,
-				struct vcpu_var *cpu, struct emp_gpa *gpa)
-{
-	debug_assert(gpa->local_page);
-	debug_assert(gpa->local_page->vmr_id >= 0
-			&& gpa->local_page->vmr_id < EMP_VMRS_MAX
-			&& emm->vmrs[gpa->local_page->vmr_id] != NULL);
-	return ____add_to_inactive(emm, cpu, gpa);
 }
 
 static inline int
@@ -345,16 +283,9 @@ __add_to_writeback(struct emp_mm *emm, struct emp_gpa *gpa)
 
 static inline struct page *
 dup_subblock_pages(struct emp_mm *emm, struct emp_gpa *gpa,
-			unsigned long idx, unsigned long page_len,
 			struct vcpu_var *cpu, bool is_stale)
 {
 	struct page *page;
-	/* The WHOLE subblock, not the mapped part of it. The allocation is the
-	 * unit everything else moves: a fetch fills it from remote offset 0 and
-	 * a writeback sends all of it, and the mapping reads it at the offset
-	 * the pages belong at. Copying only the first @page_len would take the
-	 * wrong pages of the source and leave the ones the duplicate will be
-	 * mapped through undefined. */
 	unsigned long sb_len = 1UL << gpa_subblock_order(gpa);
 
 	page = _alloc_pages(emm, gpa_subblock_order(gpa), 0, cpu);
@@ -915,55 +846,8 @@ alloc_and_lock_gpadesc(struct emp_mm *emm, int desc_order) {
 }
 
 /* one of src_vmr and dst_vmr can be NULL */
- static inline int
-__dup_partial_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
-				struct emp_vmr *dst_vmr, unsigned long idx,
-				struct emp_gpa *src, struct emp_gpa *dst)
-{
-	unsigned int ____off;
-	struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
-	struct page *page;
-	unsigned long addr, page_len;
-	int dst_vmr_id = dst_vmr ? dst_vmr->id : -1;
-
-	debug_assert(is_gpa_flags_set(src, GPA_PARTIAL_MAP_MASK));
-	debug_assert(gpa_block_order(src) == gpa_subblock_order(src));
-
-	/* NOTE: src_vmr and dst_vmr have same address range */
-	____gpa_to_hva_len_off(dst_vmr ? dst_vmr : src_vmr,
-					src, idx, addr, page_len, ____off);
-	addr += (unsigned long) ____off << PAGE_SHIFT;
-
-	/* duplicate memory pages */
-	page = dup_subblock_pages(emm, src, idx, page_len, cpu,
-				is_gpa_flags_set(src, GPA_STALE_BLOCK_MASK));
-	if (unlikely(IS_ERR_OR_NULL(page))) {
-		printk(KERN_ERR "ERROR: %s failed to duplicate memory "
-				"pages. emm: %d vmr: %d idx: 0x%lx "
-				"err: %ld\n", __func__, emm->id,
-				dst_vmr_id, idx, PTR_ERR(page));
-		return PTR_ERR(page);
-	}
-
-	/* make local_page of @new */
-	dst->local_page = emm->lops.alloc_local_page(emm, dst_vmr_id,
-				NULL, page, gpa_subblock_order(src), idx, dst);
-	if (unlikely(dst->local_page == NULL)) {
-		printk(KERN_ERR "ERROR: %s failed to allocate local "
-				"page. emm: %d vmr: %d idx: 0x%lx\n",
-				__func__, emm->id, dst_vmr_id, idx);
-		push_free_page_list(emm, page, cpu);
-		return -ENOMEM;
-	}
-	__debug_page_ref_update_page_len(dst->local_page, page_len);
-	debug_lru_set_vmr_id_mark(dst->local_page, dst_vmr_id);
-
-	return 0;
-}
-
-/* one of src_vmr and dst_vmr can be NULL */
 static inline int
-__dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
+dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 			struct emp_vmr *dst_vmr, unsigned long head_idx,
 			struct emp_gpa *src_head, struct emp_gpa *dst_head)
 {
@@ -971,14 +855,16 @@ __dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 	unsigned long idx;
 	struct emp_gpa *src, *dst;
 	struct page *page;
-	unsigned long page_len = gpa_subblock_size(src_head);
 	bool is_stale = is_gpa_flags_set(src_head, GPA_STALE_BLOCK_MASK);
 	int dst_vmr_id = dst_vmr ? dst_vmr->id : -1;
 	int ret = 0;
 
+	debug_assert(src_head->local_page);
+	debug_BUG_ON(src_vmr == NULL && dst_vmr == NULL);
+
 	for_each_old_new_gpas(idx, src, dst, head_idx, src_head, dst_head) {
 		/* duplicate memory pages */
-		page = dup_subblock_pages(emm, src, idx, page_len, cpu, is_stale);
+		page = dup_subblock_pages(emm, src, cpu, is_stale);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			ret = PTR_ERR(page);
 			printk(KERN_ERR "ERROR: %s failed to duplicate memory "
@@ -999,7 +885,7 @@ __dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 			ret = -ENOMEM;
 			goto error;
 		}
-		__debug_page_ref_update_page_len(dst->local_page, page_len);
+		__debug_page_ref_update_page_len(dst->local_page, gpa_subblock_size(src_head));
 		debug_lru_set_vmr_id_mark(dst->local_page, dst_vmr_id);
 	}
 
@@ -1021,23 +907,6 @@ error:
 	return ret;
 }
 
-/* one of src_vmr and dst_vmr can be NULL */
-static inline int
-dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
-			struct emp_vmr *dst_vmr, unsigned long head_idx,
-			struct emp_gpa *src_head, struct emp_gpa *dst_head)
-{
-	debug_assert(src_head->local_page);
-	debug_BUG_ON(src_vmr == NULL && dst_vmr == NULL);
-
-	if (unlikely(is_gpa_flags_set(src_head, GPA_PARTIAL_MAP_MASK)))
-		return __dup_partial_block_local_page(emm, src_vmr, dst_vmr,
-						head_idx, src_head, dst_head);
-	else
-		return __dup_block_local_page(emm, src_vmr, dst_vmr,
-						head_idx, src_head, dst_head);
-}
-
 enum DUP_COW_RET {
 	DUP_COW_DO_NOTHING = 0,
 	DUP_COW_ADD_ACTIVE = 1, // if we need add new head on active list
@@ -1049,12 +918,14 @@ enum DUP_COW_RET {
  * Return negative value (ERROR CODE) if some error occurs.
  */
 static int
-dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
+dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 			struct emp_gpa *old_head, struct emp_gpa *new_head)
 {
 	unsigned int ____off;
 	struct emp_mm *emm = vmr->emm;
 	pmd_t *pmd;
+	bool mapped; // @vmr is mapped or not
+	bool owned; // @vmr is the owner of @old or not
 	unsigned long idx;
 	struct emp_gpa *old, *new;
 	unsigned long addr, page_len;
@@ -1074,25 +945,48 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 		return ret;
 	}
 
+	pmd = emp_lp_lookup_pmd(old_head, vmr->id);
+	if (pmd == NULL) {
+		mapped = false;
+		pmd = get_pmd(vmr->host_mm, addr);
+	} else
+		mapped = true;
+
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
-		/* move mapped_pmd from @old to @new */
-		pmd = emp_lp_pop_pmd(emm, old->local_page, vmr->id);
-		debug_lru_del_vmr_id_mark(old->local_page, vmr->id);
-		if (old->local_page->vmr_id == vmr->id) {
+		/* Assert @pmd is same for all subblocks in a block. */
+		debug_assert(pmd == get_pmd(vmr->host_mm,
+				vmr_offset_to_hva(vmr, idx)));
+
+
+		/* remove mapped_pmd from @old */
+		if (emp_lp_pop_pmd(emm, old->local_page, vmr->id)) {
+			debug_assert(mapped == true);
+			debug_lru_del_vmr_id_mark(old->local_page, vmr->id);
+			/* NOTE: No vmr's RSS is changed. */
+			emp_update_rss_sub_kernel(vmr, page_len,
+						DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE,
+						old, DEBUG_UPDATE_RSS_SUBBLOCK);
+		} else
+			debug_assert(mapped != false); // check consistency among subblocks
+
+		/* add mapped_pmd on @new */
+		emp_lp_insert_pmd(emm, new->local_page, vmr->id, pmd);
+		debug_lru_add_vmr_id_mark(new->local_page, vmr->id);
+
+		owned = old->local_page->vmr_id == vmr->id;
+		if (!mapped && !owned) // newly mapped, and not previously owned
+			emp_update_rss_add(vmr, page_len, DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
+					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+		else if (mapped) // shared -> private pages. Total RSS is not changed.
+			emp_update_rss_add_kernel(vmr, page_len,
+					DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
+					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+
+		if (owned) { // change the owner
 			old->local_page->vmr_id = old->local_page->pmds.vmr_id;
 			debug_lru_set_vmr_id_mark(old->local_page,
 						old->local_page->pmds.vmr_id);
 		}
-		emp_lp_insert_pmd(emm, new->local_page, vmr->id, pmd);
-		debug_lru_add_vmr_id_mark(new->local_page, vmr->id);
-
-		/* NOTE: No vmr's RSS is changed. */
-		emp_update_rss_sub_kernel(vmr, page_len,
-					DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE,
-					old, DEBUG_UPDATE_RSS_SUBBLOCK);
-		emp_update_rss_add_kernel(vmr, page_len,
-					DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
-					new, DEBUG_UPDATE_RSS_SUBBLOCK);
 
 		/* increase reference count */
 		debug_page_ref_will_pte_beg(new->local_page, page_len);
@@ -1108,227 +1002,42 @@ dup_cow_gpadesc_multi_active(struct emp_vmr *vmr, unsigned long head_idx,
 
 	/* NOTE: the remote page is removed at __dup_cow_gpadesc() */
 
-	for_each_gpas(old, old_head) {
-		/* decrease ref_count and map_count of old page */
-		__remove_rmap_on_pages(gpa_page(old), ____off, vmr->host_vma,
-					page_len);
-		__emp_put_pages_map(vmr, old, page_len);
+	if (mapped) {
+		for_each_gpas(old, old_head) {
+			/* decrease ref_count and map_count of old page */
+			__remove_rmap_on_pages(gpa_page(old), ____off, vmr->host_vma,
+						page_len);
+			__emp_put_pages_map(vmr, old, page_len);
 
-		/* we does not update page_len since partial map gpa block
-		 * can have only single subblock. */
-	}
-
-	return DUP_COW_ADD_ACTIVE;
-}
-
-static int
-dup_cow_gpadesc_single_active(struct emp_vmr *vmr, unsigned long head_idx,
-				struct emp_gpa *old_head, struct emp_gpa *new_head)
-{
-	unsigned long idx;
-	struct emp_gpa *old, *new;
-
-	debug_assert(single_mapped_gpa(old_head));
-	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
-
-	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head)
-		__migrate_local_page(vmr, old, new);
-
-	cow_mkwrite_pte(vmr, head_idx, new_head);
-
-	if (is_block_remote_page_valid(old_head)) {
-		__set_block_remote(old_head);
-	} else {
-		struct emp_mm *emm = vmr->emm;
-		int ret;
-
-		// Duplicate new_head's local page to old_head
-		ret = dup_block_local_page(emm, vmr, NULL,
-						head_idx, new_head, old_head);
-		if (unlikely(ret < 0)) {
-			printk(KERN_ERR "ERROR: %s failed to duplicate local "
-					"page. emm: %d vmr: %d head_idx: 0x%lx\n",
-					__func__, emm->id, vmr->id, head_idx);
-			return ret;
-		}
-
-		ret = __add_to_writeback(emm, old_head);
-		if (unlikely(ret < 0)) {
-			printk(KERN_ERR "ERROR: %s failed to add to inactive list."
-					" emm: %d vmr: %d head_idx: 0x%lx\n",
-					__func__, emm->id, vmr->id, head_idx);
-			return ret;
+			/* we does not update page_len since partial map gpa block
+			 * can have only single subblock. */
 		}
 	}
-	return DUP_COW_DO_NOTHING;
-}
 
-static int
-dup_cow_gpadesc_other_active(struct emp_vmr *vmr, unsigned long head_idx,
-				struct emp_gpa *old_head, struct emp_gpa *new_head)
-{
-	unsigned int ____off;
-	struct emp_mm *emm = vmr->emm;
-	unsigned long idx;
-	struct emp_gpa *old, *new;
-	unsigned long addr, page_len;
-	pmd_t *pmd;
-	int ret = 0;
-
-	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
-
-	// Duplicate old_head's local page to new_head
-	ret = dup_block_local_page(emm, NULL, vmr,
-					head_idx, old_head, new_head);
-	if (unlikely(ret < 0)) {
-		printk(KERN_ERR "ERROR: %s failed to duplicate local page. "
-				"emm: %d vmr: %d head_idx: 0x%lx\n",
-				__func__, emm->id, vmr->id, head_idx);
-		return ret;
-	}
-
-	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
-	/* a subblock cannot cross a pmd, so the offset does not change it */
-	pmd = get_pmd(vmr->host_mm, addr);
-
-	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
-#ifdef CONFIG_EMP_DEBUG
-		/* Assert @pmd is same for all subblocks in a block. */
-		debug_assert(pmd == get_pmd(vmr->host_mm,
-				vmr_offset_to_hva(vmr, idx)));
-#endif
-
-		/* insert pmd to @new */
-		emp_lp_insert_pmd(emm, new->local_page, vmr->id, pmd);
-		debug_lru_add_vmr_id_mark(new->local_page, vmr->id);
-
-		emp_update_rss_add(vmr, page_len, DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
-					new, DEBUG_UPDATE_RSS_SUBBLOCK);
-
-		/* increase reference count */
-		__emp_get_pages_map(vmr, new, page_len);
-
-		/* we does not update page_len since partial map gpa block
-		 * can have only single subblock. */
-	}
-
-	emp_update_rss_cached(vmr);
-
-	/* update (clear and map) pte (writable) */
-	cow_update_pte(vmr, new_head, addr, ____off, page_len);
-
-	return DUP_COW_ADD_ACTIVE;
-
-}
-
-static int
-dup_cow_gpadesc_inactive(struct emp_vmr *vmr, unsigned long head_idx,
-			struct emp_gpa *old_head, struct emp_gpa *new_head)
-{
-	unsigned long idx;
-	struct emp_gpa *old, *new;
-
-	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
-
-	if (old_head->local_page->vmr_id != vmr->id) {
-		struct emp_vmr *old_vmr;
-		int page_len;
-		debug_assert(old_head->local_page->vmr_id >= 0);
-		old_vmr = vmr->emm->vmrs[old_head->local_page->vmr_id];
-		page_len = __local_block_to_page_len(old_vmr, old_head);
-		emp_update_rss_sub_force(old_vmr, page_len,
-						DEBUG_RSS_SUB_COW_INACTIVE,
-						old_head, DEBUG_UPDATE_RSS_BLOCK);
-		emp_update_rss_add_force(vmr, page_len,
-						DEBUG_RSS_ADD_COW_INACTIVE,
-						old_head, DEBUG_UPDATE_RSS_BLOCK);
-	}
-
-	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head)
-		__migrate_local_page(vmr, old, new);
-	/* new->remote_page was removed at __dup_cow_gpadesc() */
-
-	if (is_block_remote_page_valid(old_head)) {
-		__set_block_remote(old_head);
-	} else {
-		struct emp_mm *emm = vmr->emm;
-		int ret;
-
-		// Duplicate new_head's local page to old_head
-		ret = dup_block_local_page(emm, vmr, NULL,
-						head_idx, new_head, old_head);
-		if (unlikely(ret < 0)) {
-			printk(KERN_ERR "ERROR: %s failed to duplicate local "
-					"page. emm: %d vmr: %d head_idx: 0x%lx\n",
-					__func__, emm->id, vmr->id, head_idx);
-			return ret;
+	/* If new_vmr was the only mapping for old, old->vmr_id was new_vmr->id.
+	 * After pop new_vmr->id and old->vmr_id = old->pmds.vmr_id,
+	 * old->vmr_id should be -1.
+	 * In this case, old should be moved to writeback list, which allows
+	 * orphan gpas. If old has a valid remote page, emp_writeback_block()
+	 * will skip I/O.
+	 *
+	 * If old has other mapping other than new_vmr,
+	 * old->vmr_id = old->pmds.vmr_id gives another vmr id (>= 0)
+	 * In this case, old can reside in LRU chain. Nothing to do.
+	 *
+	 * If old had no mapping and old->vmr_id was not new_vmr->id,
+	 * old can reside in LRU chain. Nothing to do.
+	 */
+	if (old_head->local_page->vmr_id < 0) {
+		debug_assert(emp_lp_count_pmd(old_head->local_page) == 0);
+		if (!WB_BLOCK(old_head)) {
+			__remove_from_lru(emm, old_head);
+			ret = __add_to_writeback(emm, old_head);
 		}
+	} else
+		debug_assert(old_head->local_page->vmr_id != vmr->id);
 
-		ret = __add_to_writeback(emm, old_head);
-		if (unlikely(ret < 0)) {
-			printk(KERN_ERR "ERROR: %s failed to add to inactive list."
-					" emm: %d vmr: %d head_idx: 0x%lx\n",
-					__func__, emm->id, vmr->id, head_idx);
-			return ret;
-		}
-	}
-	return DUP_COW_DO_NOTHING;
-}
-
-static int
-dup_cow_gpadesc_writeback(struct emp_vmr *vmr, unsigned long head_idx,
-			struct emp_gpa *old_head, struct emp_gpa *new_head)
-{
-	int ret = 0;
-	struct emp_mm *emm = vmr->emm;
-	struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
-	unsigned long idx;
-	struct emp_gpa *old, *new;
-	int old_vmr_id = old_head->local_page->vmr_id;
-	int page_len = __local_block_to_page_len(vmr, old_head);
-
-	/* wait for writeback completion and clear writeback work request */
-	debug_progress(old_head->local_page->w, old_head);
-	emm->sops.clear_writeback_block(emm, old_head, old_head->local_page->w,
-							cpu, true, false);
-	// decrement of inactive_list.page_len is delayed
-	sub_inactive_list_page_len(emm, old_head);
-
-	/* NOTE: This is writeback fault. old_vmr_id may be negative. */
-	if (old_vmr_id != vmr->id && old_vmr_id >= 0) {
-		struct emp_vmr *old_vmr = emm->vmrs[old_vmr_id];
-		emp_update_rss_sub_force(old_vmr, page_len,
-					DEBUG_RSS_SUB_COW_WRITEBACK,
-					old_head, DEBUG_UPDATE_RSS_BLOCK);
-	}
-
-	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
-		/* clear work request pointer */
-		old->local_page->w = NULL;
-		/* move local page */
-		__migrate_local_page(vmr, old, new);
-	}
-
-	if (old_vmr_id != vmr->id)
-		emp_update_rss_add_force(vmr, page_len,
-					DEBUG_RSS_ADD_COW_WRITEBACK,
-					new_head, DEBUG_UPDATE_RSS_BLOCK);
-
-	/* move @new from writeback list to inactive list */
-	ret = __move_to_inactive(vmr->emm, cpu, new_head);
-
-	if (unlikely(ret < 0)) {
-		printk(KERN_ERR "ERROR: %s failed to move to inactive. "
-				"err: %d\n", __func__, ret);
-		return ret;
-	}
-
-	debug_assert(new_head->r_state == GPA_INACTIVE);
-	__set_block_remote(old_head);
-
-	/* Writeback list is conceptually the part of inactive list.
-	 * Thus, we don't need to update lru list. */
-	return DUP_COW_DO_NOTHING;
+	return ret >= 0 ? DUP_COW_ADD_ACTIVE : ret;
 }
 
 static int
@@ -1434,44 +1143,10 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 	__dup_cow_gpadesc(vmr, head_idx, old_head, new_head);
 
 	if (old_head->r_state != GPA_INIT) {
-		struct local_page *old_lp = old_head->local_page;
-		debug_assert(old_lp != NULL);
-
-		if (emp_lp_lookup_vmr_id(old_head, vmr->id)) {
-			debug_assert(old_head->r_state == GPA_ACTIVE);
-			if (!EMP_LP_PMDS_SINGLE(&old_lp->pmds)) {
-				/* CASE1 */
-				debug_progress_cow(old_head, new_head, vmr->id);
-				ret = dup_cow_gpadesc_multi_active(vmr,
-						head_idx, old_head, new_head);
-			} else {
-				/* CASE2 */
-				debug_progress_cow(old_head, new_head, vmr->id);
-				ret = dup_cow_gpadesc_single_active(vmr,
-						head_idx, old_head, new_head);
-			}
-		} else {
-			if (!EMP_LP_PMDS_EMPTY(&old_lp->pmds)) {
-				/* CASE3 */
-				debug_assert(old_head->r_state == GPA_ACTIVE);
-				debug_progress_cow(old_head, new_head, vmr->id);
-				ret = dup_cow_gpadesc_other_active(vmr,
-						head_idx, old_head, new_head);
-			} else if (old_head->r_state == GPA_INACTIVE) {
-				/* CASE4 */
-				debug_progress_cow(old_head, new_head, vmr->id);
-				ret = dup_cow_gpadesc_inactive(vmr,
-						head_idx, old_head, new_head);
-			} else if (old_head->r_state == GPA_WB) {
-				/* CASE5 */
-				debug_progress_cow(old_head, new_head, vmr->id);
-				ret = dup_cow_gpadesc_writeback(vmr,
-						head_idx, old_head, new_head);
-			} else
-				debug_BUG();
-		}
+		debug_progress_cow(old_head, new_head, vmr->id);
+		ret = dup_cow_gpadesc_local(vmr, head_idx,
+						old_head, new_head);
 	} else { /* old_head->r_state == GPA_INIT */
-		/* CASE 6*/
 		debug_progress_cow(old_head, new_head, vmr->id);
 		ret = dup_cow_gpadesc_remote(vmr,
 					head_idx, old_head, new_head);

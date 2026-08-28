@@ -186,7 +186,6 @@ int register_emp_ext(struct emp_ext *ext) {
 	APPLY(init_gpa);
 #ifdef CONFIG_EMP_USER
 	APPLY(dup_cow_gpa);
-	APPLY(migrate_local_page);
 #endif
 	APPLY(cleanup_gpa);
 #ifdef CONFIG_EMP_USER
