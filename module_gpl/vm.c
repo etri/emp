@@ -1158,6 +1158,7 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		/* If vm_shared, dup_vmdesc() do nothing.
 		 * We don't need to handle errors for vm_shared. */
 		new_vma->vm_private_data = NULL;
+		dup_list_del(new_vmr);
 		emp_vmr_release(new_vmr);
 		new_vmr->host_vma = NULL;
 		new_vmr->host_mm = NULL;
