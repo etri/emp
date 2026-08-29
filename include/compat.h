@@ -214,4 +214,67 @@ extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
 #define EMP_HAVE_LARGE_RMAPPABLE 0
 #endif
 
+/* Upstream converted these page flags to FOLIO_FLAG(), which emits only
+ * folio_{test,set,clear}_<flag>() and drops the Page<Flag>()/SetPage<Flag>()/
+ * ClearPage<Flag>() accessors. It did NOT do so in one release:
+ *
+ *	referenced	6.10	was PAGEFLAG(Referenced, referenced, PF_HEAD)
+ *	unevictable	6.12	was PAGEFLAG(Unevictable, unevictable, PF_HEAD)
+ *	mlocked		6.12	was PAGEFLAG(Mlocked, mlocked, PF_NO_TAIL)
+ *
+ * so referenced needs its own, earlier gate. A single 6.12 gate would fail to
+ * build on 6.10 and 6.11, where PageReferenced() is already gone. Boundaries
+ * read from include/linux/page-flags.h at v6.9/v6.10/v6.11/v6.12; every other
+ * flag EMP uses (dirty, LRU, reserved, private, locked, hwpoison) is still
+ * PAGEFLAG() in 6.12 and needs no shim. RHEL 10 is 6.12-based, so it is past
+ * both boundaries.
+ *
+ * The shims are exact. In the folio accessors every old policy -- PF_HEAD,
+ * PF_NO_TAIL, PF_ANY -- resolves to FOLIO_HEAD_PAGE == 0, i.e. &folio->flags,
+ * the head page's flag word, which is where these flags always lived; and
+ * page_folio() resolves any page of a compound allocation to that same head.
+ * Every EMP call site already passes a subblock head, so the redirection never
+ * fires, and for a 4 KiB subblock (order 0) the page is its own folio and the
+ * shim is the identical bit operation on the identical word.
+ *
+ * One delta: Mlocked was PF_NO_TAIL, which carried a
+ * VM_BUG_ON_PGFLAGS(PageTail(page)) in a debug kernel. The folio form has no
+ * such check; EMP's own debug_check_head() in block-flag.h guards that path.
+ *
+ * No <linux/mm.h> include is added here on purpose: compat.h is pulled in very
+ * early, and these are macros, expanded only at their use sites, all of which
+ * already have the page/folio API in scope through vm.h.
+ */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0))
+	// RHEL_RELEASE_VERSION >= 10.0 or KERNEL_VERSION >= 6.10.0
+#define EMP_HAVE_FOLIO_ONLY_REFERENCED 1
+#else
+#define EMP_HAVE_FOLIO_ONLY_REFERENCED 0
+#endif
+
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+	// RHEL_RELEASE_VERSION >= 10.0 or KERNEL_VERSION >= 6.12.0
+#define EMP_HAVE_FOLIO_ONLY_UNEVICTABLE_MLOCKED 1
+#else
+#define EMP_HAVE_FOLIO_ONLY_UNEVICTABLE_MLOCKED 0
+#endif
+
+#if EMP_HAVE_FOLIO_ONLY_REFERENCED
+#define PageReferenced(p)       folio_test_referenced(page_folio(p))
+#define SetPageReferenced(p)    folio_set_referenced(page_folio(p))
+#define ClearPageReferenced(p)  folio_clear_referenced(page_folio(p))
+#endif /* EMP_HAVE_FOLIO_ONLY_REFERENCED */
+
+#if EMP_HAVE_FOLIO_ONLY_UNEVICTABLE_MLOCKED
+#define PageUnevictable(p)      folio_test_unevictable(page_folio(p))
+#define SetPageUnevictable(p)   folio_set_unevictable(page_folio(p))
+#define ClearPageUnevictable(p) folio_clear_unevictable(page_folio(p))
+
+#define PageMlocked(p)          folio_test_mlocked(page_folio(p))
+#define SetPageMlocked(p)       folio_set_mlocked(page_folio(p))
+#define ClearPageMlocked(p)     folio_clear_mlocked(page_folio(p))
+#endif /* EMP_HAVE_FOLIO_ONLY_UNEVICTABLE_MLOCKED */
+
 #endif /* __COMPAT_H__ */
