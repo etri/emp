@@ -149,6 +149,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
  * @param haddr fault address
  & @param page_len number of pages of the fault subblock
  * @param is_write is it write fault?
+ * @param wrprotect force a read-only pte whatever @is_write says
  *
  * @retval VM_FAULT_NOPAGE(256): Success
  * @retval 0: Error

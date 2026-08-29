@@ -477,6 +477,8 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	debug_assert(emp_lp_count_pmd(head->local_page) == 1);
 	debug_assert(head->local_page->pmds.vmr_id == vmr->id);
+	/* writable pte: the block must no longer be in private-CoW state */
+	debug_assert(!__is_cow_gpa(head));
 
 	debug_BUG_ON(page_len != (1 << gpa_subblock_order(head))
 			&& gpa_block_order(head) != gpa_subblock_order(head));
@@ -764,11 +766,60 @@ check_cow_fault_vmr(struct emp_vmr *vmr) {
 	return (vmr->host_vma->vm_flags & VM_SHARED) == 0;
 }
 
+/* drop private-CoW state from every subblock of a block */
+static inline void
+cow_clear_wprotect_block(struct emp_gpa *head)
+{
+	struct emp_gpa *gpa;
+	debug_assert(____emp_gpa_is_locked(head));
+	for_each_gpas(gpa, head)
+		clear_gpa_flags_if_set(gpa, GPA_WPROTECT_MASK);
+}
+
+#ifdef CONFIG_EMP_DEBUG
+/* The classifier reads both inputs from the head but acts on the whole block,
+ * so they must agree across it. A disagreement would drop protection from a
+ * subblock another vmdesc still owns. */
+static inline void
+debug_check_cow_block_uniform(struct emp_gpa *head)
+{
+	struct emp_gpa *gpa;
+
+	debug_assert(____emp_gpa_is_locked(head));
+	for_each_gpas(gpa, head) {
+		debug_assert(atomic_read(&gpa->refcnt)
+				== atomic_read(&head->refcnt));
+		debug_assert(((get_gpa_flags(gpa) ^ get_gpa_flags(head))
+					& GPA_WPROTECT_MASK) == 0);
+	}
+}
+#else
+#define debug_check_cow_block_uniform(head) do {} while (0)
+#endif /* CONFIG_EMP_DEBUG */
+
+/**
+ * check_cow_fault_gpa - is this write fault an EMP private-CoW fault?
+ * @param head head of the block, locked
+ *
+ * @retval true: the write must be resolved by copying
+ * @retval false: nothing to copy; the write may be granted
+ *
+ * WRITE_PROTECT classifies; the refcount then says whether the state is still
+ * real -- one owner left means every branch which could have seen the old
+ * contents is gone. A stale flag is cleared here, not left for a later fault:
+ * pte_install() write-protects while it is set, so it would refault forever.
+ */
 static inline bool
 check_cow_fault_gpa(struct emp_gpa *head)
 {
 	debug_assert(____emp_gpa_is_locked(head));
-	return __is_cow_gpa(head);
+	debug_check_cow_block_uniform(head);
+	if (!__is_cow_gpa(head))
+		return false;
+	if (__is_cow_shared_gpa(head))
+		return true;
+	cow_clear_wprotect_block(head);
+	return false;
 }
 
 static inline bool
@@ -1061,12 +1112,15 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		 * GPA_lowmemory_block: copy.
 		 * GPA_stale_block: copy.
 		 * GPA_partial_map: copy.
+		 * GPA_wprotect: clear. @new is the faulting vmdesc's own copy,
+		 *               so there is nothing left to protect it from.
 		 * GPA_io_read_page: must be unset.
 		 * GPA_io_write_page: must be unset.
 		 * GPA_io_in_progress: must be unset.
 		 */
 		init_gpa_flags(new, get_gpa_flags(old));
 		clear_gpa_flags_if_set(new, GPA_REMOTE_MASK);
+		clear_gpa_flags_if_set(new, GPA_WPROTECT_MASK);
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CSF_MASK));
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CPF_MASK));
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_BLK_MASK));
@@ -1583,9 +1637,9 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	}
 #endif
 
-	if (!__is_cow_gpa(head)) {
-		/* This page may be previously duplicated, but it has
-		 * no write-permission yet. Just give the permission. */
+	if (!check_cow_fault_gpa(head)) {
+		/* Never protected, or the protection was stale and has just
+		 * been dropped. Either way nothing to copy: grant the write. */
 		if (likely(head->r_state == GPA_ACTIVE && head->local_page)) {
 			cow_mkwrite_pte(vmr, head_idx, head);
 			debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
@@ -1600,7 +1654,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 	}
 
 	debug_assert(check_cow_fault_vmr(vmr));
-	if (!check_cow_fault_gpa(head) || !check_cow_fault_mmu_only(head)) {
+	if (!check_cow_fault_mmu_only(head)) {
 		debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
 		goto out;
 	}
@@ -2091,6 +2145,9 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 		idx = head_idx;
 		for_each_gpas(gpa, head) {
 			set_gpa_dir_new(new_vmr, desc->gpa_dir, idx, gpa);
+			/* The only place private-CoW state is armed. Nesting is
+			 * idempotent: an already-shared gpa stays protected. */
+			set_gpa_flags_if_unset(gpa, GPA_WPROTECT_MASK);
 			idx++;
 		}
 

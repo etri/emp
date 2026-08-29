@@ -220,11 +220,17 @@ static struct emp_gpa *_els_is_stretchable(struct emp_gpa *shead, struct emp_gpa
 		return NULL;
 	debug_progress(buddy, chead);
 
-	if ((buddy->r_state != state) || 
+	if ((buddy->r_state != state) ||
 			(gpa_block_order(chead) != gpa_block_order(buddy)) ||
 			(!!read_only_mapping ==
 			 is_gpa_flags_set(buddy, GPA_DIRTY_MASK)) || // ?
 			(fault_type != (get_gpa_flags(buddy) & GPA_nPT_MASK)) ||
+#ifdef CONFIG_EMP_USER
+			/* the fault path reads this flag from the head, so a
+			 * merge must not hide two states behind one */
+			(((get_gpa_flags(chead) ^ get_gpa_flags(buddy))
+					& GPA_WPROTECT_MASK) != 0) ||
+#endif
 			is_gpa_flags_set(buddy, GPA_STRETCHED_MASK
 						| GPA_PREFETCHED_MASK
 						| GPA_PINNED_MASK)) {

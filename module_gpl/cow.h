@@ -6,7 +6,19 @@
 #include "vm.h"
 #include "remote_page.h"
 
+/* Is @gpa in EMP's private-CoW state? WRITE_PROTECT alone answers this: set by
+ * MAP_PRIVATE fork, cleared when a fault finds it stale or a CoW gives the
+ * branch a gpa of its own. MAP_SHARED fork and vma split add sharing of other
+ * kinds and never set it. The refcount answers a different question -- see
+ * __is_cow_shared_gpa(). */
 static inline bool __is_cow_gpa(struct emp_gpa *gpa)
+{
+	return __is_gpa_flags_set(gpa, GPA_WPROTECT_MASK);
+}
+
+/* Does another vmdesc directory still own @gpa? Only meaningful once
+ * __is_cow_gpa() has said yes; if false the protection is stale. */
+static inline bool __is_cow_shared_gpa(struct emp_gpa *gpa)
 {
 	return atomic_read(&gpa->refcnt) > 1;
 }

@@ -42,7 +42,13 @@ enum gpa_flags {
 	GPA_eager_wbr = 19,
 	GPA_stretched = 20,
 	GPA_pinned = 21,
-	NUM_GPA_FLAGS = 22,
+#ifdef CONFIG_EMP_USER
+	/* Private-CoW state: a MAP_PRIVATE fork left more than one vmdesc
+	 * directory pointing at this gpa. This flag alone classifies it --
+	 * refcnt, vmdesc refcount, view counts and pmd counts do not. */
+	GPA_wprotect = 22,
+#endif
+	NUM_GPA_FLAGS = 23,
 };
 
 #define GPA_TOUCHED_MASK    (1 << GPA_touched)
@@ -86,25 +92,31 @@ enum gpa_flags {
 #define GPA_STALE_BLOCK_MASK (1 << GPA_stale_block)
 #ifdef CONFIG_EMP_USER
 #define GPA_PARTIAL_MAP_MASK (1 << GPA_partial_map)
+#define GPA_WPROTECT_MASK    (1 << GPA_wprotect)
 #endif
 #define GPA_EAGER_WBR_MASK    (1 << GPA_eager_wbr)
 #define GPA_STRETCHED_MASK    (1 << GPA_stretched)
 #define GPA_PINNED_MASK       (1 << GPA_pinned)
 
 /* GPA_pinned must survive cleanup_gpa(): pinning is a property of the address
- * range, not of the current residency of the block. */
+ * range, not of the current residency of the block.
+ *
+ * GPA_wprotect likewise: it is logical CoW state, not residency, so it must
+ * outlive active/inactive, writeback, eviction, refetch and reclaim. Losing it
+ * would let a write through one branch land in a page another still reads. */
 #ifdef CONFIG_EMP_VM
 #ifdef CONFIG_EMP_USER
 #define GPA_KEEP_FLAGS_MASK \
 	(GPA_TOUCHED_MASK | GPA_LOWMEM_BLOCK_MASK | GPA_PARTIAL_MAP_MASK \
-		| GPA_PINNED_MASK)
+		| GPA_PINNED_MASK | GPA_WPROTECT_MASK)
 #else /* !CONFIG_EMP_USER */
 #define GPA_KEEP_FLAGS_MASK \
 	(GPA_TOUCHED_MASK | GPA_LOWMEM_BLOCK_MASK | GPA_PINNED_MASK)
 #endif /* !CONFIG_EMP_USER */
 #else /* !CONFIG_EMP_VM */
 #define GPA_KEEP_FLAGS_MASK \
-	(GPA_TOUCHED_MASK | GPA_PARTIAL_MAP_MASK | GPA_PINNED_MASK)
+	(GPA_TOUCHED_MASK | GPA_PARTIAL_MAP_MASK | GPA_PINNED_MASK \
+		| GPA_WPROTECT_MASK)
 #endif /* !CONFIG_EMP_VM */
 #define GPA_CLEANUP_MASK (((1 << NUM_GPA_FLAGS) - 1) & (~GPA_KEEP_FLAGS_MASK))
 
