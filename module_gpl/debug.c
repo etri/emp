@@ -2050,7 +2050,7 @@ static void __debug_sync_hpt_show(struct emp_gpa *g, const char *what)
 
 	for (p = emp_lp_first_mapped_pmd(lp); p && n < sizeof(buf) - 16;
 			p = emp_lp_next_mapped_pmd(lp, p))
-		n += snprintf(buf + n, sizeof(buf) - n, "%d ", p->vmr_id);
+		n += scnprintf(buf + n, sizeof(buf) - n, "%d ", p->vmr_id);
 	buf[n] = '\0';
 	printk(KERN_ERR "[SYNC_HPT]   %s gpa: %016lx idx: %ld state: %d "
 			"flags: 0x%x num_pmds: %d mappers: %s\n",

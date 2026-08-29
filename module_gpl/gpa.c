@@ -499,7 +499,7 @@ static void __prepare_gpadesc_alloc(struct emp_mm *emm, int order)
 	gpadesc_alloc_unlock(emm);
 	if (cachep)
 		return;
-	snprintf(name, sizeof(name), "gpadesc_alloc%d-%d", emm->id, order);
+	scnprintf(name, sizeof(name), "gpadesc_alloc%d-%d", emm->id, order);
 	/* With the align in 3rd parameter, the offset in the block can
 	 * be calculated by the memory address.
 	 */

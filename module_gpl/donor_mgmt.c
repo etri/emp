@@ -131,7 +131,7 @@ static int create_mr(struct emp_mm *bvma, struct donor_info *donor, int *mr_id)
 		goto err_alloc_mrid;
 	}
 	mr->id = (u8)mrid;
-	snprintf(str_buffer, 16, "memreg%d:%d", bvma->id, mr->id);
+	scnprintf(str_buffer, 16, "memreg%d:%d", bvma->id, mr->id);
 	mr->wr_cache = emp_kmem_cache_create(str_buffer,
 			sizeof(struct work_request), 0, 0, dma_ops->wr_ctor);
 	if (!mr->wr_cache) {
