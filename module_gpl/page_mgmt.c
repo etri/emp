@@ -78,7 +78,7 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	for_each_gpas_reverse(g, head) {
 		free_remote_page(emm, g, true);
 		g->local_page->vmr_id = vmr->id;
-		debug_lru_set_vmr_id_mark(g->local_page, vmr->id);
+		debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
 	}
 
 	if (prev_vmr_id != vmr->id) {
@@ -162,7 +162,7 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 
 		for_each_gpas(g, head) {
 			g->local_page->vmr_id = vmr->id;
-			debug_lru_set_vmr_id_mark(g->local_page, vmr->id);
+			debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
 		}
 	}
 
@@ -1546,7 +1546,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	/* update stat */
 	emp_vcpu_stat_inc(cpu, vma_fault);
 #endif	
-	emp_pf_history_beg(cpu, vmr->id, hva);
+	emp_pf_history_beg(cpu, vmr->debug_id, hva);
 	emp_pf_history_add(cpu, hva_or_gpa, 1);
 
 	/* hva to gpa */

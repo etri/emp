@@ -68,6 +68,15 @@ enum debug_sync_hpt_point {
 
 #define EMP_VMRS_MAX    (262144)
 
+#ifdef CONFIG_EMP_DEBUG
+/* Size of the debug-only vmr id space. Ids are reused as vmrs come and go, so
+ * they stay small and stay useful as indices for the rss debugger, which keeps
+ * a per-vmr bit per local page and gives up above
+ * CONFIG_EMP_DEBUG_RSS_MAX_VMRS. A debug id has no functional meaning: nothing
+ * is looked up by it. */
+#define EMP_DEBUG_VMR_IDS_MAX (1024)
+#endif
+
 #ifdef CONFIG_EMP_VM
 /* NOTE: LOW_MEMORY_MAX_ORDER
  * LOW_MEMORY_MAX_ORDER is the maximum block order of the first 2MB region in

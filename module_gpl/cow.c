@@ -979,7 +979,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		/* remove mapped_pmd from @old */
 		if (emp_lp_pop_pmd(emm, old->local_page, vmr->id)) {
 			debug_assert(mapped == true);
-			debug_lru_del_vmr_id_mark(old->local_page, vmr->id);
+			debug_lru_del_vmr_id_mark(old->local_page, vmr->debug_id);
 			/* NOTE: No vmr's RSS is changed. */
 			emp_update_rss_sub_kernel(vmr, page_len,
 						DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE,
@@ -989,7 +989,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 
 		/* add mapped_pmd on @new */
 		emp_lp_insert_pmd(emm, new->local_page, vmr->id, pmd);
-		debug_lru_add_vmr_id_mark(new->local_page, vmr->id);
+		debug_lru_add_vmr_id_mark(new->local_page, vmr->debug_id);
 
 		owned = old->local_page->vmr_id == vmr->id;
 		if (!mapped && !owned) // newly mapped, and not previously owned
@@ -1164,11 +1164,11 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 	__dup_cow_gpadesc(vmr, head_idx, old_head, new_head);
 
 	if (old_head->r_state != GPA_INIT) {
-		debug_progress_cow(old_head, new_head, vmr->id);
+		debug_progress_cow(old_head, new_head, vmr->debug_id);
 		ret = dup_cow_gpadesc_local(vmr, head_idx,
 						old_head, new_head);
 	} else { /* old_head->r_state == GPA_INIT */
-		debug_progress_cow(old_head, new_head, vmr->id);
+		debug_progress_cow(old_head, new_head, vmr->debug_id);
 		ret = dup_cow_gpadesc_remote(vmr,
 					head_idx, old_head, new_head);
 	}
@@ -1365,10 +1365,10 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 		old = max_old_head + (gpa_idx - max_head_idx);
 		new = max_new_head + (gpa_idx - max_head_idx);
 		if (old->local_page && old->local_page->page == vmf_page) {
-			debug_page_ref_mark(vmr->id, old->local_page, -1);
+			debug_page_ref_mark(vmr->debug_id, old->local_page, -1);
 			debug_page_ref_mmu_noti_end(old->local_page);
 		} else if (new->local_page && new->local_page->page == vmf_page) {
-			debug_page_ref_mark(vmr->id, new->local_page, -1);
+			debug_page_ref_mark(vmr->debug_id, new->local_page, -1);
 			debug_page_ref_mmu_noti_end(new->local_page);
 		}
 	}
@@ -1531,10 +1531,10 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 		new = new_head + (gpa_idx - head_idx);
 		/* Note that the caller is mmu_notifier. old and new has local_page. */
 		if (old->local_page && old->local_page->page == vmf_page) {
-			debug_page_ref_mark(vmr->id, old->local_page, -1);
+			debug_page_ref_mark(vmr->debug_id, old->local_page, -1);
 			debug_page_ref_mmu_noti_end(old->local_page);
 		} else if (new->local_page && new->local_page->page == vmf_page) {
-			debug_page_ref_mark(vmr->id, new->local_page, -1);
+			debug_page_ref_mark(vmr->debug_id, new->local_page, -1);
 			debug_page_ref_mmu_noti_end(new->local_page);
 		}
 	}
@@ -1633,7 +1633,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 		orig_lp = gpa->local_page;
 	if (orig_lp) {
 		debug_page_ref_mmu_noti_beg(orig_lp);
-		debug_page_ref_mark(vmr->id, orig_lp, 1);
+		debug_page_ref_mark(vmr->debug_id, orig_lp, 1);
 	}
 #endif
 
@@ -1642,12 +1642,12 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 		 * been dropped. Either way nothing to copy: grant the write. */
 		if (likely(head->r_state == GPA_ACTIVE && head->local_page)) {
 			cow_mkwrite_pte(vmr, head_idx, head);
-			debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
+			debug_page_ref_mark_safe(vmr->debug_id, orig_lp, 0);
 		}
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 		else {
-			debug_page_ref_mark_safe(vmr->id, head->local_page, 0);
-			debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
+			debug_page_ref_mark_safe(vmr->debug_id, head->local_page, 0);
+			debug_page_ref_mark_safe(vmr->debug_id, orig_lp, 0);
 		}
 #endif
 		goto out;
@@ -1655,7 +1655,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 
 	debug_assert(check_cow_fault_vmr(vmr));
 	if (!check_cow_fault_mmu_only(head)) {
-		debug_page_ref_mark_safe(vmr->id, orig_lp, 0);
+		debug_page_ref_mark_safe(vmr->debug_id, orig_lp, 0);
 		goto out;
 	}
 
@@ -1696,7 +1696,7 @@ out:
 	 * When ret > 0, __handle_emp_cow_fault() already has called
 	 * debug_page_ref_mmu_noti_end(). */
 	if (orig_lp && ret <= 0) {
-		debug_page_ref_mark(vmr->id, orig_lp, -1);
+		debug_page_ref_mark(vmr->debug_id, orig_lp, -1);
 		debug_page_ref_mmu_noti_end(orig_lp);
 	}
 #endif
@@ -1795,7 +1795,7 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 			if (!emp_lp_lookup_vmr_id(g, vmr->id))
 				continue;
 			debug_page_ref_dup_beg(g->local_page);
-			debug_page_ref_mark(vmr->id, g->local_page, 0);
+			debug_page_ref_mark(vmr->debug_id, g->local_page, 0);
 		}
 
 		emp_unlock_block(head);
@@ -1834,7 +1834,7 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 			if (!emp_lp_lookup_vmr_id(g, vmr->id))
 				continue;
 			debug_page_ref_unmap_beg(g->local_page);
-			debug_page_ref_mark(vmr->id, g->local_page, 0);
+			debug_page_ref_mark(vmr->debug_id, g->local_page, 0);
 		}
 
 		emp_unlock_block(head);

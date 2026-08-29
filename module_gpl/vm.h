@@ -260,6 +260,11 @@ enum emp_fork_policy {
 // virtual memory region for a contiguous host virtual (mmaped) memory
 struct emp_vmr {
 	int                 id;
+#ifdef CONFIG_EMP_DEBUG
+	/* index for diagnostics only: history buffers, the rss debugger's
+	 * per-vmr bit, and printk. Nothing is ever looked up by it. */
+	int                 debug_id;
+#endif
 	struct emp_mm       *emm;
 	unsigned long       vm_start;
 	unsigned long       vm_end;
@@ -313,10 +318,12 @@ struct emp_vmr {
 #endif /* CONFIG_EMP_USER */
 };
 
-/* The diagnostics index of @vmr, or -1 when there is none. While the
- * production registry exists (Series B-F), the registry id doubles as the
- * diagnostics id; Series G replaces this with a debug-only id. */
-#define emp_vmr_dbgid(vmr) ((vmr) ? (vmr)->id : -1)
+/* The diagnostics index of @vmr, or -1 when there is none. */
+#ifdef CONFIG_EMP_DEBUG
+#define emp_vmr_dbgid(vmr) ((vmr) ? (vmr)->debug_id : -1)
+#else
+#define emp_vmr_dbgid(vmr) (-1)
+#endif
 
 /* The vm_ops every EMP vma carries, defined in vm.c. Declared here because a
  * vma is identified by it: vma->vm_ops == &emp_vma_ops. */
@@ -511,7 +518,7 @@ struct emp_gpadesc_alloc {
 						(s64) NULL, (s64) (new)); \
 	if (likely(____g == NULL)) { \
 		atomic_inc(&(new)->refcnt); \
-		debug_gpa_refcnt_inc_mark((new), (vmr)->id); \
+		debug_gpa_refcnt_inc_mark((new), (vmr)->debug_id); \
 	} else \
 		dprintk_ratelimited(KERN_ERR "%s: race at set_gpa_dir_new() " \
 				"is detected. vmr: %d index: 0x%lx " \
@@ -537,18 +544,18 @@ struct emp_gpadesc_alloc {
 				(unsigned long) old, (unsigned long) new, \
 				(unsigned long) ____prev); \
 	atomic_inc(&(new)->refcnt); \
-	debug_gpa_refcnt_inc_mark((new), (vmr)->id); \
+	debug_gpa_refcnt_inc_mark((new), (vmr)->debug_id); \
 	BUG_ON(atomic_dec_return(&(old)->refcnt) <= 0); \
-	debug_gpa_refcnt_dec_mark((old), (vmr)->id); \
+	debug_gpa_refcnt_dec_mark((old), (vmr)->debug_id); \
 } while (0)
 
 #else
 #define change_gpa_dir(vmr, gpa_dir, idx, old, new) do { \
 	(gpa_dir)[idx] = (new); \
 	atomic_inc(&(new)->refcnt); \
-	debug_gpa_refcnt_inc_mark((new), (vmr)->id); \
+	debug_gpa_refcnt_inc_mark((new), (vmr)->debug_id); \
 	atomic_dec(&(old)->refcnt); \
-	debug_gpa_refcnt_dec_mark((old), (vmr)->id); \
+	debug_gpa_refcnt_dec_mark((old), (vmr)->debug_id); \
 } while (0)
 #endif
 
@@ -556,7 +563,7 @@ struct emp_gpadesc_alloc {
 	struct emp_gpa *____gpa = (gpa_dir)[idx]; \
 	(gpa_dir)[idx] = NULL; \
 	atomic_dec(&____gpa->refcnt); \
-	debug_gpa_refcnt_dec_mark(____gpa, (vmr)->id); \
+	debug_gpa_refcnt_dec_mark(____gpa, (vmr)->debug_id); \
 } while (0)
 
 #ifdef CONFIG_EMP_USER
@@ -592,6 +599,10 @@ struct emp_mm {
 	atomic_t            debug_sync_hpt_checked[NUM_DEBUG_SYNC_HPT_POINTS];
 	atomic_t            debug_sync_hpt_unequal[NUM_DEBUG_SYNC_HPT_POINTS];
 	atomic_t            debug_sync_hpt_partial[NUM_DEBUG_SYNC_HPT_POINTS];
+#endif
+#ifdef CONFIG_EMP_DEBUG
+	spinlock_t          debug_vmr_ids_lock;
+	DECLARE_BITMAP(debug_vmr_ids, EMP_DEBUG_VMR_IDS_MAX);
 #endif
 	spinlock_t          vmrs_lock; // protect vmrs_bitmap, vmrs_len, vmrs
 	DECLARE_BITMAP(vmrs_bitmap, EMP_VMRS_MAX);

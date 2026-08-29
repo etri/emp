@@ -250,7 +250,7 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 
 	// pmd is exclusive to w, so it must be used after pte_insetall
 	emp_lp_insert_pmd(vmr->emm, lp, vmr->id, pmd);
-	debug_lru_add_vmr_id_mark(lp, vmr->id);
+	debug_lru_add_vmr_id_mark(lp, vmr->debug_id);
 
 	if (lp->vmr_id != vmr->id)
 		emp_update_rss_add(vmr, page_len,
@@ -592,7 +592,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	cpu = emp_this_cpu_ptr(emm->pcpus);
 	emp_vcpu_stat_inc(cpu, vma_fault);
 
-	emp_pf_history_beg(cpu, vmr->id, vmf->address);
+	emp_pf_history_beg(cpu, vmr->debug_id, vmf->address);
 	emp_pf_history_add(cpu, hva_or_gpa, 0);
 
 	sb_order = bvma_subblock_order(emm);

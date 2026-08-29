@@ -234,7 +234,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 		"rss_add_kernel: %ld rss_sub_kernel: %ld rss_sum: %ld "
 		"host_rss: %ld\n",
 			func,
-			vmr->id,
+			vmr->debug_id,
 			current->pid,
 			vmr->host_mm,
 			atomic_long_read(&vmr->rss_cache),
@@ -245,7 +245,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 	for (i = 0; i < NUM_DEBUG_RSS_ADD_ID; i++)
 		dprintk("DEBUG_RSS: (%s) vmr: %d pid: %d mm: %p rss_add[%02d]: %8ld (%s)\n",
 				func,
-				vmr->id,
+				vmr->debug_id,
 				current->pid,
 				vmr->host_mm,
 				i,
@@ -254,7 +254,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 	for (i = 0; i < NUM_DEBUG_RSS_SUB_ID; i++)
 		dprintk("DEBUG_RSS: (%s) vmr: %d pid: %d mm: %p rss_sub[%02d]: %8ld (%s)\n",
 				func,
-				vmr->id,
+				vmr->debug_id,
 				current->pid,
 				vmr->host_mm,
 				i,
@@ -263,7 +263,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 	for (i = 0; i < NUM_DEBUG_RSS_ADD_KERNEL_ID; i++)
 		dprintk("DEBUG_RSS: (%s) vmr: %d pid: %d mm: %p rss_add_kernel[%02d]: %8ld (%s)\n",
 				func,
-				vmr->id,
+				vmr->debug_id,
 				current->pid,
 				vmr->host_mm,
 				i,
@@ -272,7 +272,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 	for (i = 0; i < NUM_DEBUG_RSS_SUB_KERNEL_ID; i++)
 		dprintk("DEBUG_RSS: (%s) vmr: %d pid: %d mm: %p rss_sub_kernel[%02d]: %8ld (%s)\n",
 				func,
-				vmr->id,
+				vmr->debug_id,
 				current->pid,
 				vmr->host_mm,
 				i,
@@ -287,7 +287,7 @@ static inline void __debug_update_rss_progress(struct emp_vmr *vmr, struct local
 	struct debug_rss_progress *progress = &lp->debug_rss_progress[next];
 	progress->file = file;
 	progress->line = line;
-	progress->vmr_id = vmr->id;
+	progress->vmr_id = vmr->debug_id;
 	progress->is_add = is_add;
 	lp->debug_rss_progress_next = (next + 1) % DEBUG_RSS_PROGRESS_SIZE;
 }
@@ -330,7 +330,7 @@ static void ____debug_update_rss_warn_once_vmr_id(const char *func, int vmr_id) 
 }
 
 static void COMPILER_DEBUG __debug_update_rss_add(struct emp_vmr *vmr, struct local_page *lp, char *file, int line) {
-	int vmr_id = vmr->id;
+	int vmr_id = vmr->debug_id;
 	int i = vmr_id / (sizeof(u64)*8);
 	int j = vmr_id % (sizeof(u64)*8);
 	__debug_update_rss_progress(vmr, lp, file, line, 1);
@@ -348,7 +348,7 @@ static void COMPILER_DEBUG __debug_update_rss_add(struct emp_vmr *vmr, struct lo
 }
 
 static void COMPILER_DEBUG __debug_update_rss_sub(struct emp_vmr *vmr, struct local_page *lp, char *file, int line) {
-	int vmr_id = vmr->id;
+	int vmr_id = vmr->debug_id;
 	int i = vmr_id / (sizeof(u64)*8);
 	int j = vmr_id % (sizeof(u64)*8);
 	__debug_update_rss_progress(vmr, lp, file, line, 0);
@@ -732,10 +732,10 @@ void debug_show_gpa_state(struct emp_vmr *vmr, const char *func)
 
 	emp_debug_bulk_msg_lock();
 	BUG_ON(!vmr || !emm);
-	printk(KERN_ERR "[SHOW_GPA] (%d-%d) from: %s%s\n", emm->id, vmr->id, func,
+	printk(KERN_ERR "[SHOW_GPA] (%d-%d) from: %s%s\n", emm->id, vmr->debug_id, func,
 						vmr->vmr_closing ? " (closing)" : "");
 	if (unlikely(!desc)) {
-		printk(KERN_ERR "[SHOW_GPA] (%d-%d) ERROR: vmdesc is null\n", emm->id, vmr->id);
+		printk(KERN_ERR "[SHOW_GPA] (%d-%d) ERROR: vmdesc is null\n", emm->id, vmr->debug_id);
 		emp_debug_bulk_msg_unlock();
 		return;
 	}
@@ -745,7 +745,7 @@ void debug_show_gpa_state(struct emp_vmr *vmr, const char *func)
 	desc_refcount = atomic_read(&desc->refcount);
 #endif
 	printk(KERN_ERR "[SHOW_GPA] (%d-%d) VMDESC(0x%lx) refcount: %d gpa_len: 0x%lx vm_base: 0x%lx block_aligned_start: 0x%lx gpa_dir_alloc_size: 0x%lx\n",
-			emm->id, vmr->id, (unsigned long) desc,
+			emm->id, vmr->debug_id, (unsigned long) desc,
 			desc_refcount, gpa_len,
 			desc->vm_base, desc->block_aligned_start,
 			desc->gpa_dir_alloc_size);

@@ -462,6 +462,37 @@ static void put_pcpus_var(struct emp_mm *emm)
 	__put_pcpus_var(emm, nr_cpu_ids);
 }
 
+#ifdef CONFIG_EMP_DEBUG
+/* Give @vmr an index for diagnostics. Ids are reused so that they stay small;
+ * nothing is looked up by one, so exhaustion is not an error. */
+static void emp_vmr_debug_id_set(struct emp_mm *emm, struct emp_vmr *vmr)
+{
+	unsigned long p;
+
+	spin_lock(&emm->debug_vmr_ids_lock);
+	p = find_first_zero_bit(emm->debug_vmr_ids, EMP_DEBUG_VMR_IDS_MAX);
+	if (likely(p < EMP_DEBUG_VMR_IDS_MAX)) {
+		__set_bit(p, emm->debug_vmr_ids);
+		vmr->debug_id = (int) p;
+	} else
+		vmr->debug_id = -1;
+	spin_unlock(&emm->debug_vmr_ids_lock);
+}
+
+static void emp_vmr_debug_id_clear(struct emp_mm *emm, struct emp_vmr *vmr)
+{
+	if (vmr->debug_id < 0)
+		return;
+	spin_lock(&emm->debug_vmr_ids_lock);
+	__clear_bit(vmr->debug_id, emm->debug_vmr_ids);
+	spin_unlock(&emm->debug_vmr_ids_lock);
+	vmr->debug_id = -1;
+}
+#else
+#define emp_vmr_debug_id_set(emm, vmr) do {} while (0)
+#define emp_vmr_debug_id_clear(emm, vmr) do {} while (0)
+#endif /* !CONFIG_EMP_DEBUG */
+
 static int emp_vmr_find_and_set(struct emp_mm *emm, struct emp_vmr *vmr)
 {
 	unsigned long p;
@@ -497,6 +528,8 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 	if (emm->ekvm.lowmem_vmr == vmr)
 		emm->ekvm.lowmem_vmr = NULL;
 #endif
+
+	emp_vmr_debug_id_clear(emm, vmr);
 
 	spin_lock(&emm->vmrs_lock);
 	emm->vmrs[vmr->id] = NULL;
@@ -752,8 +785,8 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 				pmd = emp_lp_lookup_pmd(gpa, prev_vmr->id);
 				if (pmd) {
 					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
-					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->id);
-					debug_page_ref_mark_map(new_vmr->id, gpa->local_page);
+					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
 					/* RSS has been moved.
 					 * However, host_mm of prev_vmr and new_vmr are identical.
 					 * We don't need to take care of RSS actually. */
@@ -770,14 +803,14 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 						: gpa >= boundary) {
 				if (gpa->local_page->vmr_id == prev_vmr->id) {
 					gpa->local_page->vmr_id = new_vmr->id;
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->id);
+					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 				}
 				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr->id);
 				if (pmd) {
-					debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->id);
+					debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
 					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
-					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->id);
-					debug_page_ref_mark_map(new_vmr->id, gpa->local_page);
+					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
 				}
 #ifdef CONFIG_EMP_DEBUG_RSS
 				if (pmd || gpa->local_page->vmr_id == new_vmr->id) {
@@ -983,15 +1016,15 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 								head_idx, pmd, true);
                                 
 				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr->id);
-				debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->id);
+				debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
 				if (gpa->local_page->vmr_id == prev_vmr->id) {
 					gpa->local_page->vmr_id = new_vmr->id;
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->id);
+					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 				}
                                 
 				emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
-				debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->id);
-				debug_page_ref_mark_map(new_vmr->id, gpa->local_page); /* mark the kernel's increment on page count */
+				debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+				debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page); /* mark the kernel's increment on page count */
 #ifdef CONFIG_EMP_DEBUG_RSS
 				emp_update_rss_sub_kernel(prev_vmr,
 						__gpa_to_page_len(new_vmr, gpa, idx),
@@ -1005,7 +1038,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			} else { // INACTIVE, WB
 				if (gpa->local_page->vmr_id == prev_vmr->id) {
 					gpa->local_page->vmr_id = new_vmr->id;
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->id);
+					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 #ifdef CONFIG_EMP_DEBUG_RSS
 					emp_update_rss_sub_kernel(prev_vmr,
 							__gpa_to_page_len(new_vmr, gpa, idx),
@@ -1074,6 +1107,7 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 		emp_kfree(new_vmr);
 		return NULL;
 	}
+	emp_vmr_debug_id_set(emm, new_vmr);
 
 	new_vmr->emm = emm;
 	if (vma)
@@ -1819,6 +1853,10 @@ static struct emp_mm *create_emm(void)
 	bitmap_fill(bvma->vmrs_bitmap, EMP_VMRS_MAX);
 
 	init_srcu_struct(&bvma->srcu);
+#ifdef CONFIG_EMP_DEBUG
+	spin_lock_init(&bvma->debug_vmr_ids_lock);
+	bitmap_zero(bvma->debug_vmr_ids, EMP_DEBUG_VMR_IDS_MAX);
+#endif
 	spin_lock_init(&bvma->vmrs_lock);
 	spin_lock_init(&bvma->mrs.memregs_lock);
 	init_waitqueue_head(&bvma->mrs.mrs_ctrl_wq);
