@@ -277,4 +277,14 @@ extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
 #define ClearPageMlocked(p)     folio_clear_mlocked(page_folio(p))
 #endif /* EMP_HAVE_FOLIO_ONLY_UNEVICTABLE_MLOCKED */
 
+/* QUEUE_FLAG_POLL moved into queue_limits.features as BLK_FEAT_POLL in 6.11
+ * (v6.10 has the flag, v6.11 the feature). */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
+	// RHEL_RELEASE_VERSION >= 10.0 or KERNEL_VERSION >= 6.11.0
+#define emp_blk_queue_poll(q) (((q)->limits.features & BLK_FEAT_POLL) != 0)
+#else
+#define emp_blk_queue_poll(q) test_bit(QUEUE_FLAG_POLL, &(q)->queue_flags)
+#endif
+
 #endif /* __COMPAT_H__ */

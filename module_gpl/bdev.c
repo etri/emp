@@ -22,7 +22,7 @@
 #endif
 
 #define IS_POLLING_WR(w) (((w)->command & EMP_REQ_POLLED) \
-			&& test_bit(QUEUE_FLAG_POLL, &(w)->q->queue_flags))
+			&& emp_blk_queue_poll((w)->q))
 
 static int wait_for_wc(struct emp_mm *, struct vcpu_var *, struct work_request *);
 static int try_wait_for_wc(struct emp_mm *, struct work_request *);
@@ -619,7 +619,7 @@ static int create_conn(struct emp_mm *emm, struct connection **connection,
 
 	{
 		struct request_queue *q = bdev->bd_disk->queue;
-		if (test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
+		if (emp_blk_queue_poll(q))
 			conn->read_command_flag = EMP_REQ_POLLED;
 	}
 
