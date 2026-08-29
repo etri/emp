@@ -581,8 +581,8 @@ void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 
 /**************************** EMP DEBUG GPA STATE ***********************/
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
-const static char *__r_state_str[] = { "REMOT", "ACTIV", "INACT", "WB", "FETCH",
-					"TR_IL", "TR_AL", "TR_PL"};
+static const char * const __r_state_str[] = { "REMOT", "ACTIV", "INACT", "WB",
+					"FETCH", "TR_IL", "TR_AL", "TR_PL"};
 #define __get_r_state_str(r) (((r) < 0 || (r) >= GPA_STATE_MAX) \
 					? "UNKNO" : __r_state_str[r])
 

@@ -354,7 +354,7 @@ enum EMP_COW_CALLER {
 };
 #endif /* CONFIG_EMP_DEBUG */
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
-const static char *emp_cow_caller_str[NUM_EMP_COW_CALLER] = {
+static const char * const emp_cow_caller_str[NUM_EMP_COW_CALLER] = {
 	"hva_fault",
 	"mmu_notifier",
 };
