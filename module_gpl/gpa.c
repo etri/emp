@@ -886,8 +886,9 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		 * says nothing about the other's -- taking the shortcut there
 		 * would assert sole ownership falsely. The normal walk below
 		 * handles it: zapped ptes are skipped one by one and only this
-		 * vmr's record is removed. */
-		if (page_mapcount(map_page) == 0
+		 * vmr's record is removed. page_mapped() is folio-wide, so it
+		 * only errs toward that walk; page_mapcount() went in 6.11. */
+		if (!page_mapped(map_page)
 			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
 			gpa->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->id);
