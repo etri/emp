@@ -2075,6 +2075,8 @@ static int __emp_vmdesc_view_add(struct emp_vmdesc *desc, unsigned long start,
 	}
 
 	debug_assert(node != NULL && *node != NULL);
+	if (unlikely(node == NULL || *node == NULL))
+		return -ENOMEM;
 
 	n = *node;
 	*node = NULL;
