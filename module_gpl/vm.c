@@ -1095,6 +1095,62 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 }
 
 #ifdef CONFIG_EMP_USER
+/**
+ * fork_find_sibling_vmdesc - the child namespace a sibling child vma already made
+ * @param prev_vmr the parent vmr this child vma was duplicated from
+ * @param new_vma the child vma being opened
+ *
+ * @return the child vmdesc to share, or NULL to create a fresh one
+ *
+ * A private fork of a range which has been split must preserve the grouping:
+ * several parent vmrs viewing one namespace have to become several child vmrs
+ * viewing one child namespace, not one namespace each.
+ *
+ * The sibling is found rather than remembered, so there is no fork-local state
+ * to keep alive and nothing to invalidate. dup_mmap() walks the parent's vmas in
+ * ascending order and creates exactly one child per parent vma, and it holds
+ * both mmap locks throughout -- this acquires neither. So if the parent vma
+ * which ends where prev_vmr begins views prev_vmr's namespace, then the child
+ * vma which ends where this one begins is that vma's child, and its namespace is
+ * the one to share.
+ *
+ * Every pointer dereferenced here belongs to a vma that is currently live in a
+ * locked mm. If the child vma tree cannot be queried yet on some kernel, this
+ * returns NULL and the fork falls back to one child namespace per child vmr,
+ * which is correct but keeps the halves apart.
+ */
+static struct emp_vmdesc *
+fork_find_sibling_vmdesc(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
+{
+	struct vm_area_struct *vma;
+	struct emp_vmr *vmr;
+
+	if (unlikely(prev_vmr->vm_start == 0 || new_vma->vm_start == 0))
+		return NULL;
+
+	/* does the parent's preceding vma view the same namespace? */
+	vma = find_vma(prev_vmr->host_mm, prev_vmr->vm_start - 1);
+	if (vma == NULL || vma->vm_end != prev_vmr->vm_start
+			|| vma->vm_ops != &emp_vma_ops)
+		return NULL;
+	vmr = __get_emp_vmr(vma);
+	if (vmr == NULL || vmr->descs != prev_vmr->descs)
+		return NULL;
+
+	/* then its child is this vma's predecessor, and holds the child
+	 * namespace this half belongs in */
+	vma = find_vma(new_vma->vm_mm, new_vma->vm_start - 1);
+	if (vma == NULL || vma->vm_end != new_vma->vm_start
+			|| vma->vm_ops != &emp_vma_ops)
+		return NULL;
+	vmr = __get_emp_vmr(vma);
+	if (vmr == NULL || vmr->descs == NULL)
+		return NULL;
+
+	debug_assert(vmr->descs->vm_base == prev_vmr->descs->vm_base);
+	return vmr->descs;
+}
+
 static struct emp_vmr * COMPILER_DEBUG
 __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 {
@@ -1142,8 +1198,29 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		new_vmdesc = true;
 		dup_dir = false;
 	} else { // map private
+		/* If this range was split, its halves view one namespace in the
+		 * parent and must view one child namespace too. The half opened
+		 * before this one has already made it. */
+		struct emp_vmdesc *sibling;
+
+		sibling = fork_find_sibling_vmdesc(prev_vmr, new_vma);
+		if (sibling) {
+			/* a second view of the child namespace: a distinct
+			 * interval, so it needs an entry of its own */
+			new_vmr->descs = sibling;
+			atomic_inc(&sibling->refcount);
+			if (unlikely(emp_vmdesc_view_add(sibling,
+						vmr_view_start(new_vmr),
+						vmr_view_end(new_vmr), false)))
+				printk(KERN_ERR "%s: ERROR: no view entry for "
+						"the forked split half. "
+						"vmr: [0x%lx, 0x%lx)\n",
+						__func__, new_vmr->vm_start,
+						new_vmr->vm_end);
+			new_vmdesc = false;
+		} else
+			new_vmdesc = true;
 		dup_list_add(new_vmr, prev_vmr, vm_shared);
-		new_vmdesc = true;
 		dup_dir = true;
 	}
 
@@ -1155,8 +1232,13 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		(unsigned long) new_vmr, vm_shared, vm_wipeonfork);
 
 	if (dup_vmdesc(new_vmr, prev_vmr, new_vmdesc, dup_dir)) {
-		/* If vm_shared, dup_vmdesc() do nothing.
-		 * We don't need to handle errors for vm_shared. */
+		if (vm_shared || !new_vmdesc) {
+			/* give back what the shared or sibling branch took */
+			emp_vmdesc_view_del(new_vmr->descs,
+						vmr_view_start(new_vmr),
+						vmr_view_end(new_vmr));
+			atomic_dec(&new_vmr->descs->refcount);
+		}
 		new_vma->vm_private_data = NULL;
 		dup_list_del(new_vmr);
 		emp_vmr_release(new_vmr);
@@ -1360,7 +1442,7 @@ static int emp_vma_split(struct vm_area_struct *vma, unsigned long addr)
 }
 #endif /* CONFIG_EMP_USER */
 
-static struct vm_operations_struct emp_vma_ops = {
+struct vm_operations_struct emp_vma_ops = {
 #ifdef CONFIG_EMP_USER
 	.open = emp_vma_open,
 #endif

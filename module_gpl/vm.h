@@ -319,6 +319,10 @@ struct emp_vmr {
  * diagnostics id; Series G replaces this with a debug-only id. */
 #define emp_vmr_dbgid(vmr) ((vmr) ? (vmr)->id : -1)
 
+/* The vm_ops every EMP vma carries, defined in vm.c. Declared here because a
+ * vma is identified by it: vma->vm_ops == &emp_vma_ops. */
+extern struct vm_operations_struct emp_vma_ops;
+
 #ifdef CONFIG_EMP_USER
 /* [vmr_view_start(), vmr_view_end()) is @vmr's view of its vmdesc, in
  * vmdesc-relative base page coordinates. vm_base is subblock-rounded down from
