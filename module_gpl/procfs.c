@@ -902,6 +902,29 @@ static ssize_t donor_info_read(struct file *file, char __user *buf,
 }
 #endif /* CONFIG_EMP_RDMA */
 
+/*
+ * Total host base page memory currently allocated to this emp_mm for local
+ * page backing, in bytes.
+ *
+ * ftm.alloc_pages_len already has exactly this meaning: _alloc_pages() adds
+ * what it takes from the host and only the two paths which hand pages back
+ * (__free_page_to_host() and alloc_exit()) subtract, so pages sitting in EMP's
+ * own free lists or local caches still count, and active/inactive/writeback/
+ * proactive/pinned transitions do not change it. It excludes remote-only data,
+ * gpa descriptors, vmr/vmdesc metadata and mapped pmd metadata, and it is
+ * independent of Linux rss attribution: a resident page with no representative
+ * owner is still counted here.
+ */
+static ssize_t mem_alloc_size_read(struct file *file, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL)
+		return 0;
+	return __size_read(file, buf, count, ppos,
+		__PAGES_TO_SIZE(atomic_read(&bvma->ftm.alloc_pages_len)));
+}
+
 __EMP_PROC_VMA_ATOMIC_READ(mem_alloc_pages_len, ftm.alloc_pages_len)
 __EMP_PROC_VMA_ATOMIC_READ(mem_proactive_len, ftm.proactive_list.page_len)
 __EMP_PROC_VMA_ATOMIC_READ(mem_pin_list_len, ftm.cur_pin_pages)
@@ -1746,6 +1769,7 @@ static struct emp_proc_entry emp_proc_vm[] = {
 #ifdef CONFIG_EMP_DEBUG_SYNC_HPT
 	emp_proc_entry_ro(debug_sync_hpt),
 #endif
+	emp_proc_entry_ro(mem_alloc_size),
 	emp_proc_entry_ro(mem_alloc_pages_len),
 	emp_proc_entry_ro(mem_proactive_len),
 	emp_proc_entry_ro(mem_active_len),
