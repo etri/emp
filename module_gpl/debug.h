@@ -224,6 +224,17 @@ static inline void debug_generate_tag(struct emp_gpa *gpa) {}
 #define debug_check_notlocked(g) do { BUG_ON(!____emp_gpa_is_locked(g)); } while(0)
 #define debug_check_head(page) do { BUG_ON(PageCompound(page) && !PageHead(page)); } while(0)
 
+/* page_mapcount() went in 6.11; folio_mapcount() exists since 6.10. NOT
+ * faithful: it counts the whole folio -- printing only, never decisions.
+ * Debug-only on purpose: no !CONFIG_EMP_DEBUG stub, so misuse fails to build. */
+#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(10, 0)) \
+	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
+	// RHEL_RELEASE_VERSION >= 10.0 or KERNEL_VERSION >= 6.11.0
+#define emp_page_mapcount(p) folio_mapcount(page_folio(p))
+#else
+#define emp_page_mapcount(p) page_mapcount(p)
+#endif
+
 void debug_emp_unlock_block(struct emp_gpa *head);
 void debug__handle_gpa_on_inactive_fault(struct emp_mm *emm, struct emp_gpa *);
 void debug_fetch_block(struct emp_mm *emm, struct emp_gpa *g, int fip);

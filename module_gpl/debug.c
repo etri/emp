@@ -689,7 +689,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			page ? page_to_pfn(page) : 0UL,
 			page ? (PageCompound(page) ? 'O' : 'X') : 'N',
 			page ? page_ref_count(page) : -1,
-			page ? page_mapcount(page) : -1,
+			page ? emp_page_mapcount(page) : -1,
 			lp_pmd_count,
 
 			local_page->pmds.vmr_id,
@@ -1020,7 +1020,7 @@ void __debug_alloc_data_add(const char *name, const int num_inc,
 	data->line = line;
 	file_len = strlen(file);
 	if (unlikely(file_len >= DBG_ALLOC_DATA_FILE_MAX)) {
-		strlcpy(data->file, file + file_len - DBG_ALLOC_DATA_FILE_MAX + 1,
+		strscpy(data->file, file + file_len - DBG_ALLOC_DATA_FILE_MAX + 1,
 							DBG_ALLOC_DATA_FILE_MAX);
 		if (DBG_ALLOC_DATA_FILE_MAX >= 4) { /* enough memory for "..." */
 			data->file[0] = '.';
@@ -1028,7 +1028,7 @@ void __debug_alloc_data_add(const char *name, const int num_inc,
 			data->file[2] = '.';
 		}
 	} else
-		strlcpy(data->file, file, DBG_ALLOC_DATA_FILE_MAX);
+		strscpy(data->file, file, DBG_ALLOC_DATA_FILE_MAX);
 	table->next++;
 out:
 	spin_unlock(&table->lock);
@@ -1892,13 +1892,13 @@ void debug_unmap_ptes(struct emp_mm *emm, struct emp_gpa *heads, unsigned long s
 	heads_end = heads + (size >> (bvma_subblock_order(emm) + PAGE_SHIFT));
 
 	for (g = heads; g < heads_end; g++) {
-		if (page_mapcount(g->local_page->page)) {
-			printk(KERN_ERR "WARN: %s page mapcount is not matched. "
-					"gpa: %016lx idx: %lx page_mapcount(%016lx): %d != 0\n",
+		if (page_mapped(g->local_page->page)) {
+			printk(KERN_ERR "WARN: %s page is still mapped. "
+					"gpa: %016lx idx: %lx mapcount(%016lx): %d != 0\n",
 					__func__, (unsigned long) g,
 					g->local_page->gpa_index,
 					(unsigned long) g->local_page->page,
-					page_mapcount(g->local_page->page));
+					emp_page_mapcount(g->local_page->page));
 			warned = true;
 		}
 
