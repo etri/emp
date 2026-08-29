@@ -456,6 +456,8 @@ struct emp_cow_ops {
 #ifdef CONFIG_EMP_VM
 struct emp_exp_kvm {
 	struct kvm  *kvm;
+	/* the vmr holding the guest's low memory; KVM handles its faults */
+	struct emp_vmr *lowmem_vmr;
 	int         kvm_vcpus_len; // number of virtual cpus of KVM
 	int         emp_vcpus_len; // number of virtual cpus of KVM + io threads for EMP
 	unsigned long apic_base_hva;

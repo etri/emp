@@ -360,13 +360,13 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 	low_order = (u8) LOW_MEMORY_MAX_ORDER;
 
 	/* Set low memory end */
-	if (emm->ekvm.kvm && vmr->id == 0) {
+	if (emm->ekvm.kvm && vmr == emm->ekvm.lowmem_vmr) {
 		/* TODO: how can we know GFN of vm_start?
 		 * low memory region is the first 2MB of VM, and we need to
 		 * restrict the maximum order of the region. Unfortunately, we
-		 * only know HVA range here. Thus, we use a heuristic: if vmr_id
-		 * is 0, it is the first memory region (numa node) and its GFN
-		 * is started from 0.
+		 * only know HVA range here. Thus, we use a heuristic: the first
+		 * vmr this emp_mm maps is the first memory region (numa node)
+		 * and its GFN is started from 0.
 		 * We need to revise this. For example, add an IOCTL and let
 		 * EMP know the GFN of each memory region (numa node) before VM
 		 * starts.

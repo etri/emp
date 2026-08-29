@@ -493,6 +493,11 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 	if (get_emp_mm_last_vmr(emm) == vmr)
 		clear_emp_mm_last_vmr(emm);
 
+#ifdef CONFIG_EMP_VM
+	if (emm->ekvm.lowmem_vmr == vmr)
+		emm->ekvm.lowmem_vmr = NULL;
+#endif
+
 	spin_lock(&emm->vmrs_lock);
 	emm->vmrs[vmr->id] = NULL;
 	__set_bit(vmr->id, emm->vmrs_bitmap);
@@ -1559,6 +1564,12 @@ vm_start_aligned:
 	vmr = create_vmr(bvma, vma);
 	if (vmr == NULL)
 		return -ENOMEM;
+
+#ifdef CONFIG_EMP_VM
+	/* the first vmr a KVM-backed emp_mm maps holds the guest's low memory */
+	if (bvma->ekvm.kvm && bvma->ekvm.lowmem_vmr == NULL)
+		bvma->ekvm.lowmem_vmr = vmr;
+#endif
 
 #ifdef CONFIG_EMP_USER
 	if (!is_emm_with_kvm(bvma)) {
