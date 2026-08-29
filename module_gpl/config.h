@@ -37,7 +37,6 @@
 #define COMPILER_DEBUG_FORCE __attribute__((optimize("-O0")))
 #define EMP_DEVICE_NAME "emp"
 #define EMP_MM_MAX      (256)
-#define EMP_VMR_MAGIC_VALUE (0x776b6f68) // wkoh: the creater of EMP
 
 #if defined(CONFIG_EMP_DEBUG_GPA_STATE) || defined(COFIG_EMP_DEBUG_PROGRESS_LOCK)
 /* DEBUG_GPA_STATE uses DEBUG_PROGRESS */

@@ -255,8 +255,12 @@ static inline u64 spte_to_pfn(u64 pte)
 }
 #endif
 
+/* An EMP vma is identified by its vm_ops. NULL for a foreign vma, and for an
+ * EMP vma whose vmr creation failed. */
 static inline struct emp_vmr *__get_emp_vmr(struct vm_area_struct *vma)
 {
+	if (unlikely(vma->vm_ops != &emp_vma_ops))
+		return NULL;
 	return (struct emp_vmr *)vma->vm_private_data;
 }
 
@@ -270,8 +274,9 @@ static inline struct emp_mm *__get_emp_mm(struct vm_area_struct *vma)
 	int i;
 	struct emp_mm *emm;
 
-	if (vma->vm_private_data)
-		return __get_emp_vmr(vma)->emm;
+	struct emp_vmr *vmr = __get_emp_vmr(vma);
+	if (vmr)
+		return vmr->emm;
 
 	emm = NULL;
 	spin_lock(&emp_mm_arr_lock);

@@ -259,7 +259,6 @@ enum emp_fork_policy {
 
 // virtual memory region for a contiguous host virtual (mmaped) memory
 struct emp_vmr {
-	unsigned int        magic; // magic value
 	int                 id;
 	struct emp_mm       *emm;
 	unsigned long       vm_start;

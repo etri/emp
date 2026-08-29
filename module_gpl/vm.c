@@ -486,7 +486,6 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 {
 	struct emp_mm *emm = vmr->emm;
 
-	vmr->magic = 0; // remove the magic value
 #ifdef CONFIG_EMP_USER
 	debug_assert(vmr->mmu_notifier == NULL);
 #endif
@@ -1071,7 +1070,6 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 		return NULL;
 	}
 
-	new_vmr->magic = EMP_VMR_MAGIC_VALUE;
 	new_vmr->emm = emm;
 	if (vma)
 		__copy_vma_info(new_vmr, vma);
@@ -1584,8 +1582,10 @@ vm_start_aligned:
 	// prevent numa from relocating the related pages
 	vm_flags_set(vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
 
-	vma->vm_ops = &emp_vma_ops;
+	/* private data first: from the moment vm_ops is set, this vma is an EMP
+	 * vma and its private data will be read as one */
 	vma->vm_private_data = (void *)vmr;
+	vma->vm_ops = &emp_vma_ops;
 
 #ifdef CONFIG_EMP_VM
 	if (bvma->ekvm.kvm && (bvma->ekvm.apic_base_hva == 0UL))

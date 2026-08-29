@@ -183,10 +183,6 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 #ifdef CONFIG_EMP_DEBUG
 				int idx = _pte - pte;
 				struct emp_vmr *vmr = __get_emp_vmr(vma);
-				if (vmr->magic != EMP_VMR_MAGIC_VALUE
-						|| vmr->id >= EMP_VMRS_MAX
-						|| vmr->emm->vmrs[vmr->id] != vmr)
-					vmr = NULL;
 				printk(KERN_ERR "%s ERROR: already occupied. "
 					"addr: %016lx idx: %d pte: %016lx pfn: %lx "
 					"page: %016lx pfn: %lx flag: %016lx "

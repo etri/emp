@@ -1724,25 +1724,21 @@ get_emp_vmr(struct emp_mm *emm, struct mm_struct *mm, unsigned long va)
 	if (vma == NULL)
 		return NULL;
 
+	/* __get_emp_vmr() has already established that this is an EMP vma */
 	vmr = __get_emp_vmr(vma);
 	if (vmr == NULL)
 		return NULL;
-	debug_BUG_ON(vmr && !virt_addr_valid(vmr));
-	/* Filter the non-emp_vmr */
-	if (vmr->magic != EMP_VMR_MAGIC_VALUE
-			|| vmr->id >= EMP_VMRS_MAX
-			|| emm->vmrs[vmr->id] != vmr)
-		return NULL;
+	debug_BUG_ON(!virt_addr_valid(vmr));
 	debug_BUG_ON(vmr->host_vma != vma);
-#ifdef CONFIG_EMP_DEBUG
+	/* ... but not that it is one of ours. This is the check the registry
+	 * round trip used to make, asked of the vmr directly. */
 	if (unlikely(vmr->emm != emm)) {
-		printk(KERN_ERR "ERROR: (%s) vmr(%lx,%d)->emm(%lx,%d) != emm(%lx,%d)\n",
-				__func__, (unsigned long)vmr, vmr->id,
-					(unsigned long)vmr->emm, vmr->emm->id,
-					(unsigned long)emm, emm->id);
+		printk_ratelimited(KERN_ERR "ERROR: (%s) vmr(%lx)->emm(%lx,%d) "
+				"!= emm(%lx,%d)\n", __func__,
+				(unsigned long) vmr, (unsigned long) vmr->emm,
+				vmr->emm->id, (unsigned long) emm, emm->id);
 		return NULL;
 	}
-#endif
 	return vmr;
 }
 #endif
@@ -1752,12 +1748,7 @@ __get_emp_vmr_check(struct emp_mm *emm, struct vm_area_struct *vma) {
 	struct emp_vmr *vmr = __get_emp_vmr(vma);
 	if (vmr == NULL)
 		return NULL;
-	debug_BUG_ON(vmr && !virt_addr_valid(vmr));
-	/* Filter the non-emp_vmr */
-	if (vmr->magic != EMP_VMR_MAGIC_VALUE
-			|| vmr->id >= EMP_VMRS_MAX
-			|| emm->vmrs[vmr->id] != vmr)
-		return NULL;
+	debug_BUG_ON(!virt_addr_valid(vmr));
 	debug_BUG_ON(vmr->host_vma != vma);
 #ifdef CONFIG_EMP_DEBUG
 	if (unlikely(vmr->emm != emm)) {
@@ -1870,12 +1861,7 @@ emp_mmu_notifier_release(struct mmu_notifier *notifier, struct mm_struct *mm)
 			__func__, emm->id, current->pid);
 	emp_for_each_vma(vmi, vma) {
 		vmr = __get_emp_vmr(vma);
-		if (vmr == NULL)
-			continue;
-		/* Filter the non-emp_vmr */
-		if (vmr->magic != EMP_VMR_MAGIC_VALUE
-				|| vmr->id >= EMP_VMRS_MAX
-				|| emm->vmrs[vmr->id] != vmr)
+		if (vmr == NULL || vmr->emm != emm)
 			continue;
 		dprintk(KERN_ERR "[DEBUG] %s: emm: %d pid: %d vmr: %d\n",
 				__func__, emm->id, current->pid, vmr->id);
