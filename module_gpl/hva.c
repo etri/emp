@@ -437,12 +437,24 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	return ret;
 }
 
+static inline bool __sync_hpt_lp_has(struct local_page *lp, int vmr_id)
+{
+	struct mapped_pmd *p;
+
+	for (p = emp_lp_first_mapped_pmd(lp); p;
+			p = emp_lp_next_mapped_pmd(lp, p))
+		if (p->vmr_id == vmr_id)
+			return true;
+	return false;
+}
+
 static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 		struct emp_gpa *head, struct emp_gpa *gpa, const bool is_write)
 {
-	struct local_page *lp_head, *lp_gpa;
-	struct mapped_pmd *p_head, *p_gpa;
+	struct local_page *lp_head, *lp_gpa, *lp_more, *lp_less;
+	struct mapped_pmd *p;
 	struct emp_vmr *vmr;
+	int n_more, n_less, installed = 0;
 
 	debug_assert(head->local_page);
 	debug_assert(gpa->local_page);
@@ -457,46 +469,41 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 			&& lp_head->pmds.vmr_id == lp_gpa->pmds.vmr_id)
 		return;
 
-	p_head = emp_lp_first_mapped_pmd(lp_head);
-	p_gpa = emp_lp_first_mapped_pmd(lp_gpa);
-	debug_assert(p_head || p_gpa);
+	debug_assert(emp_lp_first_mapped_pmd(lp_head)
+			|| emp_lp_first_mapped_pmd(lp_gpa));
+
+	if (emp_lp_count_pmd(lp_head) >= emp_lp_count_pmd(lp_gpa)) {
+		lp_more = lp_head;
+		lp_less = lp_gpa;
+	} else {
+		lp_more = lp_gpa;
+		lp_less = lp_head;
+	}
+	n_more = emp_lp_count_pmd(lp_more);
+	n_less = emp_lp_count_pmd(lp_less);
 
 	/* TODO: handle the error from emp_install_hptes().
 	 * NOTE: __pmd_populate() is not required since at least one
 	 *       of the subblocks has the mapping.
 	 */
-	while (p_head && p_gpa) {
-		if (p_head->vmr_id == p_gpa->vmr_id) {
-			p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
-			p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
-		} else if (p_head->vmr_id < p_gpa->vmr_id) {
-			vmr = emm->vmrs[p_head->vmr_id];
-			emp_install_hptes(emm, vmr, head, NULL,
-						p_head->pmd, true, is_write);
-			p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
-		} else {
-			vmr = emm->vmrs[p_gpa->vmr_id];
-			emp_install_hptes(emm, vmr, head, NULL,
-						p_gpa->pmd, true, is_write);
-			p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
-		}
+	for (p = emp_lp_first_mapped_pmd(lp_more); p;
+			p = emp_lp_next_mapped_pmd(lp_more, p)) {
+		if (__sync_hpt_lp_has(lp_less, p->vmr_id))
+			continue;
+		vmr = emm->vmrs[p->vmr_id];
+		emp_install_hptes(emm, vmr, head, NULL, p->pmd, true, is_write);
+		installed++;
 	}
 
-	if (p_head == NULL && p_gpa == NULL)
+	if (installed == n_more - n_less)
 		return;
 
-	while (p_head) {
-		vmr = emm->vmrs[p_head->vmr_id];
-		emp_install_hptes(emm, vmr, head, NULL,
-					p_head->pmd, true, is_write);
-		p_head = emp_lp_next_mapped_pmd(lp_head, p_head);
-	}
-
-	while (p_gpa) {
-		vmr = emm->vmrs[p_gpa->vmr_id];
-		emp_install_hptes(emm, vmr, head, NULL,
-					p_gpa->pmd, true, is_write);
-		p_gpa = emp_lp_next_mapped_pmd(lp_gpa, p_gpa);
+	for (p = emp_lp_first_mapped_pmd(lp_less); p;
+			p = emp_lp_next_mapped_pmd(lp_less, p)) {
+		if (__sync_hpt_lp_has(lp_more, p->vmr_id))
+			continue;
+		vmr = emm->vmrs[p->vmr_id];
+		emp_install_hptes(emm, vmr, head, NULL, p->pmd, true, is_write);
 	}
 }
 
