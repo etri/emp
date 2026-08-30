@@ -243,7 +243,7 @@ int handle_active_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		return 0;
 #endif
 
-	if (emp_lp_lookup_vmr_id(head, vmr->id)) {
+	if (emp_lp_lookup_vmr(head, vmr)) {
 		debug_handle_active_fault_handled(vmr, head);
 		*vmf_ret = VM_FAULT_NOPAGE;
 		return 1;

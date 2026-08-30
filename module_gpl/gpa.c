@@ -892,7 +892,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
 			gpa->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->debug_id);
-			emp_lp_remove_pmd(emm, gpa->local_page, vmr->id);
+			emp_lp_remove_pmd(emm, gpa->local_page, vmr);
 			debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
 			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
 
@@ -905,13 +905,13 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 
 
 		/* block is aligned */
-		debug_assert(emp_lp_lookup_pmd(gpa, vmr->id) == pmd
-				|| emp_lp_lookup_pmd(gpa, vmr->id) == NULL);
+		debug_assert(emp_lp_lookup_pmd(gpa, vmr) == pmd
+				|| emp_lp_lookup_pmd(gpa, vmr) == NULL);
 		if (unlikely(gpa->local_page->vmr_id < 0)) {
 			gpa->local_page->vmr_id = vmr->id;
 			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->debug_id);
 		}
-		if (emp_lp_remove_pmd(emm, gpa->local_page, vmr->id) == false)
+		if (emp_lp_remove_pmd(emm, gpa->local_page, vmr) == false)
 			goto next;
 		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
 		if (gpa->local_page->vmr_id != vmr->id)
@@ -1009,7 +1009,9 @@ static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
 
 	for_each_gpas(gpa, head) {
 		while ((p = emp_lp_first_mapped_pmd(gpa->local_page)) != NULL) {
-			vmr = emm->vmrs[p->vmr_id];
+			/* each mapping names its own vmr; reclaim derives the
+			 * range to unmap from the mapping itself (v10 8.2) */
+			vmr = p->vmr;
 			pmd = p->pmd;
 			kernel_tlb_gather_mmu(&tlb, vmr->host_mm, head_hva, end_hva);
 			/* NOTE: we acquire and release page table lock at block
@@ -1258,7 +1260,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		if (head->r_state != GPA_ACTIVE)
 			continue;
 		debug_assert(head->local_page);
-		pmd = emp_lp_lookup_pmd(head, vmr->id);
+		pmd = emp_lp_lookup_pmd(head, vmr);
 		if (!pmd)
 			continue;
 
@@ -1301,7 +1303,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 #ifdef CONFIG_EMP_DEBUG
 			/* block is aligned */
 			debug_assert(gpa == head ||
-					emp_lp_lookup_pmd(gpa, vmr->id) == pmd);
+					emp_lp_lookup_pmd(gpa, vmr) == pmd);
 #endif
 			dirty |= __unmap_subblock_single_vmr(vmr, gpa, head_hva,
 							0, sb_page_len, pmd);
@@ -1321,16 +1323,17 @@ static inline void
 __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 {
 	int removed = 0;
-	if (emp_lp_remove_pmd(vmr->emm, gpa->local_page, vmr->id)) {
+	if (emp_lp_remove_pmd(vmr->emm, gpa->local_page, vmr)) {
 		removed = 1;
 		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
 		debug_page_ref_unmap_end(gpa->local_page);
 		debug_page_ref_mark(vmr->debug_id, gpa->local_page, -1);
 	}
 	if (gpa->local_page->vmr_id == vmr->id) {
-		gpa->local_page->vmr_id = gpa->local_page->pmds.vmr_id;
+		struct mapped_pmd *pmds = &gpa->local_page->pmds;
+		gpa->local_page->vmr_id = pmds->vmr ? pmds->vmr->id : -1;
 		debug_lru_set_vmr_id_mark(gpa->local_page,
-						gpa->local_page->pmds.vmr_id);
+						emp_vmr_dbgid(pmds->vmr));
 		if (!removed)
 			emp_update_rss_sub(vmr,
 					__local_gpa_to_page_len(vmr, gpa),
@@ -1693,7 +1696,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 				if (__head->r_state != GPA_ACTIVE)
 					continue;
 				debug_assert(__head->local_page);
-				if (!emp_lp_lookup_vmr_id(__head, vmr->id))
+				if (!emp_lp_lookup_vmr(__head, vmr))
 					continue;
 				emp_update_rss_sub_kernel(vmr,
 					__local_block_to_page_len(vmr, __head),

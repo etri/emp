@@ -491,10 +491,7 @@ int debug_emp_lp_mapped_page_len(struct emp_mm *emm, struct local_page *lp)
 
 	p = &lp->pmds;
 	do {
-		struct emp_vmr *vmr;
-		if (unlikely(p->vmr_id < 0 || p->vmr_id >= EMP_VMRS_MAX))
-			continue;
-		vmr = emm->vmrs[p->vmr_id];
+		struct emp_vmr *vmr = p->vmr;
 		if (likely(vmr))
 			sum += __gpa_to_page_len(vmr, lp->gpa, lp->gpa_index);
 	} while ((p = p->next) != &lp->pmds);
@@ -617,7 +614,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 		.gpa_index = -1,
 		.dma_addr = 0,
 		.vmr_id = -1,
-		.pmds = { .next = NULL, .pmd = NULL, .vmr_id = -1 },
+		.pmds = { .next = NULL, .pmd = NULL, .vmr = NULL },
 	};
 	struct local_page *local_page = (gpa && gpa->local_page)
 					? gpa->local_page : &empty_local_page;
@@ -692,7 +689,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			page ? emp_page_mapcount(page) : -1,
 			lp_pmd_count,
 
-			local_page->pmds.vmr_id,
+			emp_vmr_dbgid(local_page->pmds.vmr),
 			hva,
 			(unsigned long) pmdp,
 			pte);
@@ -702,11 +699,11 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			int num = 1;
 			BUG_ON(p == NULL); /* because lp_pmd_count > 1 */
 			while (p != &local_page->pmds) {
-				vmr_next = vmr->emm->vmrs[p->vmr_id];
+				vmr_next = p->vmr;
 				hva = __gpa_offset_to_hva(vmr_next, idx);
 				printk("%159s%02d: %3d %016lx %016lx %016lx\n",
 						"pmd", num,
-						p->vmr_id,
+						emp_vmr_dbgid(p->vmr),
 						hva,
 						(unsigned long) p->pmd,
 						__get_pte_val(vmr_next, p->pmd, hva));
@@ -1368,7 +1365,7 @@ static inline void __check_pmd_list(struct emp_gpa *head, struct emp_gpa *gpa)
 		return;
 	p = &lp1->pmds;
 	do {
-		debug_assert(emp_lp_lookup_vmr_id(gpa, p->vmr_id));
+		debug_assert(emp_lp_lookup_vmr(gpa, p->vmr));
 		p = p->next;
 	} while (p != &lp1->pmds);
 }
@@ -2013,7 +2010,7 @@ void debug_check_vmdesc_views(struct emp_vmdesc *desc)
 #endif /* CONFIG_EMP_USER */
 
 #ifdef CONFIG_EMP_DEBUG_SYNC_HPT
-static bool __debug_sync_hpt_has(struct local_page *lp, int vmr_id)
+static bool __debug_sync_hpt_has(struct local_page *lp, struct emp_vmr *vmr)
 {
 	struct mapped_pmd *p;
 
@@ -2021,7 +2018,7 @@ static bool __debug_sync_hpt_has(struct local_page *lp, int vmr_id)
 		return false;
 	for (p = emp_lp_first_mapped_pmd(lp); p;
 			p = emp_lp_next_mapped_pmd(lp, p))
-		if (p->vmr_id == vmr_id)
+		if (p->vmr == vmr)
 			return true;
 	return false;
 }
@@ -2050,7 +2047,8 @@ static void __debug_sync_hpt_show(struct emp_gpa *g, const char *what)
 
 	for (p = emp_lp_first_mapped_pmd(lp); p && n < sizeof(buf) - 16;
 			p = emp_lp_next_mapped_pmd(lp, p))
-		n += scnprintf(buf + n, sizeof(buf) - n, "%d ", p->vmr_id);
+		n += scnprintf(buf + n, sizeof(buf) - n, "%d ",
+				emp_vmr_dbgid(p->vmr));
 	buf[n] = '\0';
 	printk(KERN_ERR "[SYNC_HPT]   %s gpa: %016lx idx: %ld state: %d "
 			"flags: 0x%x num_pmds: %d mappers: %s\n",
@@ -2107,7 +2105,7 @@ void debug_check_sync_hpt(struct emp_mm *emm, struct emp_gpa *head,
 		}
 		for (p = emp_lp_first_mapped_pmd(lp_head); p;
 				p = emp_lp_next_mapped_pmd(lp_head, p))
-			if (!__debug_sync_hpt_has(g->local_page, p->vmr_id)) {
+			if (!__debug_sync_hpt_has(g->local_page, p->vmr)) {
 				unequal = true;
 				break;
 			}
@@ -2119,7 +2117,7 @@ void debug_check_sync_hpt(struct emp_mm *emm, struct emp_gpa *head,
 		for (g = head; g < end; g++) {
 			if (!g->local_page)
 				continue;
-			if (!__debug_sync_hpt_has(g->local_page, vmr->id)) {
+			if (!__debug_sync_hpt_has(g->local_page, vmr)) {
 				partial = true;
 				break;
 			}
@@ -2438,7 +2436,7 @@ void debug_handle_active_fault_handled(struct emp_vmr *vmr, struct emp_gpa *head
 
 	for_each_gpas(gpa, head) {
 		BUG_ON(!gpa->local_page);
-		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		pmd = emp_lp_lookup_pmd(gpa, vmr);
 		BUG_ON(pmd == NULL);
 		hva = local_gpa_to_hva(vmr, gpa);
 		ptep = emp_pte_map(pmd, hva);

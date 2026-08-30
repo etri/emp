@@ -74,7 +74,7 @@
  *      @old is about to become an orphan that set_gpa_remote() will not
  *      release a charge for.
  *  - for each subblock: pop the mapped_pmd of @vmr from @old if it exists,
- *    hand the ownership of @old to the next mapper (pmds.vmr_id, -1 when no
+ *    hand the ownership of @old to the next mapper (pmds.vmr, NULL when no
  *    mapper is left), insert the mapped_pmd of @vmr on @new, and take the
  *    reference of the pages of @new for the mapping.
  *  - update (clear and map) the ptes of @new as writable.
@@ -386,7 +386,7 @@ static void debug_show_gpa_state_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 		if (old->local_page == NULL)
 			old_vmr = vmr;
 		else if (!EMP_LP_PMDS_EMPTY(&old->local_page->pmds))
-			old_vmr = emm->vmrs[old->local_page->pmds.vmr_id];
+			old_vmr = old->local_page->pmds.vmr;
 		else if (old->local_page->vmr_id >= 0)
 			old_vmr = emm->vmrs[old->local_page->vmr_id];
 		else
@@ -476,7 +476,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 	struct emp_gpa *gpa;
 
 	debug_assert(emp_lp_count_pmd(head->local_page) == 1);
-	debug_assert(head->local_page->pmds.vmr_id == vmr->id);
+	debug_assert(head->local_page->pmds.vmr == vmr);
 	/* writable pte: the block must no longer be in private-CoW state */
 	debug_assert(!__is_cow_gpa(head));
 
@@ -496,7 +496,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	for_each_gpas(gpa, head) {
 		debug_assert(emp_lp_count_pmd(gpa->local_page) == 1);
-		debug_assert(gpa->local_page->pmds.vmr_id == vmr->id);
+		debug_assert(gpa->local_page->pmds.vmr == vmr);
 		debug_assert(gpa->local_page->pmds.pmd == pmd);
 
 		/* we does not update page_len since partial map gpa block
@@ -564,11 +564,11 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
 	for_each_gpas(gpa, head) {
-		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		pmd = emp_lp_lookup_pmd(gpa, vmr);
 		if (pmd == NULL)
 			goto next;
 		debug_assert(emp_lp_count_pmd(gpa->local_page) == 1);
-		debug_assert(gpa->local_page->pmds.vmr_id == vmr->id);
+		debug_assert(gpa->local_page->pmds.vmr == vmr);
 		if (debug_WARN_ONCE(pmd_none(*pmd),
 				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
 				"pmd: 0x%016lx hva: 0x%016lx",
@@ -677,7 +677,7 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
 			&& (gpa_block_order(head) != gpa_subblock_order(head)));
 
 	for_each_gpas(gpa, head) {
-		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		pmd = emp_lp_lookup_pmd(gpa, vmr);
 		if (pmd == NULL) {
 			/* the parent does not map this subblock: nothing to
 			 * protect, the child will fault it in itself */
@@ -739,7 +739,7 @@ debug_lf_count_writable(struct emp_vmr *vmr, unsigned long head_idx,
 		pte_t *pte, *_pte;
 		unsigned long i;
 
-		pmd = emp_lp_lookup_pmd(gpa, vmr->id);
+		pmd = emp_lp_lookup_pmd(gpa, vmr);
 		if (pmd == NULL || pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
 			goto next;
 
@@ -963,7 +963,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		return ret;
 	}
 
-	pmd = emp_lp_lookup_pmd(old_head, vmr->id);
+	pmd = emp_lp_lookup_pmd(old_head, vmr);
 	if (pmd == NULL) {
 		mapped = false;
 		pmd = get_pmd(vmr->host_mm, addr);
@@ -977,7 +977,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 
 
 		/* remove mapped_pmd from @old */
-		if (emp_lp_pop_pmd(emm, old->local_page, vmr->id)) {
+		if (emp_lp_pop_pmd(emm, old->local_page, vmr)) {
 			debug_assert(mapped == true);
 			debug_lru_del_vmr_id_mark(old->local_page, vmr->debug_id);
 			/* NOTE: No vmr's RSS is changed. */
@@ -988,7 +988,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 			debug_assert(mapped != false); // check consistency among subblocks
 
 		/* add mapped_pmd on @new */
-		emp_lp_insert_pmd(emm, new->local_page, vmr->id, pmd);
+		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
 		debug_lru_add_vmr_id_mark(new->local_page, vmr->debug_id);
 
 		owned = old->local_page->vmr_id == vmr->id;
@@ -1001,9 +1001,11 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
 
 		if (owned) { // change the owner
-			old->local_page->vmr_id = old->local_page->pmds.vmr_id;
+			struct mapped_pmd *pmds = &old->local_page->pmds;
+			old->local_page->vmr_id = pmds->vmr ? pmds->vmr->id
+							    : -1;
 			debug_lru_set_vmr_id_mark(old->local_page,
-						old->local_page->pmds.vmr_id);
+						emp_vmr_dbgid(pmds->vmr));
 		}
 
 		/* increase reference count */
@@ -1792,7 +1794,7 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 		}
 
 		for_each_gpas(g, head) {
-			if (!emp_lp_lookup_vmr_id(g, vmr->id))
+			if (!emp_lp_lookup_vmr(g, vmr))
 				continue;
 			debug_page_ref_dup_beg(g->local_page);
 			debug_page_ref_mark(vmr->debug_id, g->local_page, 0);
@@ -1831,7 +1833,7 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 		}
 
 		for_each_gpas(g, head) {
-			if (!emp_lp_lookup_vmr_id(g, vmr->id))
+			if (!emp_lp_lookup_vmr(g, vmr))
 				continue;
 			debug_page_ref_unmap_beg(g->local_page);
 			debug_page_ref_mark(vmr->debug_id, g->local_page, 0);

@@ -782,9 +782,9 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 			if (gpa == boundary && is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)
 						&& boundary_addr != boundary_gpa_addr) {
 				/* a new partial map gpa */
-				pmd = emp_lp_lookup_pmd(gpa, prev_vmr->id);
+				pmd = emp_lp_lookup_pmd(gpa, prev_vmr);
 				if (pmd) {
-					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
+					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
 					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
 					/* RSS has been moved.
@@ -805,10 +805,10 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 					gpa->local_page->vmr_id = new_vmr->id;
 					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 				}
-				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr->id);
+				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr);
 				if (pmd) {
 					debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
-					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
+					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
 					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
 				}
@@ -1006,7 +1006,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 		while (idx < idx_end) {
 			if (ACTIVE_BLOCK(head)) {
-				if (!emp_lp_lookup_vmr_id(gpa, prev_vmr->id)) {
+				if (!emp_lp_lookup_vmr(gpa, prev_vmr)) {
 					debug_check_page_map_status(new_vmr, head,
 								head_idx, pmd, false);
 					goto next_gpa;
@@ -1015,14 +1015,14 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				debug_check_page_map_status(new_vmr, head,
 								head_idx, pmd, true);
                                 
-				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr->id);
+				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr);
 				debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
 				if (gpa->local_page->vmr_id == prev_vmr->id) {
 					gpa->local_page->vmr_id = new_vmr->id;
 					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 				}
                                 
-				emp_lp_insert_pmd(emm, gpa->local_page, new_vmr->id, pmd);
+				emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
 				debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 				debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page); /* mark the kernel's increment on page count */
 #ifdef CONFIG_EMP_DEBUG_RSS

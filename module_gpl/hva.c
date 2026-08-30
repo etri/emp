@@ -128,7 +128,7 @@ static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
 		}
 
 		// ignore already mapped subblocks
-		if (emp_lp_lookup_vmr_id(gpa, vmr->id)) {
+		if (emp_lp_lookup_vmr(gpa, vmr)) {
 			debug_assert(gpa->local_page->w == NULL);
 			continue;
 		}
@@ -249,7 +249,7 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	debug_check_notnull_pointer(lp->w);
 
 	// pmd is exclusive to w, so it must be used after pte_insetall
-	emp_lp_insert_pmd(vmr->emm, lp, vmr->id, pmd);
+	emp_lp_insert_pmd(vmr->emm, lp, vmr, pmd);
 	debug_lru_add_vmr_id_mark(lp, vmr->debug_id);
 
 	if (lp->vmr_id != vmr->id)
@@ -309,7 +309,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 			// fall-through
 		} else {
 			debug_assert(demand);
-			debug_assert(!emp_lp_lookup_vmr_id(demand, vmr->id));
+			debug_assert(!emp_lp_lookup_vmr(demand, vmr));
 			____local_gpa_to_hva_len_off(vmr, demand, hva, page_len,
 								page_off);
 			/* demand_offset counts from the subblock's own start,
@@ -329,7 +329,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 	if (csf_prefetching) {
 		// if csf_prefetching is true, demand should exist.
 		debug_assert(demand);
-		debug_assert(!emp_lp_lookup_vmr_id(demand, vmr->id));
+		debug_assert(!emp_lp_lookup_vmr(demand, vmr));
 		____local_gpa_to_hva_len_off(vmr, demand, hva, page_len,
 								page_off);
 		spin_lock(ptl);
@@ -348,7 +348,7 @@ static int COMPILER_DEBUG emp_install_hptes(struct emp_mm *bvma,
 	spin_lock(ptl);
 	for_each_gpas(gpa, head) {
 		// ignore already mapped subblocks
-		if (emp_lp_lookup_vmr_id(gpa, vmr->id))
+		if (emp_lp_lookup_vmr(gpa, vmr))
 			goto next;
 
 		ret &= __emp_install_hptes(vmr, gpa, hva, page_off, page_len,
@@ -437,13 +437,14 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	return ret;
 }
 
-static inline bool __sync_hpt_lp_has(struct local_page *lp, int vmr_id)
+static inline bool __sync_hpt_lp_has(struct local_page *lp,
+				     struct emp_vmr *vmr)
 {
 	struct mapped_pmd *p;
 
 	for (p = emp_lp_first_mapped_pmd(lp); p;
 			p = emp_lp_next_mapped_pmd(lp, p))
-		if (p->vmr_id == vmr_id)
+		if (p->vmr == vmr)
 			return true;
 	return false;
 }
@@ -453,7 +454,6 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 {
 	struct local_page *lp_head, *lp_gpa, *lp_more, *lp_less;
 	struct mapped_pmd *p;
-	struct emp_vmr *vmr;
 	int n_more, n_less, installed = 0;
 
 	debug_assert(head->local_page);
@@ -466,7 +466,7 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 		return;
 
 	if (emp_lp_count_pmd(lp_head) == 1 && emp_lp_count_pmd(lp_gpa) == 1
-			&& lp_head->pmds.vmr_id == lp_gpa->pmds.vmr_id)
+			&& lp_head->pmds.vmr == lp_gpa->pmds.vmr)
 		return;
 
 	debug_assert(emp_lp_first_mapped_pmd(lp_head)
@@ -488,10 +488,10 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 	 */
 	for (p = emp_lp_first_mapped_pmd(lp_more); p;
 			p = emp_lp_next_mapped_pmd(lp_more, p)) {
-		if (__sync_hpt_lp_has(lp_less, p->vmr_id))
+		if (__sync_hpt_lp_has(lp_less, p->vmr))
 			continue;
-		vmr = emm->vmrs[p->vmr_id];
-		emp_install_hptes(emm, vmr, head, NULL, p->pmd, true, is_write);
+		emp_install_hptes(emm, p->vmr, head, NULL,
+					p->pmd, true, is_write);
 		installed++;
 	}
 
@@ -500,10 +500,10 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 
 	for (p = emp_lp_first_mapped_pmd(lp_less); p;
 			p = emp_lp_next_mapped_pmd(lp_less, p)) {
-		if (__sync_hpt_lp_has(lp_more, p->vmr_id))
+		if (__sync_hpt_lp_has(lp_more, p->vmr))
 			continue;
-		vmr = emm->vmrs[p->vmr_id];
-		emp_install_hptes(emm, vmr, head, NULL, p->pmd, true, is_write);
+		emp_install_hptes(emm, p->vmr, head, NULL,
+					p->pmd, true, is_write);
 	}
 }
 

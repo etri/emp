@@ -5,20 +5,21 @@
 #include "local_page.h"
 #include "block-flag.h"
 
-#define SET_MAPPED_PMD(p, _vmr_id, _pmd, _next) do { \
-	(p)->vmr_id = (_vmr_id); \
+#define SET_MAPPED_PMD(p, _vmr, _pmd, _next) do { \
+	(p)->vmr = (_vmr); \
 	(p)->pmd = (_pmd); \
 	(p)->next = (_next); \
 } while (0)
 
-// vmr_id in the list are sorted in ascending order
-bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id,
-		       pmd_t *pmd) 
+/* The list is an unordered set: mappers are compared by pointer identity and a
+ * new record is appended right behind the embedded entry. */
+bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp,
+		       struct emp_vmr *vmr, pmd_t *pmd)
 {
-	struct mapped_pmd *p = &lp->pmds, *pp, *n;
+	struct mapped_pmd *p = &lp->pmds, *n;
 
 	if (EMP_LP_PMDS_EMPTY(p)) {
-		p->vmr_id = vmr_id;
+		p->vmr = vmr;
 		p->pmd = pmd;
 		p->next = p;
 		lp->num_pmds++;
@@ -26,50 +27,29 @@ bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id,
 		return true;
 	}
 
+	p = &lp->pmds;
+	do {
+		if (unlikely(p->vmr == vmr)) {
+			debug_assert(p->pmd == pmd);
+			return true;
+		}
+		p = p->next;
+	} while (p != &lp->pmds);
+
 	n = emp_lp_alloc_pmd(emm);
 	if (n == NULL)
 		return false;
 
-	p = &lp->pmds;
-	pp = p;
-	do {
-		if (vmr_id < p->vmr_id)
-			break;
-
-		if (unlikely(p->vmr_id == vmr_id)) {
-			debug_assert(p->pmd == pmd);
-			emp_lp_free_pmd(emm, n);
-			return true;
-		}
-		pp = p;
-		p = p->next;
-	} while (p != &lp->pmds);
-
-	if (p != pp) {
-		// insert middle in the list
-		debug_assert(pp->vmr_id < vmr_id);
-		debug_assert(p == &lp->pmds || vmr_id < p->vmr_id);
-		SET_MAPPED_PMD(n, vmr_id, pmd, p);
-		pp->next = n;
-	} else if (p->vmr_id > vmr_id) {
-		// insert at the first
-		debug_assert(p == &lp->pmds);
-		*n = *p;
-		SET_MAPPED_PMD(p, vmr_id, pmd, n);
-	} else {
-		// insert at the second in a singleton list
-		debug_assert(p == &lp->pmds);
-		debug_assert(lp->num_pmds == 1);
-		SET_MAPPED_PMD(n, vmr_id, pmd, p);
-		p->next = n;
-	}
+	SET_MAPPED_PMD(n, vmr, pmd, lp->pmds.next);
+	lp->pmds.next = n;
 
 	lp->num_pmds++;
 
 	return true;
 }
 
-pmd_t *emp_lp_pop_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id)
+pmd_t *emp_lp_pop_pmd(struct emp_mm *emm, struct local_page *lp,
+		      struct emp_vmr *vmr)
 {
 	struct mapped_pmd *p, *pp;
 	pmd_t *ret;
@@ -80,7 +60,7 @@ pmd_t *emp_lp_pop_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id)
 	p = &lp->pmds;
 	pp = p;
 	do {
-		if (p->vmr_id == vmr_id)
+		if (p->vmr == vmr)
 			goto found;
 		pp = p;
 		p = p->next;

@@ -7,7 +7,7 @@
 struct mapped_pmd {
 	struct mapped_pmd *next;
 	pmd_t             *pmd;
-	int               vmr_id;
+	struct emp_vmr    *vmr;
 };
 
 #ifdef CONFIG_EMP_DEBUG_LRU_LIST
@@ -475,7 +475,7 @@ enum local_page_flags {
 #define INIT_MAPPED_PMD(p) { \
 	(p)->next = NULL; \
 	(p)->pmd = NULL; \
-	(p)->vmr_id = -1; \
+	(p)->vmr = NULL; \
 }
 
 static inline struct mapped_pmd *emp_lp_alloc_pmd(struct emp_mm *emm) {
@@ -489,7 +489,8 @@ static inline void emp_lp_free_pmd(struct emp_mm *emm, struct mapped_pmd *p) {
 #define EMP_LP_PMDS_EMPTY(p) ((p)->next == NULL)
 #define EMP_LP_PMDS_SINGLE(p) ((p)->next == (p))
 
-static inline pmd_t *emp_lp_lookup_pmd(struct emp_gpa *gpa, int vmr_id)
+static inline pmd_t *emp_lp_lookup_pmd(struct emp_gpa *gpa,
+					struct emp_vmr *vmr)
 {
 	struct local_page *lp = gpa->local_page;
 	struct mapped_pmd *p;
@@ -501,14 +502,14 @@ static inline pmd_t *emp_lp_lookup_pmd(struct emp_gpa *gpa, int vmr_id)
 
 	p = &lp->pmds;
 	do {
-		if (p->vmr_id == vmr_id)
+		if (p->vmr == vmr)
 			return p->pmd;
 		p = p->next;
 	} while (p != &lp->pmds);
 	return NULL;
 }
 
-static inline bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id)
+static inline bool emp_lp_lookup_vmr(struct emp_gpa *gpa, struct emp_vmr *vmr)
 {
 	struct local_page *lp = gpa->local_page;
 	struct mapped_pmd *p;
@@ -520,7 +521,7 @@ static inline bool emp_lp_lookup_vmr_id(struct emp_gpa *gpa, int vmr_id)
 
 	p = &lp->pmds;
 	do {
-		if (p->vmr_id == vmr_id)
+		if (p->vmr == vmr)
 			return true;
 		p = p->next;
 	} while (p != &lp->pmds);
@@ -545,14 +546,16 @@ emp_lp_next_mapped_pmd(struct local_page *lp, struct mapped_pmd *p) {
 		return p->next;
 }
 
-bool emp_lp_insert_pmd(struct emp_mm *, struct local_page *, int, pmd_t *);
+bool emp_lp_insert_pmd(struct emp_mm *, struct local_page *,
+			struct emp_vmr *, pmd_t *);
 
-pmd_t *emp_lp_pop_pmd(struct emp_mm *, struct local_page *, int);
+pmd_t *emp_lp_pop_pmd(struct emp_mm *, struct local_page *, struct emp_vmr *);
 
 static inline bool
-emp_lp_remove_pmd(struct emp_mm *emm, struct local_page *lp, int vmr_id)
+emp_lp_remove_pmd(struct emp_mm *emm, struct local_page *lp,
+		  struct emp_vmr *vmr)
 {
-	return emp_lp_pop_pmd(emm, lp, vmr_id) ? true : false;
+	return emp_lp_pop_pmd(emm, lp, vmr) ? true : false;
 }
 
 static inline int emp_lp_count_pmd(struct local_page *lp) {
