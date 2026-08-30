@@ -602,16 +602,22 @@ static void emp_vma_close(struct vm_area_struct *vma)
 }
 
 #ifdef CONFIG_EMP_USER
+/* Tile [gpa, gpa + num_gpa) with the largest blocks that fit, where @off is the
+ * distance from the block head: a piece crossing the grid line of its own size
+ * is not a head to emp_get_block_head(), and the split then skips it. */
 static void
-____split_set_max_block_order(struct emp_gpa *gpa, int num_gpa) {
+____split_set_max_block_order(struct emp_gpa *gpa, unsigned long off,
+			      int num_gpa) {
 	int sb_order = gpa_subblock_order(gpa);
-	int max_order = gpa_block_order(gpa);
-	int max_desc = 1 << (max_order - sb_order);
+	int block_order = gpa_block_order(gpa);
 	int n = 0, i;
 
 	while (n < num_gpa) {
 		int size = num_gpa - n;
-		while (max_desc > size) {
+		int max_order = block_order;
+		int max_desc = 1 << (max_order - sb_order);
+
+		while (max_desc > size || (off & (max_desc - 1))) {
 			max_order--;
 			debug_assert(max_order >= sb_order);
 			max_desc = 1 << (max_order - sb_order);
@@ -622,6 +628,7 @@ ____split_set_max_block_order(struct emp_gpa *gpa, int num_gpa) {
 			n++;
 			gpa++;
 		}
+		off += max_desc;
 	}
 }
 
@@ -664,7 +671,7 @@ __split_set_max_block_order(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	/* before boundary */
 	if (head_idx < boundary_idx)
-		____split_set_max_block_order(head, boundary_idx - head_idx);
+		____split_set_max_block_order(head, 0, boundary_idx - head_idx);
 
 	/* at boundary */
 	if (boundary_addr != addr
@@ -677,7 +684,8 @@ __split_set_max_block_order(struct emp_vmr *vmr, struct emp_gpa *head,
 	}
 
 	if (boundary_idx < end_idx)
-		____split_set_max_block_order(boundary, end_idx - boundary_idx);
+		____split_set_max_block_order(boundary, boundary_idx - head_idx,
+						end_idx - boundary_idx);
 
 	return false;
 }
@@ -861,6 +869,16 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 #endif
 		}
 	}
+
+#ifdef CONFIG_EMP_DEBUG
+	/* every piece the stride walk lands on must also be a head by the
+	 * pointer derivation, and lie on the grid the tiling assumed */
+	for (gpa = head; gpa < head + num_subblock;
+			gpa += num_subblock_in_block(gpa)) {
+		debug_assert(emp_get_block_head(gpa) == gpa);
+		debug_assert((gpa - head) % num_subblock_in_block(gpa) == 0);
+	}
+#endif
 
 	for (sb_index = num_subblock - 1; sb_index > 0; sb_index--) {
 #ifdef CONFIG_EMP_DEBUG
