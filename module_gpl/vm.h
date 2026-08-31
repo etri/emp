@@ -261,6 +261,8 @@ enum emp_fork_policy {
 // virtual memory region for a contiguous host virtual (mmaped) memory
 struct emp_vmr {
 	int                 id;
+	/* membership in emp_mm.vmrs_list, under emp_mm.vmr_list_lock */
+	struct list_head    vmr_list;
 #ifdef CONFIG_EMP_DEBUG
 	/* index for diagnostics only: history buffers, the rss debugger's
 	 * per-vmr bit, and printk. Nothing is ever looked up by it. */
@@ -601,6 +603,10 @@ struct emp_mm {
 	spinlock_t          debug_vmr_ids_lock;
 	DECLARE_BITMAP(debug_vmr_ids, EMP_DEBUG_VMR_IDS_MAX);
 #endif
+	/* every live vmr of this emp_mm, for whole-set enumeration; takes the
+	 * place of scanning the numeric registry */
+	struct list_head    vmrs_list;
+	rwlock_t            vmr_list_lock;
 	spinlock_t          vmrs_lock; // protect vmrs_bitmap, vmrs_len, vmrs
 	DECLARE_BITMAP(vmrs_bitmap, EMP_VMRS_MAX);
 	int                 vmrs_len;

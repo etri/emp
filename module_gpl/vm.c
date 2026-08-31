@@ -510,6 +510,10 @@ static int emp_vmr_find_and_set(struct emp_mm *emm, struct emp_vmr *vmr)
 	emm->vmrs_len++;
 	spin_unlock(&emm->vmrs_lock);
 
+	write_lock(&emm->vmr_list_lock);
+	list_add_tail(&vmr->vmr_list, &emm->vmrs_list);
+	write_unlock(&emm->vmr_list_lock);
+
 	return p;
 }
 
@@ -530,6 +534,10 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 #endif
 
 	emp_vmr_debug_id_clear(emm, vmr);
+
+	write_lock(&emm->vmr_list_lock);
+	list_del_init(&vmr->vmr_list);
+	write_unlock(&emm->vmr_list_lock);
 
 	spin_lock(&emm->vmrs_lock);
 	emm->vmrs[vmr->id] = NULL;
@@ -1880,6 +1888,8 @@ static struct emp_mm *create_emm(void)
 	spin_lock_init(&bvma->debug_vmr_ids_lock);
 	bitmap_zero(bvma->debug_vmr_ids, EMP_DEBUG_VMR_IDS_MAX);
 #endif
+	INIT_LIST_HEAD(&bvma->vmrs_list);
+	rwlock_init(&bvma->vmr_list_lock);
 	spin_lock_init(&bvma->vmrs_lock);
 	spin_lock_init(&bvma->mrs.memregs_lock);
 	init_waitqueue_head(&bvma->mrs.mrs_ctrl_wq);
