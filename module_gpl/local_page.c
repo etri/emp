@@ -13,7 +13,7 @@
 
 /* The list is an unordered set: mappers are compared by pointer identity and a
  * new record is appended right behind the embedded entry. */
-bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp,
+bool __emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp,
 		       struct emp_vmr *vmr, pmd_t *pmd)
 {
 	struct mapped_pmd *p = &lp->pmds, *n;
@@ -48,7 +48,7 @@ bool emp_lp_insert_pmd(struct emp_mm *emm, struct local_page *lp,
 	return true;
 }
 
-pmd_t *emp_lp_pop_pmd(struct emp_mm *emm, struct local_page *lp,
+pmd_t *__emp_lp_pop_pmd(struct emp_mm *emm, struct local_page *lp,
 		      struct emp_vmr *vmr)
 {
 	struct mapped_pmd *p, *pp;

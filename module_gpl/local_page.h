@@ -546,17 +546,41 @@ emp_lp_next_mapped_pmd(struct local_page *lp, struct mapped_pmd *p) {
 		return p->next;
 }
 
-bool emp_lp_insert_pmd(struct emp_mm *, struct local_page *,
-			struct emp_vmr *, pmd_t *);
+bool __emp_lp_insert_pmd(struct emp_mm *, struct local_page *,
+		       struct emp_vmr *, pmd_t *);
+pmd_t *__emp_lp_pop_pmd(struct emp_mm *, struct local_page *, struct emp_vmr *);
 
-pmd_t *emp_lp_pop_pmd(struct emp_mm *, struct local_page *, struct emp_vmr *);
+/* Refer to __emp_alloc() and __emp_free() in debug.h. The insert may take the
+ * embedded representative role over and the pop may promote a survivor into
+ * it, so the wrappers record every change of the embedded entry's vmr in the
+ * lru history -- at the caller's __FILE__/__LINE__, which the mark macro
+ * captures where these wrappers expand. */
+#ifdef CONFIG_EMP_DEBUG_LRU_LIST
+#define emp_lp_insert_pmd(emm, lp, v, p) ({ \
+	struct local_page *____wlp = (lp); \
+	struct emp_vmr *____wprev = ____wlp->pmds.vmr; \
+	bool ____wret = __emp_lp_insert_pmd((emm), ____wlp, (v), (p)); \
+	if (____wlp->pmds.vmr != ____wprev) \
+		debug_lru_set_vmr_id_mark(____wlp, \
+				emp_vmr_dbgid(____wlp->pmds.vmr)); \
+	____wret; \
+})
+#define emp_lp_pop_pmd(emm, lp, v) ({ \
+	struct local_page *____wlp = (lp); \
+	struct emp_vmr *____wprev = ____wlp->pmds.vmr; \
+	pmd_t *____wret = __emp_lp_pop_pmd((emm), ____wlp, (v)); \
+	if (____wlp->pmds.vmr != ____wprev) \
+		debug_lru_set_vmr_id_mark(____wlp, \
+				emp_vmr_dbgid(____wlp->pmds.vmr)); \
+	____wret; \
+})
+#else
+#define emp_lp_insert_pmd(emm, lp, v, p) __emp_lp_insert_pmd(emm, lp, v, p)
+#define emp_lp_pop_pmd(emm, lp, v) __emp_lp_pop_pmd(emm, lp, v)
+#endif /* CONFIG_EMP_DEBUG_LRU_LIST */
 
-static inline bool
-emp_lp_remove_pmd(struct emp_mm *emm, struct local_page *lp,
-		  struct emp_vmr *vmr)
-{
-	return emp_lp_pop_pmd(emm, lp, vmr) ? true : false;
-}
+#define emp_lp_remove_pmd(emm, lp, v) \
+	(emp_lp_pop_pmd(emm, lp, v) ? true : false)
 
 static inline int emp_lp_count_pmd(struct local_page *lp) {
 	debug_emp_lp_count_pmd(lp);
