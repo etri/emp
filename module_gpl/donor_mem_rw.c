@@ -141,7 +141,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 		return -ENOMEM;
 	}
 	debug_page_ref_update_page_len(local_page, vmr, gpa, gpa_idx);
-	debug_lru_set_vmr_id_mark(local_page, vmr->debug_id);
+	debug_lru_set_vmr_id_mark(local_page, emp_vmr_dbgid(vmr));
 
 	debug_BUG_ON(!list_empty(&local_page->lru_list));
 	gpa->local_page = local_page;

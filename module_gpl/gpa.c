@@ -893,7 +893,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
 			/* the pop retains @vmr as the owner */
 			emp_lp_remove_pmd(emm, gpa->local_page, vmr);
-			debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
+			debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
 			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
 
 			/* NOTE: RSS is not changed. @vmr is the only vmr and it is the owner. */
@@ -910,7 +910,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		owned = (emp_lp_owner(gpa->local_page) == vmr);
 		if (emp_lp_remove_pmd(emm, gpa->local_page, vmr) == false)
 			goto next;
-		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
+		debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
 		if (!owned)
 			/* a non-owner mapper releases its own charge */
 			emp_update_rss_sub(vmr, pages_len,
@@ -976,7 +976,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 
 		page_ref_sub(sb_page, pte_clear_count);
 		gpa->local_page->page_map_count -= pte_clear_count;
-		debug_page_ref_mark(vmr->debug_id, gpa->local_page, -pte_clear_count);
+		debug_page_ref_mark(emp_vmr_dbgid(vmr), gpa->local_page, -pte_clear_count);
 		debug_check_lessthan(page_count(sb_page), 1);
 		if (mapped && accessed &&
 				!PageReferenced(sb_page)) {
@@ -1213,8 +1213,8 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	unsigned long pfn, i;
 	struct vm_area_struct *vma = vmr->host_vma;
 
-	debug_progress(gpa, vmr->debug_id);
-	debug_lru_progress_mark(gpa->local_page, vmr->debug_id);
+	debug_progress(gpa, emp_vmr_dbgid(vmr));
+	debug_lru_progress_mark(gpa->local_page, emp_vmr_dbgid(vmr));
 
 #ifdef CONFIG_EMP_VM
 	debug_BUG_ON(is_gpa_flags_set(gpa, GPA_LOWMEM_BLOCK_MASK));
@@ -1331,9 +1331,9 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 	int removed = 0;
 	if (emp_lp_remove_pmd(vmr->emm, gpa->local_page, vmr)) {
 		removed = 1;
-		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
+		debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
 		debug_page_ref_unmap_end(gpa->local_page);
-		debug_page_ref_mark(vmr->debug_id, gpa->local_page, -1);
+		debug_page_ref_mark(emp_vmr_dbgid(vmr), gpa->local_page, -1);
 	}
 	if (owned) {
 		/* The pop promoted a mapped survivor, or retained @vmr as an
@@ -1380,7 +1380,7 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 			i += num_subblock_in_block(head),
 			head += num_subblock_in_block(head)) {
 		unsigned long gpa_idx = max_head_idx + i;
-		debug_progress(head, (((u64) vmr->debug_id) << 32) | head->r_state);
+		debug_progress(head, (((u64) emp_vmr_dbgid(vmr)) << 32) | head->r_state);
 		if (may_dirty)
 			set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 		for_each_gpas(gpa, head) {
@@ -1667,7 +1667,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 		num_allocated += step;
 	}
 #ifdef CONFIG_EMP_DEBUG_GPADESC_ALLOC
-	gpadesc_alloc_at_show(emm->id, vmr->debug_id, region, table);
+	gpadesc_alloc_at_show(emm->id, emp_vmr_dbgid(vmr), region, table);
 	emp_vfree(table);
 #endif
 

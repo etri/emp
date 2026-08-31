@@ -207,7 +207,7 @@ ____emp_get_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 
 #define __emp_get_pages_map(vmr, gpa, page_len) do { \
 	____emp_get_pages_map(gpa, page_len); \
-	debug_page_ref_mark((vmr)->debug_id, (gpa)->local_page, page_len); \
+	debug_page_ref_mark(emp_vmr_dbgid(vmr), (gpa)->local_page, page_len); \
 } while (0)
 
 #define emp_get_pages_map(vmr, gpa, idx) do { \
@@ -215,7 +215,7 @@ ____emp_get_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 	unsigned int ____page_len, ____off; \
 	____gpa_to_hva_len_off(vmr, gpa, idx, ____hva, ____page_len, ____off); \
 	____emp_get_pages_map(gpa, ____page_len); \
-	debug_page_ref_mark((vmr)->debug_id, (gpa)->local_page, ____page_len); \
+	debug_page_ref_mark(emp_vmr_dbgid(vmr), (gpa)->local_page, ____page_len); \
 } while (0)
 
 static inline void
@@ -229,7 +229,7 @@ ____emp_put_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 
 #define __emp_put_pages_map(vmr, gpa, page_len) do { \
 	____emp_put_pages_map(gpa, page_len); \
-	debug_page_ref_mark((vmr)->debug_id, (gpa)->local_page, -page_len); \
+	debug_page_ref_mark(emp_vmr_dbgid(vmr), (gpa)->local_page, -page_len); \
 } while (0)
 
 #define emp_put_pages_map(vmr, gpa, idx) do { \
@@ -237,7 +237,7 @@ ____emp_put_pages_map(struct emp_gpa *gpa, unsigned long page_len)
 	unsigned int ____page_len, ____off; \
 	____gpa_to_hva_len_off(vmr, gpa, idx, ____hva, ____page_len, ____off); \
 	____emp_put_pages_map(gpa, ____page_len); \
-	debug_page_ref_mark((vmr)->debug_id, (gpa)->local_page, -____page_len); \
+	debug_page_ref_mark(emp_vmr_dbgid(vmr), (gpa)->local_page, -____page_len); \
 } while (0)
 
 static inline unsigned long get_page_mask(struct emp_mm *bvma)

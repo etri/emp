@@ -516,7 +516,7 @@ struct emp_gpadesc_alloc {
 						(s64) NULL, (s64) (new)); \
 	if (likely(____g == NULL)) { \
 		atomic_inc(&(new)->refcnt); \
-		debug_gpa_refcnt_inc_mark((new), (vmr)->debug_id); \
+		debug_gpa_refcnt_inc_mark((new), emp_vmr_dbgid(vmr)); \
 	} else \
 		dprintk_ratelimited(KERN_ERR "%s: race at set_gpa_dir_new() " \
 				"is detected. vmr: %d index: 0x%lx " \
@@ -542,18 +542,18 @@ struct emp_gpadesc_alloc {
 				(unsigned long) old, (unsigned long) new, \
 				(unsigned long) ____prev); \
 	atomic_inc(&(new)->refcnt); \
-	debug_gpa_refcnt_inc_mark((new), (vmr)->debug_id); \
+	debug_gpa_refcnt_inc_mark((new), emp_vmr_dbgid(vmr)); \
 	BUG_ON(atomic_dec_return(&(old)->refcnt) <= 0); \
-	debug_gpa_refcnt_dec_mark((old), (vmr)->debug_id); \
+	debug_gpa_refcnt_dec_mark((old), emp_vmr_dbgid(vmr)); \
 } while (0)
 
 #else
 #define change_gpa_dir(vmr, gpa_dir, idx, old, new) do { \
 	(gpa_dir)[idx] = (new); \
 	atomic_inc(&(new)->refcnt); \
-	debug_gpa_refcnt_inc_mark((new), (vmr)->debug_id); \
+	debug_gpa_refcnt_inc_mark((new), emp_vmr_dbgid(vmr)); \
 	atomic_dec(&(old)->refcnt); \
-	debug_gpa_refcnt_dec_mark((old), (vmr)->debug_id); \
+	debug_gpa_refcnt_dec_mark((old), emp_vmr_dbgid(vmr)); \
 } while (0)
 #endif
 
@@ -561,7 +561,7 @@ struct emp_gpadesc_alloc {
 	struct emp_gpa *____gpa = (gpa_dir)[idx]; \
 	(gpa_dir)[idx] = NULL; \
 	atomic_dec(&____gpa->refcnt); \
-	debug_gpa_refcnt_dec_mark(____gpa, (vmr)->debug_id); \
+	debug_gpa_refcnt_dec_mark(____gpa, emp_vmr_dbgid(vmr)); \
 } while (0)
 
 #ifdef CONFIG_EMP_USER

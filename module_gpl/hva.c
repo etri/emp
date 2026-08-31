@@ -253,7 +253,7 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	was_owner = (emp_lp_owner(lp) == vmr);
 	prev_owner = (lp->num_pmds == 0) ? emp_lp_owner(lp) : NULL;
 	emp_lp_insert_pmd(vmr->emm, lp, vmr, pmd);
-	debug_lru_add_vmr_id_mark(lp, vmr->debug_id);
+	debug_lru_add_vmr_id_mark(lp, emp_vmr_dbgid(vmr));
 
 	if (!was_owner)
 		emp_update_rss_add(vmr, page_len,
@@ -600,7 +600,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	cpu = emp_this_cpu_ptr(emm->pcpus);
 	emp_vcpu_stat_inc(cpu, vma_fault);
 
-	emp_pf_history_beg(cpu, vmr->debug_id, vmf->address);
+	emp_pf_history_beg(cpu, emp_vmr_dbgid(vmr), vmf->address);
 	emp_pf_history_add(cpu, hva_or_gpa, 0);
 
 	sb_order = bvma_subblock_order(emm);

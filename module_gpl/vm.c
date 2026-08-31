@@ -481,10 +481,10 @@ static void emp_vmr_debug_id_set(struct emp_mm *emm, struct emp_vmr *vmr)
 
 static void emp_vmr_debug_id_clear(struct emp_mm *emm, struct emp_vmr *vmr)
 {
-	if (vmr->debug_id < 0)
+	if (emp_vmr_dbgid(vmr) < 0)
 		return;
 	spin_lock(&emm->debug_vmr_ids_lock);
-	__clear_bit(vmr->debug_id, emm->debug_vmr_ids);
+	__clear_bit(emp_vmr_dbgid(vmr), emm->debug_vmr_ids);
 	spin_unlock(&emm->debug_vmr_ids_lock);
 	vmr->debug_id = -1;
 }
@@ -770,8 +770,8 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 				pmd = emp_lp_lookup_pmd(gpa, prev_vmr);
 				if (pmd) {
 					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
-					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
-					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
+					debug_lru_add_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
+					debug_page_ref_mark_map(emp_vmr_dbgid(new_vmr), gpa->local_page);
 					/* RSS has been moved.
 					 * However, host_mm of prev_vmr and new_vmr are identical.
 					 * We don't need to take care of RSS actually. */
@@ -790,10 +790,10 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 							== prev_vmr);
 				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr);
 				if (pmd) {
-					debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
+					debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(prev_vmr));
 					emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
-					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
-					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
+					debug_lru_add_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
+					debug_page_ref_mark_map(emp_vmr_dbgid(new_vmr), gpa->local_page);
 				}
 				if (owned && emp_lp_owner(gpa->local_page)
 							!= new_vmr) {
@@ -808,7 +808,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 						emp_lp_set_owner(
 							gpa->local_page,
 							new_vmr);
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+					debug_lru_set_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
 				}
 #ifdef CONFIG_EMP_DEBUG_RSS
 				if (pmd || emp_lp_owner(gpa->local_page) == new_vmr) {
@@ -1027,16 +1027,16 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				owned = (emp_lp_owner(gpa->local_page)
 							== prev_vmr);
 				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr);
-				debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
+				debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(prev_vmr));
                                 
 				emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
-				debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
-				debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page); /* mark the kernel's increment on page count */
+				debug_lru_add_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
+				debug_page_ref_mark_map(emp_vmr_dbgid(new_vmr), gpa->local_page); /* mark the kernel's increment on page count */
 				if (owned && emp_lp_owner(gpa->local_page)
 							!= new_vmr) {
 					emp_lp_promote_owner(gpa->local_page,
 								new_vmr);
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+					debug_lru_set_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
 				}
 #ifdef CONFIG_EMP_DEBUG_RSS
 				emp_update_rss_sub_kernel(prev_vmr,
@@ -1051,7 +1051,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 			} else { // INACTIVE, WB
 				if (emp_lp_owner(gpa->local_page) == prev_vmr) {
 					emp_lp_set_owner(gpa->local_page, new_vmr);
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+					debug_lru_set_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
 #ifdef CONFIG_EMP_DEBUG_RSS
 					emp_update_rss_sub_kernel(prev_vmr,
 							__gpa_to_page_len(new_vmr, gpa, idx),
