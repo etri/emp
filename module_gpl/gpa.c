@@ -472,7 +472,7 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 					"start: 0x%lx end: 0x%lx "
 					"block_order: %d lowmem: %d partial: %d\n",
 					__func__,
-					emm->id, vmr->id, i,
+					emm->id, emp_vmr_dbgid(vmr), i,
 					r->start, r->end,
 					r->alloc_order,
 #ifdef CONFIG_EMP_VM
@@ -1362,7 +1362,7 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 	}
 }
 
-/* remove vmr->id and pmd if inserted.
+/* remove the vmr's record and pmd if inserted.
  * return head's refcnt.
  */
 static inline int
@@ -1770,7 +1770,7 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	if (do_unmap)
 		dprintk("[DEBUG] %s: UNMAP emm: %d vmr: %d mm: %lx vma: %lx "
 			"vm_base: 0x%lx size: 0x%lx vm_start: 0x%lx vm_end: 0x%lx\n",
-			__func__, emm->id, vmr->id,
+			__func__, emm->id, emp_vmr_dbgid(vmr),
 			(unsigned long) vmr->host_mm, (unsigned long) vmr->host_vma,
 			vmr->descs->vm_base,
 			vmr->descs->gpa_len << (vmr->descs->subblock_order + PAGE_SHIFT),

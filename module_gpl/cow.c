@@ -374,7 +374,7 @@ static void debug_show_gpa_state_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 
 	emp_debug_bulk_msg_lock();
 	printk(KERN_ERR "[SHOW_GPA] (%d-%d) from: %s(%s)\n",
-			emm->id, vmr->id, func, emp_cow_caller_str[caller]);
+			emm->id, emp_vmr_dbgid(vmr), func, emp_cow_caller_str[caller]);
 	for (i = head_idx, new = new_head, old = old_head;
 			i < end_idx;
 				i++, new = new ? new + 1 : NULL,
@@ -487,7 +487,7 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 	if (debug_WARN_ONCE(pmd_none(*pmd),
 			"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
 			"pmd: 0x%016lx addr: 0x%016lx",
-			__func__, vmr->id, head->local_page->gpa_index,
+			__func__, emp_vmr_dbgid(vmr), head->local_page->gpa_index,
 			(unsigned long) pmd, addr))
 		__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
@@ -572,7 +572,7 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 		if (debug_WARN_ONCE(pmd_none(*pmd),
 				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
 				"pmd: 0x%016lx hva: 0x%016lx",
-				__func__, vmr->id, head_idx + (gpa - head),
+				__func__, emp_vmr_dbgid(vmr), head_idx + (gpa - head),
 				(unsigned long) pmd, addr))
 			__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
@@ -691,7 +691,7 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
 		if (debug_WARN_ONCE(pmd_none(*pmd),
 				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
 				"pmd: 0x%016lx hva: 0x%016lx",
-				__func__, vmr->id, head_idx + (gpa - head),
+				__func__, emp_vmr_dbgid(vmr), head_idx + (gpa - head),
 				(unsigned long) pmd, addr))
 			__cow_pmd_populate(vmr->host_mm, pmd, addr);
 
@@ -959,7 +959,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 	if (unlikely(ret < 0)) {
 		printk(KERN_ERR "ERROR: %s failed to duplicate local page. "
 				"emm: %d vmr: %d head_idx: 0x%lx\n",
-				__func__, emm->id, vmr->id, head_idx);
+				__func__, emm->id, emp_vmr_dbgid(vmr), head_idx);
 		return ret;
 	}
 
@@ -1657,7 +1657,7 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 		emp_debug_bulk_msg_lock();
 		printk(KERN_ERR "[EMP_COW_FOUND] emm: %d vmr: %d mm: %016lx "
 				"va: %016lx gpa_idx: 0x%lx refcnt: %d\n",
-				emm->id, vmr->id, (unsigned long) mm, va,
+				emm->id, emp_vmr_dbgid(vmr), (unsigned long) mm, va,
 				gpa_idx, atomic_read(&gpa->refcnt));
 		/* state of gpa will be printed out at __handle_emp_cow_fault() */
 		emp_debug_bulk_msg_unlock();
@@ -1746,7 +1746,7 @@ __get_emp_vmr_check(struct emp_mm *emm, struct vm_area_struct *vma) {
 #ifdef CONFIG_EMP_DEBUG
 	if (unlikely(vmr->emm != emm)) {
 		printk(KERN_ERR "ERROR: (%s) vmr(%lx,%d)->emm(%lx,%d) != emm(%lx,%d)\n",
-				__func__, (unsigned long)vmr, vmr->id,
+				__func__, (unsigned long)vmr, emp_vmr_dbgid(vmr),
 					(unsigned long)vmr->emm, vmr->emm->id,
 					(unsigned long)emm, emm->id);
 		return NULL;
@@ -1771,7 +1771,7 @@ static void __emp_vmr_local_page_dup_beg(struct emp_mm *emm, struct emp_vmr *vmr
 						>> bvma_subblock_order(emm);
 
 	printk(KERN_ERR "[DEBUG] %s: emm: %d vmr: %d addr: %016lx ~ %016lx index: %lx ~ %lx\n",
-			__func__, emm->id, vmr->id,
+			__func__, emm->id, emp_vmr_dbgid(vmr),
 			vmr->vm_start, vmr->vm_end,
 			index_start, index_end);
 
@@ -1810,7 +1810,7 @@ static void __emp_vmr_local_page_unmap_beg(struct emp_mm *emm, struct emp_vmr *v
 						>> bvma_subblock_order(emm);
 
 	printk(KERN_ERR "[DEBUG] %s: emm: %d vmr: %d addr: %016lx ~ %016lx index: %lx ~ %lx\n",
-			__func__, emm->id, vmr->id,
+			__func__, emm->id, emp_vmr_dbgid(vmr),
 			vmr->vm_start, vmr->vm_end,
 			index_start, index_end);
 
@@ -1857,7 +1857,7 @@ emp_mmu_notifier_release(struct mmu_notifier *notifier, struct mm_struct *mm)
 		if (vmr == NULL || vmr->emm != emm)
 			continue;
 		dprintk(KERN_ERR "[DEBUG] %s: emm: %d pid: %d vmr: %d\n",
-				__func__, emm->id, current->pid, vmr->id);
+				__func__, emm->id, current->pid, emp_vmr_dbgid(vmr));
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 		__emp_vmr_local_page_unmap_beg(emm, vmr);
 #endif
@@ -2006,13 +2006,13 @@ long emp_get_mmu_notifier(struct emp_vmr *vmr)
 		return 0; /* already registered */
 
 	dprintk("%s: vmr: %d mm: %016lx vmr->notifier: %016lx\n",
-			__func__, vmr->id, (unsigned long) mm,
+			__func__, emp_vmr_dbgid(vmr), (unsigned long) mm,
 			(unsigned long) vmr->mmu_notifier);
 
 	emp_notifier = (struct emp_mmu_notifier *) mmu_notifier_get_locked(&emp_mmu_notifier_ops, mm);
 	if (IS_ERR_OR_NULL(emp_notifier)) {
 		dprintk("[ERROR] EMP failed to get mmu_notifier. emm: %d vmr: %d err: %ld\n",
-				vmr->emm->id, vmr->id, PTR_ERR(emp_notifier));
+				vmr->emm->id, emp_vmr_dbgid(vmr), PTR_ERR(emp_notifier));
 		return PTR_ERR(emp_notifier);
 	}
 
@@ -2037,8 +2037,8 @@ void emp_put_mmu_notifier(struct emp_vmr *vmr)
 	if (unlikely(emp_notifier == NULL))
 		return;
 
-	dprintk("%s: vmr->id: %d vmr->notifier: %016lx ->emm: %016lx ->refcnt: %d\n",
-			__func__, vmr->id, (unsigned long) vmr->mmu_notifier,
+	dprintk("%s: emp_vmr_dbgid(vmr): %d vmr->notifier: %016lx ->emm: %016lx ->refcnt: %d\n",
+			__func__, emp_vmr_dbgid(vmr), (unsigned long) vmr->mmu_notifier,
 			(unsigned long) emp_notifier->emm,
 			atomic_read(&emp_notifier->refcnt));
 #ifdef CONFIG_EMP_DEBUG
@@ -2127,7 +2127,7 @@ static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 		"state[init:%lu act:%lu inact:%lu wb:%lu fetch:%lu til:%lu "
 		"tal:%lu tpl:%lu] pmd_null:%lu pmd_none:%lu present:%lu "
 		"already_ro:%lu wp:%lu still_w:%lu%s\n",
-		emm->id, prev_vmr->id, new_vmr->id,
+		emm->id, emp_vmr_dbgid(prev_vmr), emp_vmr_dbgid(new_vmr),
 		lfs->blocks, lfs->shared, lfs->active,
 		lfs->state[0], lfs->state[1], lfs->state[2], lfs->state[3],
 		lfs->state[4], lfs->state[5], lfs->state[6], lfs->state[7],

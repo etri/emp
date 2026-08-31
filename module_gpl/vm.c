@@ -562,7 +562,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 
 	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d vma:%016lx virt: %016lx "
 				"vmr: %016lx desc: %016lx ref: %d\n",
-			__func__, vmr->emm->id, vmr->emm->vmrs_len, vmr->id,
+			__func__, vmr->emm->id, vmr->emm->vmrs_len, emp_vmr_dbgid(vmr),
 			(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
 			(unsigned long) vmr->descs,
 			(int) (vmr->descs ? atomic_read(&vmr->descs->refcount) : -1));
@@ -712,7 +712,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 	unsigned int flags;
 
 	dprintk("%s new_vmr: %d prev_vmr: %d head_index: %lu boundary_index: %lu boundary_addr: %lu new_is_front: %d\n",
-		__func__, new_vmr->id, prev_vmr->id,
+		__func__, emp_vmr_dbgid(new_vmr), emp_vmr_dbgid(prev_vmr),
 		head_index, boundary_index, boundary_addr, new_is_front);
 
 	if (__split_set_max_block_order(prev_vmr, head, head_index,
@@ -932,15 +932,15 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 #ifdef CONFIG_EMP_DEBUG
 	if (prev_vmr->vm_end == new_vmr->vm_start) {
 		dprintk("%s prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
-				__func__, prev_vmr->id, prev_vmr->vm_start, prev_vmr->vm_end, new_vmr->id, new_vmr->vm_start, new_vmr->vm_end,
+				__func__, emp_vmr_dbgid(prev_vmr), prev_vmr->vm_start, prev_vmr->vm_end, emp_vmr_dbgid(new_vmr), new_vmr->vm_start, new_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
 	} else if (new_vmr->vm_end == prev_vmr->vm_start) {
 		dprintk("%s new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
-				__func__, new_vmr->id, new_vmr->vm_start, new_vmr->vm_end, prev_vmr->id, prev_vmr->vm_start, prev_vmr->vm_end,
+				__func__, emp_vmr_dbgid(new_vmr), new_vmr->vm_start, new_vmr->vm_end, emp_vmr_dbgid(prev_vmr), prev_vmr->vm_start, prev_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
 	} else {
 		printk(KERN_ERR "%s ERROR: prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
-				__func__, prev_vmr->id, prev_vmr->vm_start, prev_vmr->vm_end, new_vmr->id, new_vmr->vm_start, new_vmr->vm_end,
+				__func__, emp_vmr_dbgid(prev_vmr), prev_vmr->vm_start, prev_vmr->vm_end, emp_vmr_dbgid(new_vmr), new_vmr->vm_start, new_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
 
 		BUG();
@@ -965,11 +965,11 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 	if (prev_vmr->vm_end == new_vmr->vm_start) { /* [prev_vmr] + [new_wmr] */
 		dprintk("%s prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld new_vmr(%d) index_start = %ld index_end = %ld\n",
-				__func__, prev_vmr->id, prev_index_start, prev_index_end, new_vmr->id, index_start, index_end);
+				__func__, emp_vmr_dbgid(prev_vmr), prev_index_start, prev_index_end, emp_vmr_dbgid(new_vmr), index_start, index_end);
 		boundary = index_start;
 	} else { /* [new_vmr] + [prev_wmr] */
 		dprintk("%s new_vmr(%d) index_start = %ld index_end = %ld prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld\n",
-				__func__, new_vmr->id, index_start, index_end, prev_vmr->id, prev_index_start, prev_index_end);
+				__func__, emp_vmr_dbgid(new_vmr), index_start, index_end, emp_vmr_dbgid(prev_vmr), prev_index_start, prev_index_end);
 		/* prev is the upper half here, and its first subblock is
 		 * index_end - 1 when the split address falls inside a subblock
 		 * and index_end when it is aligned. */
@@ -1296,7 +1296,7 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d "
 			"vma:%016lx virt: %016lx flags: %lx "
 			"vmr: %016lx shared: %d wipeonfork: %d\n",
-		__func__, emm->id, emm->vmrs_len, new_vmr->id,
+		__func__, emm->id, emm->vmrs_len, emp_vmr_dbgid(new_vmr),
 		(unsigned long) new_vma, new_vma->vm_start, new_vma->vm_flags,
 		(unsigned long) new_vmr, vm_shared, vm_wipeonfork);
 
@@ -1434,7 +1434,7 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 			printk_ratelimited(KERN_WARNING
 				"%s: vma open of the same mm without a pending "
 				"split. emm: %d vmr: %d vma: %016lx\n",
-				__func__, prev_vmr->emm->id, prev_vmr->id,
+				__func__, prev_vmr->emm->id, emp_vmr_dbgid(prev_vmr),
 				(unsigned long) new_vma);
 		new_vmr = __emp_vma_open(prev_vmr, new_vma);
 		debug_BUG_ON(!new_vmr);

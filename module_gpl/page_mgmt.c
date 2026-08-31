@@ -1527,7 +1527,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 		printk(KERN_ERR "[EMP_PROGRESS] %s num_gpa_fault: %lld "
 				"emm: %d vmr: %d hva: 0x%lx gva: 0x%lx\n",
 				__func__, __num_emp_gpa_fault,
-				bvma->id, vmr->id, hva, gva);
+				bvma->id, emp_vmr_dbgid(vmr), hva, gva);
 #endif
 
 #ifdef CONFIG_EMP_EXT

@@ -588,7 +588,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		printk(KERN_ERR "[EMP_PROGRESS] %s num_hva_fault: %lld "
 				"emm: %d vmr: %d addr: 0x%lx\n",
 				__func__, __num_emp_hva_fault,
-				emm->id, vmr->id, vmf->address);
+				emm->id, emp_vmr_dbgid(vmr), vmf->address);
 #endif
 
 #ifdef CONFIG_EMP_EXT

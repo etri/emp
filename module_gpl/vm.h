@@ -522,7 +522,7 @@ struct emp_gpadesc_alloc {
 		dprintk_ratelimited(KERN_ERR "%s: race at set_gpa_dir_new() " \
 				"is detected. vmr: %d index: 0x%lx " \
 				"new: 0x%016lx prev: 0x%016lx\n", \
-				__func__, (vmr)->id, (idx), \
+				__func__, emp_vmr_dbgid(vmr), (idx), \
 				(unsigned long) (new), (unsigned long) ____g); \
 	____g; \
 })
@@ -539,7 +539,7 @@ struct emp_gpadesc_alloc {
 		printk_ratelimited(KERN_ERR "%s: race at change_gpa_dir() " \
 				"is detected. vmr: %d index: 0x%lx " \
 				"old: 0x%016lx new: 0x%016lx prev: 0x%016lx\n", \
-				__func__, (vmr)->id, (idx), \
+				__func__, emp_vmr_dbgid(vmr), (idx), \
 				(unsigned long) old, (unsigned long) new, \
 				(unsigned long) ____prev); \
 	atomic_inc(&(new)->refcnt); \
