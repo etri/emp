@@ -1395,6 +1395,7 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 	 * becomes visible instead of being silently treated as a fork. */
 	bool same_mm = new_vma->vm_mm == prev_vmr->host_mm;
 
+	new_vma->vm_private_data = NULL;
 	new_vmr = prev_vmr->split_new_vmr;
 	if (new_vmr) {
 		// emp_vma_split allocated new_vmr pointed by new_vmr of prev_vmr
@@ -1409,7 +1410,9 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 				__func__, prev_vmr->emm->id, emp_vmr_dbgid(prev_vmr),
 				(unsigned long) new_vma);
 		new_vmr = __emp_vma_open(prev_vmr, new_vma);
-		debug_BUG_ON(!new_vmr);
+		if (unlikely(new_vmr == NULL))
+			/* Failed to __emp_vma_open(). Stop here. */
+			return;
 	}
 
 	vm_flags_set(new_vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
