@@ -493,28 +493,12 @@ static void emp_vmr_debug_id_clear(struct emp_mm *emm, struct emp_vmr *vmr)
 #define emp_vmr_debug_id_clear(emm, vmr) do {} while (0)
 #endif /* !CONFIG_EMP_DEBUG */
 
-static int emp_vmr_find_and_set(struct emp_mm *emm, struct emp_vmr *vmr)
+static void emp_vmr_register(struct emp_mm *emm, struct emp_vmr *vmr)
 {
-	unsigned long p;
-
-	spin_lock(&emm->vmrs_lock);
-	p = find_first_bit(emm->vmrs_bitmap, EMP_VMRS_MAX);
-	if (unlikely(p == EMP_VMRS_MAX)) {
-		spin_unlock(&emm->vmrs_lock);
-		return -1;
-	}
-
-	vmr->id = p;
-	emm->vmrs[p] = vmr;
-	__clear_bit(p, emm->vmrs_bitmap);
-	emm->vmrs_len++;
-	spin_unlock(&emm->vmrs_lock);
-
 	write_lock(&emm->vmr_list_lock);
 	list_add_tail(&vmr->vmr_list, &emm->vmrs_list);
+	emm->num_vmrs++;
 	write_unlock(&emm->vmr_list_lock);
-
-	return p;
 }
 
 static void emp_vmr_release(struct emp_vmr *vmr)
@@ -525,9 +509,6 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 	debug_assert(vmr->mmu_notifier == NULL);
 #endif
 
-	if (get_emp_mm_last_vmr(emm) == vmr)
-		clear_emp_mm_last_vmr(emm);
-
 #ifdef CONFIG_EMP_VM
 	if (emm->ekvm.lowmem_vmr == vmr)
 		emm->ekvm.lowmem_vmr = NULL;
@@ -537,13 +518,8 @@ static void emp_vmr_release(struct emp_vmr *vmr)
 
 	write_lock(&emm->vmr_list_lock);
 	list_del_init(&vmr->vmr_list);
+	emm->num_vmrs--;
 	write_unlock(&emm->vmr_list_lock);
-
-	spin_lock(&emm->vmrs_lock);
-	emm->vmrs[vmr->id] = NULL;
-	__set_bit(vmr->id, emm->vmrs_bitmap);
-	emm->vmrs_len--;
-	spin_unlock(&emm->vmrs_lock);
 }
 
 static void emp_vma_close(struct vm_area_struct *vma)
@@ -562,7 +538,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 
 	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d vma:%016lx virt: %016lx "
 				"vmr: %016lx desc: %016lx ref: %d\n",
-			__func__, vmr->emm->id, vmr->emm->vmrs_len, emp_vmr_dbgid(vmr),
+			__func__, vmr->emm->id, vmr->emm->num_vmrs, emp_vmr_dbgid(vmr),
 			(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
 			(unsigned long) vmr->descs,
 			(int) (vmr->descs ? atomic_read(&vmr->descs->refcount) : -1));
@@ -597,7 +573,6 @@ static void emp_vma_close(struct vm_area_struct *vma)
 
 	emp_vmr_release(vmr);
 
-	vmr->emm->last_mm = vma->vm_mm;
 	vmr->host_vma = NULL;
 	vmr->host_mm = NULL;
 	emp_kfree(vmr);
@@ -1141,10 +1116,7 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 	if (ZERO_OR_NULL_PTR(new_vmr))
 		return NULL;
 
-	if (emp_vmr_find_and_set(emm, new_vmr) < 0) {
-		emp_kfree(new_vmr);
-		return NULL;
-	}
+	emp_vmr_register(emm, new_vmr);
 	emp_vmr_debug_id_set(emm, new_vmr);
 
 	new_vmr->emm = emm;
@@ -1296,7 +1268,7 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d "
 			"vma:%016lx virt: %016lx flags: %lx "
 			"vmr: %016lx shared: %d wipeonfork: %d\n",
-		__func__, emm->id, emm->vmrs_len, emp_vmr_dbgid(new_vmr),
+		__func__, emm->id, emm->num_vmrs, emp_vmr_dbgid(new_vmr),
 		(unsigned long) new_vma, new_vma->vm_start, new_vma->vm_flags,
 		(unsigned long) new_vmr, vm_shared, vm_wipeonfork);
 
@@ -1605,7 +1577,7 @@ vm_start_aligned:
 
 	printk(KERN_NOTICE "%s emm: %d num_vmr: %d mm: %016lx vma:%016lx "
 				"vm_start: %016lx vm_end: %016lx flags: %lx\n",
-			__func__, bvma->id, bvma->vmrs_len,
+			__func__, bvma->id, bvma->num_vmrs,
 			(unsigned long) vma->vm_mm, (unsigned long) vma,
 			vma->vm_start, vma->vm_end, vma->vm_flags);
 
@@ -1874,15 +1846,6 @@ static struct emp_mm *create_emm(void)
 	if (donor_mgmt_init(bvma))
 		goto err;
 
-	bvma->vmrs = emp_kzalloc(sizeof(struct emp_vmr*) * EMP_VMRS_MAX,
-				 GFP_KERNEL);
-	if (bvma->vmrs == NULL) {
-		printk(KERN_ERR "ERROR: failed to allocate vmr pointers (size: %ld)\n",
-							sizeof(struct emp_vmr*) * EMP_VMRS_MAX);
-		goto err;
-	}
-	bitmap_fill(bvma->vmrs_bitmap, EMP_VMRS_MAX);
-
 	init_srcu_struct(&bvma->srcu);
 #ifdef CONFIG_EMP_DEBUG
 	spin_lock_init(&bvma->debug_vmr_ids_lock);
@@ -1890,7 +1853,6 @@ static struct emp_mm *create_emm(void)
 #endif
 	INIT_LIST_HEAD(&bvma->vmrs_list);
 	rwlock_init(&bvma->vmr_list_lock);
-	spin_lock_init(&bvma->vmrs_lock);
 	spin_lock_init(&bvma->mrs.memregs_lock);
 	init_waitqueue_head(&bvma->mrs.mrs_ctrl_wq);
 
@@ -1933,8 +1895,6 @@ static struct emp_mm *create_emm(void)
 
 	return bvma;
 err:
-	if (bvma->vmrs)
-		emp_kfree(bvma->vmrs);
 	emp_kfree(bvma);
 	return NULL;
 }
@@ -2056,7 +2016,7 @@ static int emp_open(struct inode *inode, struct file *filp)
 
 	mutex_unlock(&emp_open_mutex);
 	printk(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, bvma->pid, current->pid, bvma->vmrs_len, emp_mm_arr_len);
+			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
 	return ret;
 
 open_procfs_err:
@@ -2107,7 +2067,7 @@ static int emp_release(struct inode *inode, struct file *filp)
 		return -ENODEV;
 	bvma = (struct emp_mm *)filp->private_data;
 	printk(KERN_NOTICE "%s (begin) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, bvma->pid, current->pid, bvma->vmrs_len, emp_mm_arr_len);
+			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
 
 	WARN_ON(atomic_dec_and_test(&bvma->refcount) != true);
 
@@ -2149,10 +2109,9 @@ static int emp_release(struct inode *inode, struct file *filp)
 #endif
 
 	printk(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, bvma->pid, current->pid, bvma->vmrs_len, emp_mm_arr_len);
+			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
 
 	emp_procfs_del(bvma);
-	emp_kfree(bvma->vmrs);
 	emp_kfree(bvma);
 
 #ifdef CONFIG_KVM_ALLOC_PROFILE

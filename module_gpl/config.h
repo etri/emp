@@ -66,7 +66,6 @@ enum debug_sync_hpt_point {
 };
 #endif
 
-#define EMP_VMRS_MAX    (262144)
 
 #ifdef CONFIG_EMP_DEBUG
 /* Size of the debug-only vmr id space. Ids are reused as vmrs come and go, so

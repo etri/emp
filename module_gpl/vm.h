@@ -260,7 +260,6 @@ enum emp_fork_policy {
 
 // virtual memory region for a contiguous host virtual (mmaped) memory
 struct emp_vmr {
-	int                 id;
 	/* membership in emp_mm.vmrs_list, under emp_mm.vmr_list_lock */
 	struct list_head    vmr_list;
 #ifdef CONFIG_EMP_DEBUG
@@ -580,7 +579,6 @@ struct emp_mm {
 	int                 id;
 	pid_t               pid;
 	int                 possible_cpus;
-	struct mm_struct    *last_mm;
 
 #ifdef CONFIG_EMP_VM
 	struct emp_exp_kvm  ekvm;
@@ -603,15 +601,12 @@ struct emp_mm {
 	spinlock_t          debug_vmr_ids_lock;
 	DECLARE_BITMAP(debug_vmr_ids, EMP_DEBUG_VMR_IDS_MAX);
 #endif
-	/* every live vmr of this emp_mm, for whole-set enumeration; takes the
-	 * place of scanning the numeric registry */
+	/* every live vmr of this emp_mm, and their count, under
+	 * vmr_list_lock. The count exists for proc/debug reporting only:
+	 * nothing is looked up by it. */
 	struct list_head    vmrs_list;
 	rwlock_t            vmr_list_lock;
-	spinlock_t          vmrs_lock; // protect vmrs_bitmap, vmrs_len, vmrs
-	DECLARE_BITMAP(vmrs_bitmap, EMP_VMRS_MAX);
-	int                 vmrs_len;
-	struct emp_vmr      **vmrs;
-	atomic64_t          _last_vmr;
+	int                 num_vmrs;
 	struct emp_gpadesc_alloc gpadesc_alloc;
 
 	struct emp_ftm      ftm;
@@ -644,17 +639,6 @@ struct emp_mm {
 #endif
 };
 
-static inline struct emp_vmr *get_emp_mm_last_vmr(struct emp_mm *emm) {
-	return (struct emp_vmr *) atomic64_read(&emm->_last_vmr);
-}
-
-static inline void set_emp_mm_last_vmr(struct emp_mm *emm, struct emp_vmr *vmr) {
-	atomic64_set(&emm->_last_vmr, (s64) vmr);
-}
-
-static inline void clear_emp_mm_last_vmr(struct emp_mm *emm) {
-	atomic64_set(&emm->_last_vmr, (s64) NULL);
-}
 
 #ifdef CONFIG_EMP_BLOCK
 #define bvma_block_order(b)     ((b)->config.block_order)
@@ -772,34 +756,6 @@ static inline u64 get_ts_in_ns(void)
 	return (S_TO_NS * ts.tv_sec) + ts.tv_nsec;
 }
 		
-// naive lookup function
-static inline struct emp_vmr *
-emp_vmr_lookup(struct emp_mm *emm, struct vm_area_struct *vma)
-{
-	int p, count;
-	struct emp_vmr *vmr = get_emp_mm_last_vmr(emm);
-	if (vmr && (vmr->host_vma == vma))
-		return vmr;
-
-	p = 0;
-	count = 0;
-	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
-		if (++count > emm->vmrs_len)
-			break;
-		vmr = emm->vmrs[p];
-		if (unlikely(!vmr))
-			continue;
-		if (vmr->host_vma == vma) {
-			set_emp_mm_last_vmr(emm, vmr);
-			return vmr;
-		}
-	}
-
-	return NULL;
-}
-
-#define VA_IN_VMR(vmr, hva) \
-	!(((hva) < (vmr)->vm_start) || ((hva) >= (vmr)->vm_end))
 
 /**
  * emp_vmr_find_hva - resolve (mm, hva) to this emp_mm's vmr, exactly
@@ -828,40 +784,6 @@ emp_vmr_find_hva(struct emp_mm *emm, struct mm_struct *mm,
 	if (vmr == NULL || vmr->emm != emm)
 		return NULL;
 	return vmr;
-}
-static inline struct emp_vmr *
-emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
-{
-	int p, count;
-	struct emp_vmr *vmr = get_emp_mm_last_vmr(emm);
-#ifdef CONFIG_EMP_USER
-	struct mm_struct *mm = current->mm;
-	if (vmr && vmr->host_mm == mm && VA_IN_VMR(vmr, hva))
-		return vmr;
-#else
-	if (vmr && VA_IN_VMR(vmr, hva))
-		return vmr;
-#endif
-
-	p = 0;
-	count = 0;
-	for_each_clear_bit_from(p, emm->vmrs_bitmap, EMP_VMRS_MAX) {
-		if (count++ >= emm->vmrs_len)
-			break;
-		vmr = emm->vmrs[p];
-		if (unlikely(!vmr))
-			continue;
-		if (VA_IN_VMR(vmr, hva)) {
-#ifdef CONFIG_EMP_USER
-			if (vmr->host_mm != mm)
-				continue;
-#endif
-			set_emp_mm_last_vmr(emm, vmr);
-			return vmr;
-		}
-	}
-
-	return NULL;
 }
 
 /* Refer to module_gpl/hva.h:emp_set_page_mapping_and_index().

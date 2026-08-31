@@ -462,7 +462,7 @@ EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_free);
 	{	\
 		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
 		if (bvma == NULL) return 0; \
-		if (bvma->vmrs_len == 0) return 0; \
+		if (bvma->num_vmrs == 0) return 0; \
 		return __integer_read(file, buf, count, ppos, bvma->var); \
 	}
 
@@ -472,7 +472,7 @@ EMP_PROC_ATOMIC64_READ(emp_debug_alloc_size_free);
 	{	\
 		struct emp_mm *bvma = __get_emp_mm_by_file(file); \
 		if (bvma == NULL) return 0; \
-		if (bvma->vmrs_len == 0) return 0; \
+		if (bvma->num_vmrs == 0) return 0; \
 		return __integer_read(file, buf, count, ppos, atomic_read(&bvma->var)); \
 	}
 
@@ -523,7 +523,7 @@ static ssize_t online_read(struct file *file, char __user *buf,
 	if (bvma == NULL) return 0;
 	rcu_read_lock();
 	if (bvma->close == 0) 
-		ret = __integer_read(file, buf, count, ppos, bvma->vmrs_len);
+		ret = __integer_read(file, buf, count, ppos, bvma->num_vmrs);
 	rcu_read_unlock();
 	return ret;
 }
@@ -941,7 +941,7 @@ static ssize_t mem_inactive_len_read(struct file *file, char __user *buf,
 
 	bvma = __get_emp_mm_by_file(file);
 	if (bvma == NULL) return 0;
-	if (bvma->vmrs_len == 0) return 0;
+	if (bvma->num_vmrs == 0) return 0;
 
 	if (bvma->close == 0) {
 		len = scnprintf(buffer, PROC_BUF_SIZE * 3, 
@@ -1496,7 +1496,7 @@ static ssize_t donor_reqs_read(struct file *file, char __user *buf,
 
 	bvma = __get_emp_mm_by_file(file);
 	if (bvma == NULL) return 0;
-	if (bvma->vmrs_len == 0) return 0;
+	if (bvma->num_vmrs == 0) return 0;
 
 	rcu_read_lock();
 	if (bvma->close == 0) {
