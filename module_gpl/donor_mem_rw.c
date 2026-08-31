@@ -134,7 +134,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	page = free_page;
 
 	/* allocate a local page for a dma block*/
-	local_page = bvma->lops.alloc_local_page(bvma, vmr->id, mr, page,
+	local_page = bvma->lops.alloc_local_page(bvma, vmr, mr, page,
 						 page_order, gpa_idx, gpa);
 	if (unlikely(!local_page)) {
 		push_free_page_list(bvma, page, cpu);
@@ -239,7 +239,7 @@ static int clear_writeback_work_request(struct emp_mm *bvma,
 	int reclaimed_pages = 0;
 	struct work_request *head_wr;
 	struct emp_gpa *g, *head;
-	int vmr_id;
+	struct emp_vmr *owner;
 
 	/* wait write operations to be completed */
 	wait_write(bvma, w, cpu, prefetch);
@@ -262,8 +262,8 @@ static int clear_writeback_work_request(struct emp_mm *bvma,
 	head = emp_get_block_head(w->gpa);
 	debug_progress(head, w);
 	debug_assert(____emp_gpa_is_locked(head));
-	/* NOTE: CoWed block may have no vmr_id on the gpa. */
-	vmr_id = head->local_page->vmr_id;
+	/* NOTE: a CoWed block may be ownerless. */
+	owner = emp_lp_owner(head->local_page);
 
 	/* remove an assumption that a head_wr is related to the head node of
 	 * a block. it means that there is no restriction in order of
@@ -285,8 +285,8 @@ static int clear_writeback_work_request(struct emp_mm *bvma,
 	}
 
 	if (do_reclaim) {
-		if (vmr_id >= 0)
-			emp_update_rss_cached(bvma->vmrs[vmr_id]);
+		if (owner)
+			emp_update_rss_cached(owner);
 		sub_inactive_list_page_len(bvma, head);
 	}
 

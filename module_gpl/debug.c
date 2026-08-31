@@ -507,7 +507,7 @@ void __debug_page_ref_print_all(struct local_page *lp)
 	printk(KERN_ERR "DEBUG: [PAGE_REF_PRINT] lp: %016lx page_len: %d vmr: %d gpa: %lx wrong: %d mmu: %d io: %d will_pte: %d unmap: %d dup: %d calibrate: %d next: %d\n",
 			(unsigned long) lp,
 			lp->debug_page_ref_page_len,
-			lp->vmr_id,
+			emp_vmr_dbgid(emp_lp_owner(lp)),
 			lp->gpa_index,
 			lp->debug_page_ref_wrong,
 			lp->debug_page_ref_in_mmu_noti,
@@ -613,7 +613,6 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 		.flags = 0,
 		.gpa_index = -1,
 		.dma_addr = 0,
-		.vmr_id = -1,
 		.pmds = { .next = NULL, .pmd = NULL, .vmr = NULL },
 	};
 	struct local_page *local_page = (gpa && gpa->local_page)
@@ -632,7 +631,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	 * ref: reference count of remote_page (for CoW remote page)
 	 * lru: is this gpa descrioptor is inserted to any lru chains?
 	 * flag: flag of local page
-	 * vmr: vmr id of the local page (local_page->vmr_id)
+	 * vmr: debug id of the owner (emp_lp_owner())
 	 * page_struct: address of the page structure
 	 * page_flag: flags of the page structure
 	 * page_addr: kernel virtual address of the page
@@ -678,7 +677,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			get_gpa_remote_page_refcnt(gpa),
 			list_empty(&local_page->lru_list) ? 'X' : 'O',
 			local_page->flags,
-			local_page->vmr_id,
+			emp_vmr_dbgid(emp_lp_owner(local_page)),
 
 			(unsigned long) page,
 			page ? page->flags : 0L,
@@ -689,7 +688,7 @@ __debug_show_gpa_state(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			page ? emp_page_mapcount(page) : -1,
 			lp_pmd_count,
 
-			emp_vmr_dbgid(local_page->pmds.vmr),
+			emp_vmr_dbgid(emp_lp_owner(local_page)),
 			hva,
 			(unsigned long) pmdp,
 			pte);
@@ -1391,17 +1390,17 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		struct emp_vmr *vmr;
 		lp = head->local_page;
 		debug_assert(lp);
-		debug_assert(lp->vmr_id >= 0);
-		vmr = lp->emm->vmrs[lp->vmr_id];
-		debug_assert(vmr);
-		debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == head);
+		vmr = emp_lp_owner(lp);
+		if (vmr)
+			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == head);
 
 		for_each_gpas(gpa, head) {
 			if (gpa == head)
 				continue;
 			lp = gpa->local_page;
 			debug_assert(lp);
-			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
+			if (vmr)
+				debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
 			__check_pmd_list(head, gpa);
 		}
 
@@ -1421,18 +1420,16 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 		struct emp_vmr *vmr;
 		lp = head->local_page;
 		debug_assert(lp);
-		if (lp->vmr_id >= 0) {
-			vmr = lp->emm->vmrs[lp->vmr_id];
-			debug_assert(vmr);
+		vmr = emp_lp_owner(lp);
+		if (vmr)
 			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == head);
-		}
 
 		for_each_gpas(gpa, head) {
 			if (gpa == head)
 				continue;
 			lp = gpa->local_page;
 			debug_assert(lp);
-			if (lp->vmr_id < 0)
+			if (emp_lp_owner(lp) == NULL)
 				continue;
 			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
 		}
@@ -1477,9 +1474,8 @@ static int __debug_page_count_eq(struct emp_mm *emm, struct emp_gpa *gpa,
 		int i;
 		int page_len;
 		struct local_page *lp = gpa->local_page;
-		if (lp->vmr_id >= 0 && lp->vmr_id < EMP_VMRS_MAX
-				&& emm->vmrs[lp->vmr_id] != NULL) {
-			struct emp_vmr *vmr = emm->vmrs[lp->vmr_id];
+		if (emp_lp_owner(lp)) {
+			struct emp_vmr *vmr = emp_lp_owner(lp);
 			page_len = __local_gpa_to_page_len(vmr, gpa);
 		} else {
 			page_len = gpa_subblock_size(gpa);
@@ -1906,10 +1902,8 @@ void debug_unmap_ptes(struct emp_mm *emm, struct emp_gpa *heads, unsigned long s
 	}
 
 #ifdef CONFIG_EMP_DEBUG_SHOW_GPA_STATE
-	if (warned && heads->local_page->vmr_id >= 0
-			&& heads->local_page->vmr_id < EMP_VMRS_MAX
-			&& emm->vmrs[heads->local_page->vmr_id] != NULL) {
-		struct emp_vmr *vmr = emm->vmrs[heads->local_page->vmr_id];
+	if (warned && emp_lp_owner(heads->local_page)) {
+		struct emp_vmr *vmr = emp_lp_owner(heads->local_page);
 		unsigned long idx = heads->local_page->gpa_index;
 		bool head = true;
 		emp_debug_bulk_msg_lock();
@@ -1920,9 +1914,9 @@ void debug_unmap_ptes(struct emp_mm *emm, struct emp_gpa *heads, unsigned long s
 		}
 		emp_debug_bulk_msg_unlock();
 	} else if (warned) {
-		printk("WARN: %s gpa: %016lx idx: %lx is warned but cannot find vmr. vmr_id: %d\n",
-				__func__, (unsigned long) heads, heads->local_page->gpa_index,
-				heads->local_page->vmr_id);
+		printk("WARN: %s gpa: %016lx idx: %lx is warned but has no owner\n",
+				__func__, (unsigned long) heads,
+				heads->local_page->gpa_index);
 	}
 #endif
 }

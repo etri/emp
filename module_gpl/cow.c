@@ -387,8 +387,8 @@ static void debug_show_gpa_state_cow(struct emp_mm *emm, struct emp_vmr *vmr,
 			old_vmr = vmr;
 		else if (!EMP_LP_PMDS_EMPTY(&old->local_page->pmds))
 			old_vmr = old->local_page->pmds.vmr;
-		else if (old->local_page->vmr_id >= 0)
-			old_vmr = emm->vmrs[old->local_page->vmr_id];
+		else if (emp_lp_owner(old->local_page))
+			old_vmr = emp_lp_owner(old->local_page);
 		else
 			old_vmr = vmr;
 
@@ -874,7 +874,6 @@ dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 	struct emp_gpa *src, *dst;
 	struct page *page;
 	bool is_stale = is_gpa_flags_set(src_head, GPA_STALE_BLOCK_MASK);
-	int dst_vmr_id = dst_vmr ? dst_vmr->id : -1;
 	int ret = 0;
 
 	debug_assert(src_head->local_page);
@@ -886,25 +885,26 @@ dup_block_local_page(struct emp_mm *emm, struct emp_vmr *src_vmr,
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			ret = PTR_ERR(page);
 			printk(KERN_ERR "ERROR: %s failed to duplicate memory "
-					"pages. emm: %d vmr: %d idx: 0x%lx "
+					"pages. emm: %d vmr: %016lx idx: 0x%lx "
 					"err: %d\n", __func__, emm->id,
-					dst_vmr_id, idx, ret);
+					(unsigned long) dst_vmr, idx, ret);
 			goto error;
 		}
 
 		/* make local_page of @new */
-		dst->local_page = emm->lops.alloc_local_page(emm, dst_vmr_id,
+		dst->local_page = emm->lops.alloc_local_page(emm, dst_vmr,
 				NULL, page, gpa_subblock_order(src), idx, dst);
 		if (unlikely(dst->local_page == NULL)) {
 			printk(KERN_ERR "ERROR: %s failed to allocate local "
-					"page. emm: %d vmr: %d idx: 0x%lx\n",
-					__func__, emm->id, dst_vmr_id, idx);
+					"page. emm: %d vmr: %016lx idx: 0x%lx\n",
+					__func__, emm->id,
+					(unsigned long) dst_vmr, idx);
 			push_free_page_list(emm, page, cpu);
 			ret = -ENOMEM;
 			goto error;
 		}
 		__debug_page_ref_update_page_len(dst->local_page, gpa_subblock_size(src_head));
-		debug_lru_set_vmr_id_mark(dst->local_page, dst_vmr_id);
+		debug_lru_set_vmr_id_mark(dst->local_page, emp_vmr_dbgid(dst_vmr));
 	}
 
 	return ret;
@@ -975,6 +975,8 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		debug_assert(pmd == get_pmd(vmr->host_mm,
 				vmr_offset_to_hva(vmr, idx)));
 
+		/* the pop itself moves the owner vmr */
+		owned = (emp_lp_owner(old->local_page) == vmr);
 
 		/* remove mapped_pmd from @old */
 		if (emp_lp_pop_pmd(emm, old->local_page, vmr)) {
@@ -991,7 +993,6 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
 		debug_lru_add_vmr_id_mark(new->local_page, vmr->debug_id);
 
-		owned = old->local_page->vmr_id == vmr->id;
 		if (!mapped && !owned) // newly mapped, and not previously owned
 			emp_update_rss_add(vmr, page_len, DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
@@ -1000,12 +1001,13 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 					DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
 
-		if (owned) { // change the owner
-			struct mapped_pmd *pmds = &old->local_page->pmds;
-			old->local_page->vmr_id = pmds->vmr ? pmds->vmr->id
-							    : -1;
-			debug_lru_set_vmr_id_mark(old->local_page,
-						emp_vmr_dbgid(pmds->vmr));
+		if (owned && emp_lp_owner(old->local_page) == vmr) {
+			/* @vmr's slot now points at @new: it must not keep
+			 * owning @old. The pop retained it (no other mapper),
+			 * so clear -- @old becomes an orphan, and the charge
+			 * was carried to @new (the "owned" arm above). */
+			emp_lp_clear_owner(old->local_page);
+			debug_lru_set_vmr_id_mark(old->local_page, -1);
 		}
 
 		/* increase reference count */
@@ -1034,28 +1036,19 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		}
 	}
 
-	/* If new_vmr was the only mapping for old, old->vmr_id was new_vmr->id.
-	 * After pop new_vmr->id and old->vmr_id = old->pmds.vmr_id,
-	 * old->vmr_id should be -1.
-	 * In this case, old should be moved to writeback list, which allows
-	 * orphan gpas. If old has a valid remote page, emp_writeback_block()
-	 * will skip I/O.
-	 *
-	 * If old has other mapping other than new_vmr,
-	 * old->vmr_id = old->pmds.vmr_id gives another vmr id (>= 0)
-	 * In this case, old can reside in LRU chain. Nothing to do.
-	 *
-	 * If old had no mapping and old->vmr_id was not new_vmr->id,
-	 * old can reside in LRU chain. Nothing to do.
-	 */
-	if (old_head->local_page->vmr_id < 0) {
+	/* If @vmr was @old's only mapper and owner, the pop retained it and the
+	 * clear above orphaned @old: move it to the writeback list, which
+	 * allows orphans. If @old has a valid remote page,
+	 * emp_writeback_block() will skip the I/O. If another mapper survived,
+	 * the pop promoted it to owner and @old stays on its LRU chain. */
+	if (emp_lp_owner(old_head->local_page) == NULL) {
 		debug_assert(emp_lp_count_pmd(old_head->local_page) == 0);
 		if (!WB_BLOCK(old_head)) {
 			__remove_from_lru(emm, old_head);
 			ret = __add_to_writeback(emm, old_head);
 		}
 	} else
-		debug_assert(old_head->local_page->vmr_id != vmr->id);
+		debug_assert(emp_lp_owner(old_head->local_page) != vmr);
 
 	return ret >= 0 ? DUP_COW_ADD_ACTIVE : ret;
 }
@@ -1549,9 +1542,7 @@ static int __handle_emp_cow_fault(struct emp_mm *emm, struct emp_vmr *vmr,
 	if (ret == DUP_COW_ADD_ACTIVE) {
 		struct vcpu_var *cpu = emp_this_cpu_ptr(emm->pcpus);
 		unsigned long block_size = gpa_block_size(new_head);
-		debug_assert(new_head->local_page->vmr_id >= 0
-			&& new_head->local_page->vmr_id < EMP_VMRS_MAX
-			&& emm->vmrs[new_head->local_page->vmr_id] != NULL);
+		debug_assert(emp_lp_owner(new_head->local_page) != NULL);
 #ifdef CONFIG_EMP_EXT
 		emp_ops.update_lru_lists(emm, cpu, &new_head, 1, block_size);
 #else

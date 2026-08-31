@@ -286,7 +286,6 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 				struct emp_mm *bvma, struct vcpu_var *cpu,
 			 	struct emp_gpa **gpas, int n_new)
 {
-	struct emp_vmr *vmr;
 	/* proactive list or active list */
 	struct slru *slru;
 	struct emp_list *list;
@@ -317,7 +316,6 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 	for (i = 0; i < n_new; i++) {
 		struct emp_gpa *head;
 		struct emp_gpa *gpa = gpas[i];
-		vmr = bvma->vmrs[gpa->local_page->vmr_id];
 
 		head = emp_get_block_head(gpa);
 		if (!is_unmapped_active(head))
@@ -364,7 +362,7 @@ int add_gpas_to_active_list(enum lru_list_type lru_list_type,
 }
 
 bool COMPILER_DEBUG
-gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
+gpa_acquire(struct emp_gpa *head)
 {
 	struct emp_gpa *g;
 #ifdef CONFIG_EMP_BLOCK
@@ -421,7 +419,7 @@ gpa_acquire(struct emp_vmr *vmr, struct emp_gpa *head)
 						"count_max: %d\n",
 						__func__,
 						(unsigned long) lp,
-						lp->vmr_id,
+						emp_vmr_dbgid(emp_lp_owner(lp)),
 						lp->gpa_index,
 						refcnt,
 						lp->debug_page_ref_sum,
@@ -870,8 +868,7 @@ retry_start:
 			continue;
 		}
 
-		if (!is_unmapped_active(v) &&
-				gpa_acquire(bvma->vmrs[lp->vmr_id], v)) {
+		if (!is_unmapped_active(v) && gpa_acquire(v)) {
 			emp_list_del(&lp->lru_list, list);
 			clear_local_page_on_lru(lp);
 			v->r_state = GPA_TRANS_AL;

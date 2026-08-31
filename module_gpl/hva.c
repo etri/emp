@@ -237,6 +237,8 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 {
 	struct local_page *lp = gpa->local_page;
 	struct page *page = lp->page;
+	bool was_owner;
+	struct emp_vmr *prev_owner;
 	int ret;
 
 	debug_page_ref_will_pte_beg(lp, page_len);
@@ -248,13 +250,19 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 
 	debug_check_notnull_pointer(lp->w);
 
-	// pmd is exclusive to w, so it must be used after pte_insetall
+	was_owner = (emp_lp_owner(lp) == vmr);
+	prev_owner = (lp->num_pmds == 0) ? emp_lp_owner(lp) : NULL;
 	emp_lp_insert_pmd(vmr->emm, lp, vmr, pmd);
 	debug_lru_add_vmr_id_mark(lp, vmr->debug_id);
 
-	if (lp->vmr_id != vmr->id)
+	if (!was_owner)
 		emp_update_rss_add(vmr, page_len,
 				DEBUG_RSS_ADD_INSTALL_HPTES,
+				gpa, DEBUG_UPDATE_RSS_BLOCK);
+	if (prev_owner && prev_owner != vmr)
+		emp_update_rss_sub(prev_owner,
+				__local_gpa_to_page_len(prev_owner, gpa),
+				DEBUG_RSS_SUB_INSTALL_HPTES_PREV,
 				gpa, DEBUG_UPDATE_RSS_BLOCK);
 
 	return ret;
@@ -513,15 +521,8 @@ void sync_hpt_map_in_block(struct emp_mm *emm, struct emp_gpa *head,
 	struct emp_gpa *end = head + gpa_desc_size(head);
 	struct emp_gpa *gpa;
 
-	for (gpa = head + 1; gpa < end; gpa++) {
+	for (gpa = head + 1; gpa < end; gpa++)
 		__sync_hpt_map_in_block(emm, head, gpa, is_write);
-#ifdef CONFIG_EMP_DEBUG_LRU_LIST
-		if (gpa->local_page->vmr_id != head->local_page->vmr_id)
-			debug_lru_set_vmr_id_mark(gpa->local_page,
-						head->local_page->vmr_id);
-#endif
-		gpa->local_page->vmr_id = head->local_page->vmr_id;
-	}
 }
 
 void clear_gpa_prefetched_hpt(struct emp_mm *emm, struct emp_vmr *vmr,

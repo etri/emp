@@ -857,6 +857,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	unsigned long hva, addr, pfn;
 	unsigned int pages_len, page_off;
 	bool mapped, accessed, dirty;
+	bool owned;
 	int i;
 
 	/* @hva is the address of the subblock itself; @page_off is where the
@@ -890,8 +891,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		 * only errs toward that walk; page_mapcount() went in 6.11. */
 		if (!page_mapped(map_page)
 			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
-			gpa->local_page->vmr_id = vmr->id;
-			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->debug_id);
+			/* the pop retains @vmr as the owner */
 			emp_lp_remove_pmd(emm, gpa->local_page, vmr);
 			debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
 			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
@@ -907,14 +907,19 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		/* block is aligned */
 		debug_assert(emp_lp_lookup_pmd(gpa, vmr) == pmd
 				|| emp_lp_lookup_pmd(gpa, vmr) == NULL);
-		if (unlikely(gpa->local_page->vmr_id < 0)) {
-			gpa->local_page->vmr_id = vmr->id;
-			debug_lru_set_vmr_id_mark(gpa->local_page, vmr->debug_id);
-		}
+		owned = (emp_lp_owner(gpa->local_page) == vmr);
 		if (emp_lp_remove_pmd(emm, gpa->local_page, vmr) == false)
 			goto next;
 		debug_lru_del_vmr_id_mark(gpa->local_page, vmr->debug_id);
-		if (gpa->local_page->vmr_id != vmr->id)
+		if (!owned)
+			/* a non-owner mapper releases its own charge */
+			emp_update_rss_sub(vmr, pages_len,
+						DEBUG_RSS_SUB_UNMAP_PTES,
+						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+		else if (emp_lp_owner(gpa->local_page) != vmr)
+			/* the pop promoted a mapped survivor: the owner charge
+			 * moves to it -- the survivor's own mapping charge
+			 * becomes its owner charge, so only @vmr releases */
 			emp_update_rss_sub(vmr, pages_len,
 						DEBUG_RSS_SUB_UNMAP_PTES,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
@@ -1045,7 +1050,7 @@ unmap_gpas(struct emp_mm *emm, struct emp_gpa *head, bool *tlb_flush_force)
 	unsigned long head_hva;
 	unsigned long total_block_size;
 	unsigned int sb_order;
-	struct emp_vmr *vmr = emm->vmrs[head->local_page->vmr_id];
+	struct emp_vmr *vmr = emp_lp_owner(head->local_page);
 	bool hpt_mapped = false;
 #ifdef CONFIG_EMP_VM
 	bool ept_mapped = false;
@@ -1078,7 +1083,7 @@ unmap_gpas(struct emp_mm *emm, struct emp_gpa *head, bool *tlb_flush_force)
 		 *       The following lines are for the future, when multiple
 		 *       VMs share a EMP-managed memory region.
 		 *
-		 * if (!hpt_mapped && head->local_page->vmr_id != vmr->id)
+		 * if (!hpt_mapped && emp_lp_owner(head->local_page) != vmr)
 		 *	emp_update_rss_sub_force(vmr, gpa_block_size(head),
 		 *				DEBUG_RSS_SUB_UNMAP_GPAS,
 		 *				head, DEBUG_UPDATE_RSS_BLOCK);
@@ -1322,6 +1327,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 static inline void
 __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 {
+	bool owned = (emp_lp_owner(gpa->local_page) == vmr);
 	int removed = 0;
 	if (emp_lp_remove_pmd(vmr->emm, gpa->local_page, vmr)) {
 		removed = 1;
@@ -1329,11 +1335,16 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 		debug_page_ref_unmap_end(gpa->local_page);
 		debug_page_ref_mark(vmr->debug_id, gpa->local_page, -1);
 	}
-	if (gpa->local_page->vmr_id == vmr->id) {
-		struct mapped_pmd *pmds = &gpa->local_page->pmds;
-		gpa->local_page->vmr_id = pmds->vmr ? pmds->vmr->id : -1;
+	if (owned) {
+		/* The pop promoted a mapped survivor, or retained @vmr as an
+		 * unmapped owner. This is close: a retained representative is
+		 * cleared here, and only here (v10 10.4). A promoted survivor
+		 * keeps its own mapping charge as the owner charge, so no
+		 * transfer is needed; an owner without a mapping releases. */
+		if (emp_lp_owner(gpa->local_page) == vmr)
+			emp_lp_clear_owner(gpa->local_page);
 		debug_lru_set_vmr_id_mark(gpa->local_page,
-						emp_vmr_dbgid(pmds->vmr));
+				emp_vmr_dbgid(emp_lp_owner(gpa->local_page)));
 		if (!removed)
 			emp_update_rss_sub(vmr,
 					__local_gpa_to_page_len(vmr, gpa),
@@ -1398,8 +1409,8 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 				/* gpa on GPA_WB and GPA_INIT will be cleared later. */
 				continue;
 		case GPA_INACTIVE:
-				if (head->local_page->vmr_id >= 0)
-					/* We know the other owner, keep it on list */
+				if (emp_lp_owner(head->local_page))
+					/* another owner remains: keep it */
 					continue;
 				break;
 		case GPA_ACTIVE:
@@ -1455,13 +1466,15 @@ next_vmr_found:
 		if (next_vmr) {
 			/* We found the owner. But, if it is ACTIVE, move to INACTIVE */
 			for_each_gpas(gpa, head) {
-				gpa->local_page->vmr_id = next_vmr->id;
+				if (emp_lp_owner(gpa->local_page))
+					continue;
+				emp_lp_set_owner(gpa->local_page, next_vmr);
 				debug_lru_set_vmr_id_mark(gpa->local_page, next_vmr->debug_id);
+				emp_update_rss_add_force(next_vmr,
+					__local_gpa_to_page_len(next_vmr, gpa),
+					DEBUG_RSS_ADD_PUT_MAX_BLOCK,
+					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 			}
-			emp_update_rss_add_force(next_vmr,
-				__local_block_to_page_len(next_vmr, head),
-				DEBUG_RSS_ADD_PUT_MAX_BLOCK,
-				head, DEBUG_UPDATE_RSS_BLOCK);
 			if (head->r_state == GPA_ACTIVE) {
 #ifdef CONFIG_EMP_EXT
 				emp_ops.remove_gpa_from_lru(emm, head);
@@ -1797,12 +1810,12 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 		/* The WALK range and the RELEASE range are different things.
 		 *
 		 * The walk must cover this vmr's whole view: the vmr's own
-		 * mapped-pmd entries and lp->vmr_id ownership live on blocks
-		 * in that range and must be stripped before the vmr is freed,
-		 * whatever the coverage says -- a covered block skipped here
-		 * keeps a pointer to a vmr about to be released, and the next
-		 * consumer of that stale id (els, reclaim owner lookups)
-		 * dereferences emm->vmrs[id] after it went NULL.
+		 * mapped-pmd records and representative ownership live on
+		 * blocks in that range and must be stripped before the vmr is
+		 * freed, whatever the coverage says -- a covered block skipped
+		 * here keeps a raw pointer to a vmr about to be released, and
+		 * the next consumer of that stale pointer (els, reclaim owner
+		 * reads) dereferences freed memory.
 		 *
 		 * Release is decided per block, from the surviving views:
 		 * inside the uncovered remainder when one range describes it,
@@ -1997,8 +2010,8 @@ set_gpa_remote(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *g)
 	debug_set_gpa_remote(emm, g);
 
 	/* NOTE: free_gpa() clears g->local_page */
-	if (likely(g->local_page && g->local_page->vmr_id >= 0)) {
-		struct emp_vmr *vmr = emm->vmrs[g->local_page->vmr_id];
+	if (likely(g->local_page) && emp_lp_owner(g->local_page)) {
+		struct emp_vmr *vmr = emp_lp_owner(g->local_page);
 		emp_update_rss_sub(vmr, __local_gpa_to_page_len(vmr, g),
 					DEBUG_RSS_SUB_SET_REMOTE,
 					g, DEBUG_UPDATE_RSS_SUBBLOCK);

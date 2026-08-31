@@ -55,6 +55,7 @@ enum DEBUG_RSS_SUB_ID {
 	DEBUG_RSS_SUB_WRITEBACK_PREV_PRO,
 	DEBUG_RSS_SUB_INACTIVE_PREV_PRO,
 	DEBUG_RSS_SUB_UNMAP_PTES,
+	DEBUG_RSS_SUB_INSTALL_HPTES_PREV,
 	DEBUG_RSS_SUB_UNMAP_GPAS,
 	DEBUG_RSS_SUB_UNMAP_MAX_BLOCK_PARTIAL,
 	DEBUG_RSS_SUB_UNMAP_MAX_BLOCK,
@@ -420,7 +421,8 @@ struct emp_stm_ops {
 // ops to allocate/deallocate descriptor for local page
 struct emp_lps_ops {
 	/* function pointers for local page management */
-	struct local_page *(*alloc_local_page)(struct emp_mm *, int,
+	struct local_page *(*alloc_local_page)(struct emp_mm *,
+			struct emp_vmr *,
 			struct memreg *, struct page *, int, off_t, 
 			struct emp_gpa *);
 	void (*free_local_page)(struct emp_mm *, struct local_page *);

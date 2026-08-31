@@ -96,7 +96,6 @@ struct local_page {
 	int               flags;
 	size_t            gpa_index;  // a backlink to gpa
 	u64               dma_addr;
-	int               vmr_id;
 	int               num_pmds;
 	int               page_map_count; /* page->_refcount held because of mapping */
 	struct mapped_pmd pmds;
@@ -281,7 +280,7 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 		(lp)->debug_page_ref_history[____next].curr = ____ref; \
 		(lp)->debug_page_ref_history[____next].sum = (lp)->debug_page_ref_sum; \
 		(lp)->debug_page_ref_history[____next].map = ____map; \
-		(lp)->debug_page_ref_history[____next].vmr_id = (vmrid) != -100 ? (vmrid) : (lp)->vmr_id; \
+		(lp)->debug_page_ref_history[____next].vmr_id = (vmrid) != -100 ? (vmrid) : emp_vmr_dbgid((lp)->pmds.vmr); \
 		(lp)->debug_page_ref_history[____next].num_pmds = (lp)->num_pmds; \
 		(lp)->debug_page_ref_history[____next].timestamp = get_ts_in_ns(); \
 		(lp)->debug_page_ref_history[____next].in_mmu_noti = (lp)->debug_page_ref_in_mmu_noti; \
@@ -304,7 +303,7 @@ static inline void debug_page_ref_print_all(struct local_page *lp)
 } while (0)
 #define debug_page_ref_check(gpa) do { \
 	struct local_page *____lp = (gpa)->local_page; \
-	__debug_page_ref_mark(____lp->vmr_id, ____lp, 0, 0); \
+	__debug_page_ref_mark(emp_vmr_dbgid(emp_lp_owner(____lp)), ____lp, 0, 0); \
 } while (0)
 #define debug_page_ref_mark(vmrid, lp, add_data) __debug_page_ref_mark(vmrid, lp, add_data, 0);
 #define debug_page_ref_mark_known_diff(vmrid, lp, add_data, diff) __debug_page_ref_mark(vmrid, lp, add_data, diff);
@@ -488,6 +487,52 @@ static inline void emp_lp_free_pmd(struct emp_mm *emm, struct mapped_pmd *p) {
 
 #define EMP_LP_PMDS_EMPTY(p) ((p)->next == NULL)
 #define EMP_LP_PMDS_SINGLE(p) ((p)->next == (p))
+
+/* The embedded entry is the representative/RSS owner. Legal states:
+ *   vmr == NULL, pmd == NULL, num_pmds == 0   no owner, no mapping
+ *   vmr != NULL, pmd == NULL, num_pmds == 0   retained owner, no mapping
+ *   vmr != NULL, pmd != NULL, num_pmds  > 0   mapped representative
+ * An unmapped representative never coexists with a mapped survivor:
+ * emp_lp_pop_pmd() promotes a survivor into the embedded entry, and only
+ * close and CoW clear a retained owner. */
+#define emp_lp_owner(lp) ((lp)->pmds.vmr)
+
+/* set a retained owner on an unmapped local page */
+static inline void emp_lp_set_owner(struct local_page *lp,
+				    struct emp_vmr *vmr)
+{
+	debug_assert(lp->num_pmds == 0);
+	lp->pmds.vmr = vmr;
+}
+
+/* only close and CoW may clear a retained owner, and only when unmapped */
+static inline void emp_lp_clear_owner(struct local_page *lp)
+{
+	debug_assert(lp->num_pmds == 0);
+	lp->pmds.vmr = NULL;
+}
+
+/* make @vmr, which must already be a mapper, the representative */
+static inline void emp_lp_promote_owner(struct local_page *lp,
+					struct emp_vmr *vmr)
+{
+	struct mapped_pmd *p = &lp->pmds;
+
+	if (p->vmr == vmr)
+		return;
+	debug_assert(!EMP_LP_PMDS_EMPTY(p));
+	for (p = p->next; p != &lp->pmds; p = p->next) {
+		if (p->vmr == vmr) {
+			pmd_t *pmd = p->pmd;
+			p->vmr = lp->pmds.vmr;
+			p->pmd = lp->pmds.pmd;
+			lp->pmds.vmr = vmr;
+			lp->pmds.pmd = pmd;
+			return;
+		}
+	}
+	debug_BUG(); /* @vmr does not map @lp */
+}
 
 static inline pmd_t *emp_lp_lookup_pmd(struct emp_gpa *gpa,
 					struct emp_vmr *vmr)

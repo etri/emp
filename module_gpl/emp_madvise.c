@@ -749,7 +749,7 @@ static int __emp_blk_move_to_inactive(struct emp_mm *emm, struct emp_vmr *vmr,
 	clear_gpa_flags_if_set(head, GPA_PINNED_MASK);
 
 	if (head->r_state == GPA_ACTIVE && !is_unmapped_active(head)
-			&& gpa_acquire(vmr, head)) {
+			&& gpa_acquire(head)) {
 		debug_blks_ctx_inc(ctx, dontneed_succeed);
 		debug_assert(!is_gpa_flags_set(head, GPA_PREFETCHED_MASK));
 

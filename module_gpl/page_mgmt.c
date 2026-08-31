@@ -75,19 +75,17 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	sub_inactive_list_page_len(emm, head);
 
 	for_each_gpas_reverse(g, head) {
-		int prev_vmr_id = g->local_page->vmr_id;
+		struct emp_vmr *prev_owner = emp_lp_owner(g->local_page);
 		free_remote_page(emm, g, true);
-		g->local_page->vmr_id = vmr->id;
+		emp_lp_set_owner(g->local_page, vmr);
 		debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
-		if (prev_vmr_id == vmr->id)
+		if (prev_owner == vmr)
 			continue;
-		if (prev_vmr_id >= 0) {
-			struct emp_vmr *prev_vmr = emm->vmrs[prev_vmr_id];
-			emp_update_rss_sub_force(prev_vmr,
-				__local_gpa_to_page_len(prev_vmr, g),
+		if (prev_owner)
+			emp_update_rss_sub_force(prev_owner,
+				__local_gpa_to_page_len(prev_owner, g),
 				DEBUG_RSS_SUB_WRITEBACK_PREV,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
-		}
 		emp_update_rss_add_force(vmr,
 				__local_gpa_to_page_len(vmr, g),
 				DEBUG_RSS_ADD_WRITEBACK_CURR,
@@ -157,18 +155,16 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	emp_list_unlock(list);
 
 	for_each_gpas(g, head) {
-		int prev_vmr_id = g->local_page->vmr_id;
-		if (prev_vmr_id == vmr->id)
+		struct emp_vmr *prev_owner = emp_lp_owner(g->local_page);
+		if (prev_owner == vmr)
 			continue;
-		g->local_page->vmr_id = vmr->id;
+		emp_lp_set_owner(g->local_page, vmr);
 		debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
-		if (prev_vmr_id >= 0) {
-			struct emp_vmr *prev_vmr = emm->vmrs[prev_vmr_id];
-			emp_update_rss_sub_force(prev_vmr,
-				__local_gpa_to_page_len(prev_vmr, g),
+		if (prev_owner)
+			emp_update_rss_sub_force(prev_owner,
+				__local_gpa_to_page_len(prev_owner, g),
 				DEBUG_RSS_SUB_INACTIVE_PREV,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
-		}
 		emp_update_rss_add_force(vmr,
 				__local_gpa_to_page_len(vmr, g),
 				DEBUG_RSS_ADD_INACTIVE_CURR,
@@ -1765,7 +1761,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	debug_BUG_ON(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK));
 #endif
 	if (!is_gpa_flags_set(head, GPA_HPT_MASK)
-			&& head->local_page->vmr_id != vmr->id) {
+			&& emp_lp_owner(head->local_page) != vmr) {
 		emp_update_rss_add_force(vmr, gpa_block_size(head),
 					DEBUG_RSS_ADD_FAULT_GPA,
 					head, DEBUG_UPDATE_RSS_BLOCK);

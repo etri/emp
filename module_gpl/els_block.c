@@ -278,7 +278,10 @@ bool els_stretch_rep(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 	debug_els_stretch_rep(chead, cpu->id, flag);
 
-	vmr = bvma->vmrs[chead->local_page->vmr_id];
+	vmr = emp_lp_owner(chead->local_page);
+	if (vmr == NULL)
+		/* an ownerless resident block is legal; do not stretch it */
+		return false;
 	if ((next_linked = els_get_super_head(bvma, chead)) == NULL)
 		return false;
 

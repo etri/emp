@@ -81,8 +81,11 @@ found:
 		// release np
 		emp_lp_free_pmd(emm, np);
 	} else {
-		// hit on the first member of single member list
-		INIT_MAPPED_PMD(&lp->pmds);
+		/* the last mapping goes away: keep the vmr as the retained
+		 * representative/RSS owner and clear only the mapping. Only
+		 * close and CoW clear a retained owner. */
+		lp->pmds.pmd = NULL;
+		lp->pmds.next = NULL;
 	}
 
 	lp->num_pmds--;
@@ -90,7 +93,8 @@ found:
 	return ret;
 }
 
-static inline void emp_init_local_page(struct local_page *lp, int vmr_id,
+static inline void emp_init_local_page(struct local_page *lp,
+				       struct emp_vmr *vmr,
 				       size_t gpa_index, struct page *page)
 {
 #if defined(CONFIG_EMP_DEBUG_LRU_LIST) || defined(CONFIG_EMP_DEBUG_PAGE_REF)
@@ -144,11 +148,10 @@ static inline void emp_init_local_page(struct local_page *lp, int vmr_id,
 	lp->flags = 0;
 
 	lp->gpa_index = gpa_index;
-	lp->vmr_id = vmr_id;
-	/* debug_lru_set_vmr_id_mark() will be called at the caller of the caller */
 
 	lp->num_pmds = 0;
 	INIT_MAPPED_PMD(&lp->pmds);
+	lp->pmds.vmr = vmr;
 
 	set_local_page_cpu_only(lp, EMP_UNKNOWN_CPU_ID);
 	lp->demand_offset = 0;
@@ -168,7 +171,7 @@ static inline void emp_init_local_page(struct local_page *lp, int vmr_id,
  * @return allocated local page info
  */
 static struct local_page *
-alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
+alloc_local_page(struct emp_mm *bvma, struct emp_vmr *vmr, struct memreg *mr,
 			struct page *page, int page_order, off_t gpa_offset,
 			struct emp_gpa *gpa)
 {
@@ -178,12 +181,12 @@ alloc_local_page(struct emp_mm *bvma, int vmr_id, struct memreg *mr,
 	if (!local_page)
 		return NULL;
 
-	emp_init_local_page(local_page, vmr_id, gpa_offset, page);
+	emp_init_local_page(local_page, vmr, gpa_offset, page);
 	/* The partial map will be considered after alloc_local_page(). */
 	__debug_page_ref_update_page_len(local_page, bvma_subblock_size(bvma));
 	/* The following line represents that the initial reference count of
 	 * the allocated pages. */
-	debug_page_ref_mark(vmr_id, local_page, 1);
+	debug_page_ref_mark(emp_vmr_dbgid(vmr), local_page, 1);
 
 	emp_set_pg_mlocked(page);
 	page->private = (unsigned long) gpa;

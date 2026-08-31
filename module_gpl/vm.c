@@ -786,7 +786,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		flags = get_gpa_flags(head);
 		for (sb_index = 0, gpa = head; sb_index < num_subblock; sb_index++, gpa++) {
 			debug_assert(gpa->local_page);
-			debug_assert(gpa->local_page->vmr_id >= 0); /* ACTIVE or INACTIVE */
+			debug_assert(emp_lp_owner(gpa->local_page)); /* ACTIVE or INACTIVE */
 			if (gpa == boundary && is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)
 						&& boundary_addr != boundary_gpa_addr) {
 				/* a new partial map gpa */
@@ -809,10 +809,8 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 				}
 			} else if (new_is_front ? gpa < boundary
 						: gpa >= boundary) {
-				if (gpa->local_page->vmr_id == prev_vmr->id) {
-					gpa->local_page->vmr_id = new_vmr->id;
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
-				}
+				bool owned = (emp_lp_owner(gpa->local_page)
+							== prev_vmr);
 				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr);
 				if (pmd) {
 					debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
@@ -820,8 +818,23 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 					debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 					debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page);
 				}
+				if (owned && emp_lp_owner(gpa->local_page)
+							!= new_vmr) {
+					/* the representative follows the side
+					 * that now views this subblock; both
+					 * halves share one mm */
+					if (emp_lp_count_pmd(gpa->local_page))
+						emp_lp_promote_owner(
+							gpa->local_page,
+							new_vmr);
+					else
+						emp_lp_set_owner(
+							gpa->local_page,
+							new_vmr);
+					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+				}
 #ifdef CONFIG_EMP_DEBUG_RSS
-				if (pmd || gpa->local_page->vmr_id == new_vmr->id) {
+				if (pmd || emp_lp_owner(gpa->local_page) == new_vmr) {
 					/* RSS has been moved.
 					 * However, host_mm of prev_vmr and new_vmr are identical.
 					 * We don't need to take care of RSS actually. */
@@ -905,6 +918,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 	unsigned long head_idx, next_head_idx;
 	unsigned long idx, idx_end;
 	struct emp_gpa *gpa, *head;
+	bool owned;
 	unsigned long index_start, index_end;
 	unsigned long prev_index_start, prev_index_end;
 	unsigned long vpn, vpn_base, vpn_start, vpn_end;
@@ -1033,16 +1047,20 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 				debug_check_page_map_status(new_vmr, head,
 								head_idx, pmd, true);
                                 
+				owned = (emp_lp_owner(gpa->local_page)
+							== prev_vmr);
 				pmd = emp_lp_pop_pmd(emm, gpa->local_page, prev_vmr);
 				debug_lru_del_vmr_id_mark(gpa->local_page, prev_vmr->debug_id);
-				if (gpa->local_page->vmr_id == prev_vmr->id) {
-					gpa->local_page->vmr_id = new_vmr->id;
-					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
-				}
                                 
 				emp_lp_insert_pmd(emm, gpa->local_page, new_vmr, pmd);
 				debug_lru_add_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 				debug_page_ref_mark_map(new_vmr->debug_id, gpa->local_page); /* mark the kernel's increment on page count */
+				if (owned && emp_lp_owner(gpa->local_page)
+							!= new_vmr) {
+					emp_lp_promote_owner(gpa->local_page,
+								new_vmr);
+					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
+				}
 #ifdef CONFIG_EMP_DEBUG_RSS
 				emp_update_rss_sub_kernel(prev_vmr,
 						__gpa_to_page_len(new_vmr, gpa, idx),
@@ -1054,8 +1072,8 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 #endif
 			} else { // INACTIVE, WB
-				if (gpa->local_page->vmr_id == prev_vmr->id) {
-					gpa->local_page->vmr_id = new_vmr->id;
+				if (emp_lp_owner(gpa->local_page) == prev_vmr) {
+					emp_lp_set_owner(gpa->local_page, new_vmr);
 					debug_lru_set_vmr_id_mark(gpa->local_page, new_vmr->debug_id);
 #ifdef CONFIG_EMP_DEBUG_RSS
 					emp_update_rss_sub_kernel(prev_vmr,
