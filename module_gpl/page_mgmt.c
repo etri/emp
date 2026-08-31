@@ -45,7 +45,6 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	struct emp_mm *emm = vmr->emm;
 	struct work_request *head_wr = head->local_page ? head->local_page->w
 							: NULL;
-	int prev_vmr_id = head->local_page->vmr_id;
 
 	/* TODO: do not wait the completion of writeback.
 	 * In the paper [1], we discuss how to skip waiting the completion of
@@ -76,23 +75,23 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	sub_inactive_list_page_len(emm, head);
 
 	for_each_gpas_reverse(g, head) {
+		int prev_vmr_id = g->local_page->vmr_id;
 		free_remote_page(emm, g, true);
 		g->local_page->vmr_id = vmr->id;
 		debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
-	}
-
-	if (prev_vmr_id != vmr->id) {
+		if (prev_vmr_id == vmr->id)
+			continue;
 		if (prev_vmr_id >= 0) {
 			struct emp_vmr *prev_vmr = emm->vmrs[prev_vmr_id];
 			emp_update_rss_sub_force(prev_vmr,
-				__local_block_to_page_len(prev_vmr, head),
+				__local_gpa_to_page_len(prev_vmr, g),
 				DEBUG_RSS_SUB_WRITEBACK_PREV,
-				head, DEBUG_UPDATE_RSS_BLOCK);
+				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 		}
 		emp_update_rss_add_force(vmr,
-				__local_block_to_page_len(vmr, head),
+				__local_gpa_to_page_len(vmr, g),
 				DEBUG_RSS_ADD_WRITEBACK_CURR,
-				head, DEBUG_UPDATE_RSS_BLOCK);
+				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
 }
 
@@ -145,7 +144,7 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	struct emp_list *list;
 	struct emp_mm *emm = vmr->emm;
 	struct slru *slru = &emm->ftm.inactive_list;
-	int prev_vmr_id = head->local_page->vmr_id;
+	struct emp_gpa *g;
 
 	debug_assert(is_local_page_on_mru(head->local_page));
 
@@ -157,13 +156,23 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	clear_local_page_on_mru(head->local_page);
 	emp_list_unlock(list);
 
-	if (prev_vmr_id != vmr->id) {
-		struct emp_gpa *g;
-
-		for_each_gpas(g, head) {
-			g->local_page->vmr_id = vmr->id;
-			debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
+	for_each_gpas(g, head) {
+		int prev_vmr_id = g->local_page->vmr_id;
+		if (prev_vmr_id == vmr->id)
+			continue;
+		g->local_page->vmr_id = vmr->id;
+		debug_lru_set_vmr_id_mark(g->local_page, vmr->debug_id);
+		if (prev_vmr_id >= 0) {
+			struct emp_vmr *prev_vmr = emm->vmrs[prev_vmr_id];
+			emp_update_rss_sub_force(prev_vmr,
+				__local_gpa_to_page_len(prev_vmr, g),
+				DEBUG_RSS_SUB_INACTIVE_PREV,
+				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 		}
+		emp_update_rss_add_force(vmr,
+				__local_gpa_to_page_len(vmr, g),
+				DEBUG_RSS_ADD_INACTIVE_CURR,
+				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
 
 	check_eager_wbr(emm, cpu, head);
@@ -174,18 +183,6 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 
 	sub_inactive_list_page_len(emm, head);
 
-	if (prev_vmr_id != vmr->id) {
-		long page_len = __local_block_to_page_len(vmr, head);
-		if (prev_vmr_id >= 0) {
-			struct emp_vmr *prev_vmr = emm->vmrs[prev_vmr_id];
-			emp_update_rss_sub_force(prev_vmr, page_len,
-				DEBUG_RSS_SUB_INACTIVE_PREV,
-				head, DEBUG_UPDATE_RSS_BLOCK);
-		}
-		emp_update_rss_add_force(vmr, page_len,
-				DEBUG_RSS_ADD_INACTIVE_CURR,
-				head, DEBUG_UPDATE_RSS_BLOCK);
-	}
 }
 
 /**

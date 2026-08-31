@@ -1401,7 +1401,6 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 				continue;
 			lp = gpa->local_page;
 			debug_assert(lp);
-			debug_assert(lp->vmr_id == head->local_page->vmr_id);
 			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
 			__check_pmd_list(head, gpa);
 		}
@@ -1433,7 +1432,6 @@ void debug_emp_unlock_block(struct emp_gpa *head) {
 				continue;
 			lp = gpa->local_page;
 			debug_assert(lp);
-			debug_assert(lp->vmr_id == head->local_page->vmr_id);
 			if (lp->vmr_id < 0)
 				continue;
 			debug_assert(vmr->descs->gpa_dir[lp->gpa_index] == gpa);
