@@ -1368,7 +1368,6 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 static inline int
 __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		struct emp_vmr *vmr, int vm_refcnt, bool may_dirty,
-		struct emp_vmr *next_vmr_shared,
 		struct emp_gpa *max_head, unsigned long size,
 		struct emp_gpa **gpa_dir, unsigned long max_head_idx)
 {
@@ -1376,9 +1375,6 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 				- ((vm_refcnt == 0) ? 1 : 0);
 	unsigned long i;
 	struct emp_gpa *head, *gpa;
-#ifdef CONFIG_EMP_USER
-	struct emp_vmr *next_vmr;
-#endif
 
 	for (i = 0, head = max_head; i < size;
 			i += num_subblock_in_block(head),
@@ -1423,70 +1419,6 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 				BUG();
 #endif
 		}
-
-		/* Find the other owner. It is cheap than writeback.
-		 * For MAP_SHARED, just pick any other vmr. All share gpa_dir.
-		 * Note that desc is locked, and gpa_dir is stable.
-		 * For MAP_PRIVATE, check parent and children. Note that gpas
-		 * are locked. gpa_dir element is stable until unlock the gpa.
-		 */
-
-#ifdef CONFIG_EMP_USER
-		if (next_vmr_shared) {
-			next_vmr = next_vmr_shared;
-			goto next_vmr_found;
-		}
-
-		next_vmr = NULL;
-		if (refcnt > 0) {
-			struct emp_vmr *pos;
-			gpa_idx = max_head_idx + i;
-
-			spin_lock(&emm->dup_list_lock);
-			pos = vmr->dup_parent;
-			while (pos) {
-				if (pos->descs->gpa_dir[gpa_idx] == head) {
-					next_vmr = pos;
-					spin_unlock(&emm->dup_list_lock);
-					goto next_vmr_found;
-				}
-				pos = pos->dup_parent;
-			}
-
-			list_for_each_entry(pos, &vmr->dup_children, dup_sibling) {
-				if (pos->descs->gpa_dir[gpa_idx] == head) {
-					next_vmr = pos;
-					break;
-				}
-			}
-			spin_unlock(&emm->dup_list_lock);
-		}
-
-next_vmr_found:
-		if (next_vmr) {
-			/* We found the owner. But, if it is ACTIVE, move to INACTIVE */
-			for_each_gpas(gpa, head) {
-				if (emp_lp_owner(gpa->local_page))
-					continue;
-				emp_lp_set_owner(gpa->local_page, next_vmr);
-				debug_lru_set_vmr_id_mark(gpa->local_page, next_vmr->debug_id);
-				emp_update_rss_add_force(next_vmr,
-					__local_gpa_to_page_len(next_vmr, gpa),
-					DEBUG_RSS_ADD_PUT_MAX_BLOCK,
-					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
-			}
-			if (head->r_state == GPA_ACTIVE) {
-#ifdef CONFIG_EMP_EXT
-				emp_ops.remove_gpa_from_lru(emm, head);
-				emp_ops.add_gpas_to_inactive(emm, cpu, &head, 1);
-#else
-				remove_gpa_from_lru(emm, head);
-				add_gpas_to_inactive(emm, cpu, &head, 1);
-#endif
-			}
-			continue;
-		}
-#endif /* CONFIG_EMP_USER */
 
 		debug_lru_progress_mark(head->local_page, head->r_state);
 		debug_lru_progress_mark(head->local_page, __get_gpa_flags(head));
@@ -1612,7 +1544,7 @@ __unlock_max_block(struct emp_gpa *max_head, unsigned long num)
 static unsigned long
 free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 		struct emp_gpa **gpa_dir, struct gpadesc_region *region,
-		int vm_refcnt, bool do_unmap, struct emp_vmr *next_vmr_shared,
+		int vm_refcnt, bool do_unmap,
 		unsigned long idx_start, unsigned long idx_end,
 		unsigned long unc_start, unsigned long unc_end,
 		bool perblock_check)
@@ -1719,7 +1651,7 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 		}
 #endif
 		if (__put_max_block(emm, cpu, vmr, put_refcnt, may_dirty,
-					next_vmr_shared, max_head, step,
+					max_head, step,
 					gpa_dir, i) > 0) {
 			__unlock_max_block(max_head, step);
 			continue;
@@ -1759,7 +1691,6 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	struct vcpu_var *cpu;
 	struct emp_vmdesc *desc = vmr->descs;
 	int vm_refcnt;
-	struct emp_vmr *next_vmr_shared = NULL;
 	unsigned long idx_start = 0, idx_end = desc->gpa_len;
 	unsigned long unc_start = 0, unc_end = 0; /* empty: release nothing */
 	bool perblock_check = false;
@@ -1801,11 +1732,6 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	if (vm_refcnt > 0) { // vm_refcnt > 0
 		bool fine;
 		unsigned long addr_start, addr_end;
-		spin_lock(&emm->dup_list_lock);
-		if (!list_empty(&vmr->dup_shared))
-			next_vmr_shared = list_next_entry(vmr, dup_shared);
-		spin_unlock(&emm->dup_list_lock);
-		debug_assert(next_vmr_shared != vmr);
 
 		/* The WALK range and the RELEASE range are different things.
 		 *
@@ -1859,7 +1785,7 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 	for (r = 0; r < desc->num_region; r++)
 		num_allocated += free_gpa_dir_region(vmr, cpu, desc->gpa_dir,
 						&desc->regions[r], vm_refcnt,
-						do_unmap, next_vmr_shared,
+						do_unmap,
 						idx_start, idx_end,
 						unc_start, unc_end,
 						perblock_check);
@@ -1868,9 +1794,6 @@ static int close_and_free_gpas(struct emp_vmr *vmr, bool do_unmap)
 		kernel_tlb_finish_mmu(&vmr->close_tlb,
 					vmr->vm_start, vmr->vm_end);
 
-#ifdef CONFIG_EMP_USER
-	dup_list_del(vmr);
-#endif
 
 #ifdef CONFIG_EMP_VM
 	if (emm->ekvm.kvm)

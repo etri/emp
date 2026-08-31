@@ -564,12 +564,6 @@ static void emp_vma_close(struct vm_area_struct *vma)
 		vmr->vmr_closing = true;
 		smp_mb();
 		debug_show_gpa_state(vmr, __func__);
-#ifdef CONFIG_EMP_USER
-#ifdef CONFIG_EMP_DEBUG
-		if (vmr->dup_parent)
-			debug_show_gpa_state(vmr->dup_parent, "emp_vma_close(parent)");
-#endif
-#endif /* CONFIG_EMP_USER */
 	}
 
 #ifdef CONFIG_EMP_USER
@@ -1154,10 +1148,6 @@ static struct emp_vmr *create_vmr(struct emp_mm *emm, struct vm_area_struct *vma
 #endif
 
 #ifdef CONFIG_EMP_USER
-	INIT_LIST_HEAD(&new_vmr->dup_shared);
-	// new_vmr->dup_parent = NULL due to kzalloc()
-	INIT_LIST_HEAD(&new_vmr->dup_children);
-	INIT_LIST_HEAD(&new_vmr->dup_sibling);
 	/* kzalloc() already gives EMP_FORK_COW; be explicit since the default
 	 * decides whether a fork child inherits the parent's backing. */
 	new_vmr->fork_policy = EMP_FORK_COW;
@@ -1264,7 +1254,6 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 					__func__, new_vmr->vm_start,
 					new_vmr->vm_end,
 					new_vmr->descs->vm_base);
-		dup_list_add(new_vmr, prev_vmr, vm_shared);
 		new_vmdesc = false;
 		dup_dir = false;
 	} else if (vm_wipeonfork) {
@@ -1293,7 +1282,6 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 			new_vmdesc = false;
 		} else
 			new_vmdesc = true;
-		dup_list_add(new_vmr, prev_vmr, vm_shared);
 		dup_dir = true;
 	}
 
@@ -1313,7 +1301,6 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 			atomic_dec(&new_vmr->descs->refcount);
 		}
 		new_vma->vm_private_data = NULL;
-		dup_list_del(new_vmr);
 		emp_vmr_release(new_vmr);
 		new_vmr->host_vma = NULL;
 		new_vmr->host_mm = NULL;

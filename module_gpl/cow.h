@@ -36,8 +36,6 @@ int dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 			const bool new_vmdesc, const bool dup_dir);
 long emp_get_mmu_notifier(struct emp_vmr *vmr);
 void emp_put_mmu_notifier(struct emp_vmr *vmr);
-void dup_list_add(struct emp_vmr *vmr, struct emp_vmr *parent, bool shared);
-void dup_list_del(struct emp_vmr *vmr);
 void cow_init(struct emp_mm *emm);
 void cow_exit(struct emp_mm *emm);
 #endif /* __COW_H__ */

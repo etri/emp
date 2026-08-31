@@ -304,11 +304,6 @@ struct emp_vmr {
 	 * halves of a vma split. See enum emp_fork_policy. */
 	enum emp_fork_policy    fork_policy;
 
-	/* The following variables are protected by vmr->emm->dup_list_lock */
-	struct list_head        dup_shared;   /* MAP_SHARED */
-	struct emp_vmr		*dup_parent;  /* MAP_PRIVATE, parent */
-	struct list_head	dup_children; /* MAP_PRIVATE, children */
-	struct list_head	dup_sibling;  /* MAP_PRIVATE, sibling */
 
 	/* The following variables are protected by vmr->emm->split_link_lock */
 	struct emp_vmr      *split_new_vmr;
@@ -637,7 +632,6 @@ struct emp_mm {
 	struct emp_cow_ops  cops;
 
 	/* protect dup_* variables of struct emp_vmr */
-	spinlock_t         dup_list_lock;
 
 	/* protect split_* variables of struct emp_vmr */
 	spinlock_t         split_link_lock;

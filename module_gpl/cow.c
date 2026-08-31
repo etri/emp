@@ -2051,42 +2051,6 @@ void emp_put_mmu_notifier(struct emp_vmr *vmr)
 	 * that is actually writable. */
 }
 
-void dup_list_add(struct emp_vmr *vmr, struct emp_vmr *parent, bool shared)
-{
-	spin_lock(&vmr->emm->dup_list_lock);
-
-	if (shared) {
-		list_add(&vmr->dup_shared, &parent->dup_shared);
-	} else { // private
-		vmr->dup_parent = parent;
-		if (parent)
-			list_add(&vmr->dup_sibling, &parent->dup_children);
-	}
-
-	spin_unlock(&vmr->emm->dup_list_lock);
-}
-
-void dup_list_del(struct emp_vmr *vmr)
-{
-	struct emp_vmr *child;
-	struct emp_vmr *parent = vmr->dup_parent;
-
-	spin_lock(&vmr->emm->dup_list_lock);
-
-	if (!list_empty(&vmr->dup_shared))
-		list_del(&vmr->dup_shared);
-
-	list_for_each_entry(child, &vmr->dup_children, dup_sibling)
-		child->dup_parent = parent;
-
-	if (parent && !list_empty(&vmr->dup_children))
-		list_splice(&vmr->dup_children, &parent->dup_children);
-
-	if (parent)
-		list_del(&vmr->dup_sibling);
-
-	spin_unlock(&vmr->emm->dup_list_lock);
-}
 
 static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
@@ -2222,7 +2186,6 @@ int dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 
 void cow_init(struct emp_mm *emm) {
 	emm->cops.handle_emp_cow_fault_hva = handle_emp_cow_fault_hva;
-	spin_lock_init(&emm->dup_list_lock);
 	emm->mrs.cow_remote_pages_cache = emp_kmem_cache_create("cow_remote_pages",
 							sizeof(struct cow_remote_page),
 							4, 0, NULL);
