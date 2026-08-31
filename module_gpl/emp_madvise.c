@@ -344,7 +344,7 @@ long emp_madv_pin(struct emp_mm *emm, unsigned long addr, long size)
 	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+		if ((vmr = emp_vmr_find_hva(emm, mm, addr)) == NULL) {
 			/* @new_pin blocks are already marked as pinned.
 			 * Account for them before bailing out. */
 			ret = -EINVAL;
@@ -471,7 +471,7 @@ long emp_madv_unpin(struct emp_mm *emm, unsigned long addr, long size)
 	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+		if ((vmr = emp_vmr_find_hva(emm, mm, addr)) == NULL) {
 			/* The blocks staged in @to_proactive were removed from
 			 * pin_list and are still locked. Flush them before
 			 * bailing out, or they are leaked. */
@@ -574,7 +574,7 @@ long emp_blk_prefetch(struct emp_mm *emm, unsigned long addr, unsigned long __si
 	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+		if ((vmr = emp_vmr_find_hva(emm, mm, addr)) == NULL) {
 			ret = -EINVAL;
 			goto out;
 		}
@@ -635,7 +635,7 @@ out:
 	addr = addr_start;
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+		if ((vmr = emp_vmr_find_hva(emm, mm, addr)) == NULL) {
 			ret = -EINVAL;
 			goto out2;
 		}
@@ -822,7 +822,7 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 	mmap_read_lock(mm);
 	while (addr < addr_end) {
 		/* returns error for invalid HVAs */
-		if ((vmr = emp_vmr_lookup_hva(emm, addr)) == NULL) {
+		if ((vmr = emp_vmr_find_hva(emm, mm, addr)) == NULL) {
 			ret = -EINVAL;
 			goto out;
 		}
@@ -903,7 +903,7 @@ long emp_madv_set_fork_policy(struct emp_mm *emm, unsigned long addr, long size,
 		return -EINVAL;
 
 	mmap_read_lock(mm);
-	vmr = emp_vmr_lookup_hva(emm, addr);
+	vmr = emp_vmr_find_hva(emm, mm, addr);
 
 	if (!vmr)
 		goto out;

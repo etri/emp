@@ -193,7 +193,7 @@ static void handle_qiov_write(struct emp_mm *emm, struct iovec *iov, int iov_len
 			continue;
 
 		io_base = (u64)iov[i].iov_base;
-		vmr = emp_vmr_lookup_hva(emm, io_base);
+		vmr = emp_vmr_find_hva(emm, current->mm, io_base);
 		if (vmr == NULL)
 			continue;
 
@@ -259,7 +259,7 @@ static void handle_qiov_read(struct emp_mm *emm, struct iovec *iov, int iov_len)
 			continue;
 
 		io_base = (u64)iov[i].iov_base;
-		vmr = emp_vmr_lookup_hva(emm, io_base);
+		vmr = emp_vmr_find_hva(emm, current->mm, io_base);
 		if (vmr == NULL)
 			continue;
 

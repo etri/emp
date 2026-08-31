@@ -557,7 +557,8 @@ int emp_mark_free_pages(struct kvm *kvm, gfn_t gfn, long num_pages)
 		}
 
 		hva = __gfn_to_hva_memslot(s, gfn);
-		if ((vmr = emp_vmr_lookup_hva(emm, hva)) == NULL) {
+		if ((vmr = emp_vmr_find_hva(emm, emm->ekvm.kvm->mm,
+						hva)) == NULL) {
 			printk(KERN_ERR "[%s] Failed to get hva. "
 					"gfn: %llx num_pages: %ld "
 					"reclaimed: %ld memslot: %p\n",
@@ -1511,7 +1512,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 #endif
 
 	/* returns error for invalid HVAs */
-	if ((vmr = emp_vmr_lookup_hva(bvma, hva)) == NULL)
+	if ((vmr = emp_vmr_find_hva(bvma, bvma->ekvm.kvm->mm, hva)) == NULL)
 		return -EINVAL;
 
 	/* For low memory region, let KVM handles */
@@ -1816,7 +1817,7 @@ emp_lock_range_pmd(struct kvm *kvm, unsigned long hva,
 	unsigned long block_large;
 	int gpa_index_order;
 
-	if ((vmr = emp_vmr_lookup_hva(emm, hva)) == NULL)
+	if ((vmr = emp_vmr_find_hva(emm, emm->ekvm.kvm->mm, hva)) == NULL)
 		return EMP_KVM_LOCK_NOT_MINE;
 
 	gpa_index_order = bvma_subblock_order(emm);

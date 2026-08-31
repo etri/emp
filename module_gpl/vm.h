@@ -800,6 +800,35 @@ emp_vmr_lookup(struct emp_mm *emm, struct vm_area_struct *vma)
 
 #define VA_IN_VMR(vmr, hva) \
 	!(((hva) < (vmr)->vm_start) || ((hva) >= (vmr)->vm_end))
+
+/**
+ * emp_vmr_find_hva - resolve (mm, hva) to this emp_mm's vmr, exactly
+ * @param emm the emp_mm the caller works on
+ * @param mm the mm to look in; the caller holds its mmap lock
+ * @param hva the address to resolve
+ *
+ * Linux owns the authoritative vma search structure: find_vma() plus exact
+ * containment plus the vm_ops identity replaces scanning a vmr table. NULL for
+ * a hole, a foreign vma, or a vma of another emp_mm. find_vma() returns the
+ * next vma above a hole, so containment must be checked explicitly.
+ */
+static inline struct emp_vmr *
+emp_vmr_find_hva(struct emp_mm *emm, struct mm_struct *mm,
+		 const unsigned long hva)
+{
+	struct vm_area_struct *vma;
+	struct emp_vmr *vmr;
+
+	vma = find_vma(mm, hva);
+	if (vma == NULL || hva < vma->vm_start)
+		return NULL;
+	if (vma->vm_ops != &emp_vma_ops)
+		return NULL;
+	vmr = (struct emp_vmr *)vma->vm_private_data;
+	if (vmr == NULL || vmr->emm != emm)
+		return NULL;
+	return vmr;
+}
 static inline struct emp_vmr *
 emp_vmr_lookup_hva(struct emp_mm *emm, const unsigned long hva)
 {

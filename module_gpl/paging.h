@@ -57,7 +57,6 @@ __gfn_to_hva(struct emp_mm *bvma, struct emp_vmr *vmr, unsigned long gfn)
 		if (gpa < start || gpa >= end)
 			continue;
 		addr = ((gpa - start) + bvma->ekvm.memslot[i].hva);
-		debug_BUG_ON(emp_vmr_lookup_hva(bvma, addr) == NULL);
 		return addr;
 	}
 	BUG();
@@ -264,32 +263,6 @@ static inline struct emp_vmr *__get_emp_vmr(struct vm_area_struct *vma)
 	return (struct emp_vmr *)vma->vm_private_data;
 }
 
-// _get_emp_mm does not need to put_emp_mm
-static inline struct emp_mm *__get_emp_mm(struct vm_area_struct *vma)
-{
-	extern struct emp_mm **emp_mm_arr;
-	extern unsigned long emp_mm_arr_len;
-	extern spinlock_t emp_mm_arr_lock;
-
-	int i;
-	struct emp_mm *emm;
-
-	struct emp_vmr *vmr = __get_emp_vmr(vma);
-	if (vmr)
-		return vmr->emm;
-
-	emm = NULL;
-	spin_lock(&emp_mm_arr_lock);
-	for (i = 0; i < emp_mm_arr_len; i++) {
-		if (emp_vmr_lookup(emp_mm_arr[i], vma) != NULL) {
-			emm = emp_mm_arr[i];
-			break;
-		}
-	}
-	spin_unlock(&emp_mm_arr_lock);
-
-	return emm;
-}
 
 static inline struct emp_mm *get_emp_mm(int id)
 {
