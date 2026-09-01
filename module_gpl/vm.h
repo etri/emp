@@ -306,7 +306,8 @@ struct emp_vmr {
 	enum emp_fork_policy    fork_policy;
 
 
-	/* The following variables are protected by vmr->emm->split_link_lock */
+	/* The following variables are protected by mmap_lock.
+	 * Note that the splitted vmas belongs to the same mm */
 	struct emp_vmr      *split_new_vmr;
 	struct emp_vmr      *split_prev_vmr;
 #ifdef CONFIG_EMP_DEBUG
@@ -631,11 +632,6 @@ struct emp_mm {
 	struct emp_mr_ops   mops;
 #ifdef CONFIG_EMP_USER
 	struct emp_cow_ops  cops;
-
-	/* protect dup_* variables of struct emp_vmr */
-
-	/* protect split_* variables of struct emp_vmr */
-	spinlock_t         split_link_lock;
 #endif
 };
 

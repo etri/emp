@@ -97,7 +97,7 @@ static void eager_wbr_ctor(void *opaque)
 #endif /* CONFIG_EMP_OPT */
 
 #ifdef CONFIG_EMP_USER
-static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked);
+static inline void finish_emp_vma_split(struct emp_vmr *vmr);
 #endif
 
 #ifdef CONFIG_EMP_EXT
@@ -531,9 +531,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 		return;
 
 #ifdef CONFIG_EMP_USER
-	/* TODO: we may call finish_emp_vam_split early,
-	 *       on gpas_close() from mmu notifier. */
-	finish_emp_vma_split(vmr, false);
+	finish_emp_vma_split(vmr);
 #endif
 
 	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d vma:%016lx virt: %016lx "
@@ -1293,11 +1291,8 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 	return new_vmr;
 }
 
-static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
+static inline void finish_emp_vma_split(struct emp_vmr *vmr)
  {
-	if (!locked)
-		spin_lock(&vmr->emm->split_link_lock);
-
 	if (vmr->split_new_vmr) {
 		struct emp_vmr *split_vmr = vmr->split_new_vmr;
 		debug_assert(split_vmr->split_prev_vmr == vmr);
@@ -1319,9 +1314,6 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr, const bool locked)
 		split_vmr->split_addr = 0;
 #endif
 	}
-
-	if (!locked)
-		spin_unlock(&vmr->emm->split_link_lock);
 }
 
 static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
@@ -1471,15 +1463,15 @@ static int emp_vma_split(struct vm_area_struct *vma, unsigned long addr)
 	 * errors in emp_get_mmu_notifier().
 	 */
 
-	spin_lock(&prev_vmr->emm->split_link_lock);
-	finish_emp_vma_split(prev_vmr, true);
+	/* clean up the previous split */
+	finish_emp_vma_split(prev_vmr);
+	/* start the new split */
 	prev_vmr->split_new_vmr = new_vmr;
 	new_vmr->split_prev_vmr = prev_vmr;
 #ifdef CONFIG_EMP_DEBUG
 	prev_vmr->split_addr = addr;
 	new_vmr->split_addr = addr;
 #endif
-	spin_unlock(&prev_vmr->emm->split_link_lock);
 
 	return 0;
 }
