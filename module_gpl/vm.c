@@ -547,7 +547,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	finish_emp_vma_split(vmr);
 #endif
 
-	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d vma:%016lx virt: %016lx "
+	dprintk_ratelimited("%s emm: %d num_vmr: %d vmr: %d vma:%016lx virt: %016lx "
 				"vmr: %016lx desc: %016lx ref: %d\n",
 			__func__, vmr->emm->id, vmr->emm->num_vmrs, emp_vmr_dbgid(vmr),
 			(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
@@ -1276,7 +1276,7 @@ __emp_vma_open(struct emp_vmr *prev_vmr, struct vm_area_struct *new_vma)
 		dup_dir = true;
 	}
 
-	printk(KERN_NOTICE "%s emm: %d num_vmr: %d vmr: %d "
+	dprintk_ratelimited("%s emm: %d num_vmr: %d vmr: %d "
 			"vma:%016lx virt: %016lx flags: %lx "
 			"vmr: %016lx shared: %d wipeonfork: %d\n",
 		__func__, emm->id, emm->num_vmrs, emp_vmr_dbgid(new_vmr),
