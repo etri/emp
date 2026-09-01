@@ -1373,6 +1373,8 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 
 	new_vmr->vmr_closing = false;
 	new_vma->vm_private_data = (void *)new_vmr;
+
+	finish_emp_vma_split(prev_vmr);
 }
 
 // consider only the vma_open right after vma_ops->split
