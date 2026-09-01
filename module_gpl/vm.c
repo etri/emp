@@ -1333,7 +1333,7 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	unsigned long prev_end = vmr_view_end(prev_vmr);
 	unsigned long mid;
 
-	debug_assert(prev_vmr->split_addr = new_vmr->split_addr);
+	debug_assert(prev_vmr->split_addr == new_vmr->split_addr);
 	debug_assert(new_vmr->split_addr == new_vma->vm_start
 			|| new_vmr->split_addr == new_vma->vm_end);
 
