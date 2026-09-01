@@ -530,6 +530,18 @@ static void emp_vma_close(struct vm_area_struct *vma)
 	if (vmr == NULL)
 		return;
 
+       if (unlikely(vmr->host_vma != vma)) {
+	       /* This must not be happened, but is easily avoided. */
+               dprintk_ratelimited(KERN_WARNING
+                       "%s: vma is not the owner of its vmr. emm: %d vmr: %d "
+                       "vma: %016lx host_vma: %016lx virt: %016lx\n",
+                       __func__, vmr->emm->id, emp_vmr_dbgid(vmr),
+                       (unsigned long) vma, (unsigned long) vmr->host_vma,
+                       vma->vm_start);
+               vma->vm_private_data = NULL;
+               return;
+       }
+
 #ifdef CONFIG_EMP_USER
 	finish_emp_vma_split(vmr);
 #endif
