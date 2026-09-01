@@ -98,6 +98,7 @@ static void eager_wbr_ctor(void *opaque)
 
 #ifdef CONFIG_EMP_USER
 static inline void finish_emp_vma_split(struct emp_vmr *vmr);
+static void emp_vmr_discard(struct emp_vmr *vmr);
 #endif
 
 #ifdef CONFIG_EMP_EXT
@@ -1314,6 +1315,17 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr)
 #ifdef CONFIG_EMP_DEBUG
 		split_vmr->split_addr = 0;
 #endif
+		/* __split_vma() can fail after ->may_split() installed the link
+		 * and before ->open() runs: vm_area_dup(), vma_iter_prealloc(),
+		 * vma_dup_policy() and anon_vma_clone() all bail out in that
+		 * window, and the cleanup that follows is
+		 * mpol_put/vma_iter_free/vm_area_free -- no vm_op at all, so EMP
+		 * is never told. __emp_vma_split() is what gives the new side a
+		 * host_vma (and its vmdesc reference, via split_vmdesc()), so a
+		 * linked vmr without one never reached ->open() and nothing will
+		 * ever free it. */
+		if (unlikely(split_vmr->host_vma == NULL))
+			emp_vmr_discard(split_vmr);
 	}
 
 	if (vmr->split_prev_vmr) {
@@ -1326,6 +1338,18 @@ static inline void finish_emp_vma_split(struct emp_vmr *vmr)
 		split_vmr->split_addr = 0;
 #endif
 	}
+}
+
+/* Release a vmr that never became a vma's. It holds only what create_vmr()
+ * gave it: the emm vmr-list slot and a debug id. */
+static void emp_vmr_discard(struct emp_vmr *vmr)
+{
+	debug_assert(vmr->host_vma == NULL);
+	debug_assert(vmr->descs == NULL);
+	debug_assert(vmr->split_prev_vmr == NULL);
+	debug_assert(vmr->split_new_vmr == NULL);
+	emp_vmr_release(vmr);
+	emp_kfree(vmr);
 }
 
 static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
