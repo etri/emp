@@ -183,7 +183,8 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 #ifdef CONFIG_EMP_DEBUG
 				int idx = _pte - pte;
 				struct emp_vmr *vmr = __get_emp_vmr(vma);
-				printk(KERN_ERR "%s ERROR: already occupied. "
+				printk_ratelimited(KERN_ERR
+					"%s ERROR: already occupied. "
 					"addr: %016lx idx: %d pte: %016lx pfn: %lx "
 					"page: %016lx pfn: %lx flag: %016lx "
 					"page[%d]: %016lx pfn: %lx flag: %016lx "
@@ -197,7 +198,8 @@ pte_install(struct vm_area_struct *vma, pmd_t *pmd, struct page *page,
 					page_to_pfn(_page), _page->flags,
 					vma->vm_start, vma->vm_end,
 					vma->vm_flags,
-					vmr ? vmr->descs->vm_base : 0);
+					(vmr && vmr->descs)
+						? vmr->descs->vm_base : 0);
 #endif
 				BUG();
 			}

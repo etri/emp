@@ -938,7 +938,8 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 				continue;
 #ifdef CONFIG_EMP_DEBUG
 			if (unlikely(pte_pfn(pte) != page_to_pfn(page))) {
-				printk(KERN_ERR "%s ERROR: page is not ours. "
+				printk_ratelimited(KERN_ERR
+					"%s ERROR: page is not ours. "
 					"addr: %016lx "
 					"idx: %d pte: %016lx pfn: %lx "
 					"page: %016lx pfn: %lx flag: %016lx "
