@@ -1763,6 +1763,8 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 #endif
 	if (!is_gpa_flags_set(head, GPA_HPT_MASK)
 			&& emp_lp_owner(head->local_page) != vmr) {
+		/* This is the VM-only RSS addition.
+		 * Block-granaluarity update is allowed. */
 		emp_update_rss_add_force(vmr, gpa_block_size(head),
 					DEBUG_RSS_ADD_FAULT_GPA,
 					head, DEBUG_UPDATE_RSS_BLOCK);
