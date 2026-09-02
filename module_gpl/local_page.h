@@ -51,6 +51,7 @@ struct debug_rss_progress {
 	int line;
 	int vmr_id;
 	int is_add;
+	long pages;
 };
 #endif
 #endif
@@ -106,7 +107,8 @@ struct local_page {
 	u16             demand_offset; // on head
 	struct work_request     *w;
 #ifdef CONFIG_EMP_DEBUG_RSS
-	u64 debug_rss_bitmap[DEBUG_RSS_BITMAP_U64LEN];
+	/* pages each vmr (by debug id) is charged for on this subblock */
+	u16 debug_rss_pages[CONFIG_EMP_DEBUG_RSS_MAX_VMRS];
 #ifdef CONFIG_EMP_DEBUG_RSS_PROGRESS
 	struct debug_rss_progress debug_rss_progress[DEBUG_RSS_PROGRESS_SIZE];
 	int debug_rss_progress_next;

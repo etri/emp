@@ -1255,13 +1255,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			gpa, DEBUG_UPDATE_RSS_CLOSING);
 	}
 #ifdef CONFIG_EMP_DEBUG_RSS
-	else {
-		/* debugging still requires emp_update_rss_sub() on gpa */
-		emp_update_rss_sub(vmr, cleared,
-			DEBUG_RSS_SUB_UNMAP_SUBBLOCK_SINGLE_VMR,
-			gpa, DEBUG_UPDATE_RSS_CLOSING);
-	}
-
+	/* the kernel zapped the rest before us: its share of the charge */
 	emp_update_rss_sub_kernel(vmr,
 		page_len - cleared,
 		DEBUG_RSS_SUB_KERNEL_UNMAP_SUBBLOCK_SINGLE_VMR,

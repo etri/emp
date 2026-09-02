@@ -41,8 +41,6 @@ void __emp_pf_history_end(struct vcpu_var *, const char *);
 
 /******************** EMP DEBUG RSS *************************************/
 #ifdef CONFIG_EMP_DEBUG_RSS
-#define DEBUG_RSS_BITMAP_U64LEN ((CONFIG_EMP_DEBUG_RSS_MAX_VMRS + (sizeof(u64)*8) - 1) \
-								/ (sizeof(u64)*8))
 void debug_update_rss_add(struct emp_vmr *vmr, long val, int ID, int by_emp,
 			struct emp_gpa *gpa, int mode, char *file, int line);
 void debug_update_rss_sub(struct emp_vmr *vmr, long val, int ID, int by_emp,

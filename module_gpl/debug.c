@@ -282,7 +282,7 @@ void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
 }
 
 #ifdef CONFIG_EMP_DEBUG_RSS_PROGRESS
-static inline void __debug_update_rss_progress(struct emp_vmr *vmr, struct local_page *lp, char *file, int line, int is_add)
+static inline void __debug_update_rss_progress(struct emp_vmr *vmr, struct local_page *lp, long pages, char *file, int line, int is_add)
 {
 	int next = lp->debug_rss_progress_next;
 	struct debug_rss_progress *progress = &lp->debug_rss_progress[next];
@@ -290,6 +290,7 @@ static inline void __debug_update_rss_progress(struct emp_vmr *vmr, struct local
 	progress->line = line;
 	progress->vmr_id = emp_vmr_dbgid(vmr);
 	progress->is_add = is_add;
+	progress->pages = pages;
 	lp->debug_rss_progress_next = (next + 1) % DEBUG_RSS_PROGRESS_SIZE;
 }
 
@@ -304,9 +305,9 @@ static inline void __debug_update_rss_show_progress(struct local_page *lp)
 		if (p->file == NULL)
 			goto next;
 		printed = 1;
-		printk(KERN_ERR "[DEBUG_RSS] (PROGRESS) lp: %016lx (%02d) vmr_id: %3d %s at: %s:%d\n",
+		printk(KERN_ERR "[DEBUG_RSS] (PROGRESS) lp: %016lx (%02d) vmr_id: %3d %s %ld pages at: %s:%d\n",
 					(unsigned long) lp, i, p->vmr_id,
-					p->is_add == 1 ? "ADD" : "SUB",
+					p->is_add == 1 ? "ADD" : "SUB", p->pages,
 					p->file, p->line);
 next:
 		i = (i + 1) % DEBUG_RSS_PROGRESS_SIZE;
@@ -320,7 +321,7 @@ next:
 					(unsigned long) lp);
 }
 #else
-#define __debug_update_rss_progress(vmr, lp, file, line, is_add) do {} while (0)
+#define __debug_update_rss_progress(vmr, lp, pages, file, line, is_add) do {} while (0)
 #define __debug_update_rss_show_progress(lp) do {} while (0)
 #endif
 
@@ -330,40 +331,45 @@ static void ____debug_update_rss_warn_once_vmr_id(const char *func, int vmr_id) 
 				func, vmr_id, CONFIG_EMP_DEBUG_RSS_MAX_VMRS);
 }
 
-static void COMPILER_DEBUG __debug_update_rss_add(struct emp_vmr *vmr, struct local_page *lp, char *file, int line) {
+/* charge exactly @val pages of @lp to @vmr. @limit is what @vmr may hold on
+ * @lp at most, so a repeated nominal charge still trips here. */
+static void COMPILER_DEBUG __debug_update_rss_add(struct emp_vmr *vmr, struct local_page *lp,
+					long val, long limit, char *file, int line) {
 	int vmr_id = emp_vmr_dbgid(vmr);
-	int i = vmr_id / (sizeof(u64)*8);
-	int j = vmr_id % (sizeof(u64)*8);
-	__debug_update_rss_progress(vmr, lp, file, line, 1);
+	__debug_update_rss_progress(vmr, lp, val, file, line, 1);
 	if (unlikely(vmr_id >= CONFIG_EMP_DEBUG_RSS_MAX_VMRS)) {
 		____debug_update_rss_warn_once_vmr_id(__func__, vmr_id);
 		return;
 	}
-	if (lp->debug_rss_bitmap[i] & (1ULL << j)) {
-		printk(KERN_ERR "[DEBUG_RSS] ERROR: double-ADD RSS vmr_id: %d gpa_index: %ld at %s:%d\n",
-				vmr_id, lp->gpa_index, file, line);
+	if (lp->debug_rss_pages[vmr_id] + val > limit) {
+		printk(KERN_ERR "[DEBUG_RSS] ERROR: over-ADD RSS vmr_id: %d gpa_index: %ld pages: %u + %ld > %ld at %s:%d\n",
+				vmr_id, lp->gpa_index, lp->debug_rss_pages[vmr_id],
+				val, limit, file, line);
 		__debug_update_rss_show_progress(lp);
 		BUG();
 	} else
-		lp->debug_rss_bitmap[i] |= (1ULL << j);
+		lp->debug_rss_pages[vmr_id] += val;
 }
 
-static void COMPILER_DEBUG __debug_update_rss_sub(struct emp_vmr *vmr, struct local_page *lp, char *file, int line) {
+/* release exactly @val pages of @lp from @vmr. A release may be split over
+ * several calls (e.g. the pages emp cleared and the pages the kernel zapped
+ * before us), as long as they sum to what was charged. */
+static void COMPILER_DEBUG __debug_update_rss_sub(struct emp_vmr *vmr, struct local_page *lp,
+					long val, char *file, int line) {
 	int vmr_id = emp_vmr_dbgid(vmr);
-	int i = vmr_id / (sizeof(u64)*8);
-	int j = vmr_id % (sizeof(u64)*8);
-	__debug_update_rss_progress(vmr, lp, file, line, 0);
+	__debug_update_rss_progress(vmr, lp, val, file, line, 0);
 	if (unlikely(vmr_id >= CONFIG_EMP_DEBUG_RSS_MAX_VMRS)) {
 		____debug_update_rss_warn_once_vmr_id(__func__, vmr_id);
 		return;
 	}
-	if ((lp->debug_rss_bitmap[i] & (1ULL << j)) == 0) {
-		printk(KERN_ERR "[DEBUG_RSS] ERROR: double-SUB RSS vmr_id: %d gpa_index: %ld at %s:%d\n",
-				vmr_id, lp->gpa_index, file, line);
+	if (lp->debug_rss_pages[vmr_id] < val) {
+		printk(KERN_ERR "[DEBUG_RSS] ERROR: over-SUB RSS vmr_id: %d gpa_index: %ld pages: %u < %ld at %s:%d\n",
+				vmr_id, lp->gpa_index, lp->debug_rss_pages[vmr_id],
+				val, file, line);
 		__debug_update_rss_show_progress(lp);
 		BUG();
 	} else
-		lp->debug_rss_bitmap[i] &= ~(1ULL << j);
+		lp->debug_rss_pages[vmr_id] -= val;
 }
 
 void COMPILER_DEBUG
@@ -382,18 +388,26 @@ debug_update_rss_add(struct emp_vmr *vmr, long val, int ID, int by_emp,
 	}
 
 	if (mode == DEBUG_UPDATE_RSS_SUBBLOCK) {
+		long page_len;
 		debug_assert(gpa->local_page);
-		debug_assert(val == __local_gpa_to_page_len(vmr, gpa));
-		__debug_update_rss_add(vmr, gpa->local_page, file, line);
+		page_len = __local_gpa_to_page_len(vmr, gpa);
+		debug_assert(val == page_len);
+		__debug_update_rss_add(vmr, gpa->local_page, val, page_len,
+								file, line);
 	} else {
 		struct emp_gpa *g;
+		long page_len, sum = 0;
 		debug_assert(gpa == emp_get_block_head(gpa));
 		debug_assert(mode == DEBUG_UPDATE_RSS_BLOCK);
 		debug_assert(val == __local_block_to_page_len(vmr, gpa));
 		for_each_gpas(g, gpa) {
 			debug_assert(g->local_page);
-			__debug_update_rss_add(vmr, g->local_page, file, line);
+			page_len = __local_gpa_to_page_len(vmr, g);
+			__debug_update_rss_add(vmr, g->local_page, page_len,
+							page_len, file, line);
+			sum += page_len;
 		}
+		debug_assert(sum == val);
 	}
 }
 EXPORT_SYMBOL(debug_update_rss_add);
@@ -419,16 +433,21 @@ debug_update_rss_sub(struct emp_vmr *vmr, long val, int ID, int by_emp,
 			debug_assert(val == __local_gpa_to_page_len(vmr, gpa));
 		else	/* the kernel may have zapped part of the subblock already */
 			debug_assert(val <= __local_gpa_to_page_len(vmr, gpa));
-		__debug_update_rss_sub(vmr, gpa->local_page, file, line);
+		__debug_update_rss_sub(vmr, gpa->local_page, val, file, line);
 	} else {
 		struct emp_gpa *g;
+		long page_len, sum = 0;
 		debug_assert(gpa == emp_get_block_head(gpa));
 		debug_assert(mode == DEBUG_UPDATE_RSS_BLOCK);
 		debug_assert(val == __local_block_to_page_len(vmr, gpa));
 		for_each_gpas(g, gpa) {
 			debug_assert(g->local_page);
-			__debug_update_rss_sub(vmr, g->local_page, file, line);
+			page_len = __local_gpa_to_page_len(vmr, g);
+			__debug_update_rss_sub(vmr, g->local_page, page_len,
+								file, line);
+			sum += page_len;
 		}
+		debug_assert(sum == val);
 	}
 }
 EXPORT_SYMBOL(debug_update_rss_sub);
@@ -436,14 +455,15 @@ EXPORT_SYMBOL(debug_update_rss_sub);
 void debug_update_rss_init_local_page(struct local_page *lp)
 {
 	int i;
-	for (i = 0; i < DEBUG_RSS_BITMAP_U64LEN; i++)
-		lp->debug_rss_bitmap[i] = 0ULL;
+	for (i = 0; i < CONFIG_EMP_DEBUG_RSS_MAX_VMRS; i++)
+		lp->debug_rss_pages[i] = 0;
 #ifdef CONFIG_EMP_DEBUG_RSS_PROGRESS
 	for (i = 0; i < DEBUG_RSS_PROGRESS_SIZE; i++) {
 		lp->debug_rss_progress[i].file = NULL;
 		lp->debug_rss_progress[i].line = -1;
 		lp->debug_rss_progress[i].vmr_id = -1;
 		lp->debug_rss_progress[i].is_add = -1;
+		lp->debug_rss_progress[i].pages = 0;
 	}
 	lp->debug_rss_progress_next = 0;
 #endif
@@ -452,8 +472,8 @@ void debug_update_rss_init_local_page(struct local_page *lp)
 void debug_update_rss_free_local_page(struct local_page *lp)
 {
 	int i;
-	for (i = 0; i < DEBUG_RSS_BITMAP_U64LEN; i++) {
-		if (lp->debug_rss_bitmap[i] != 0ULL)
+	for (i = 0; i < CONFIG_EMP_DEBUG_RSS_MAX_VMRS; i++) {
+		if (lp->debug_rss_pages[i] != 0)
 			goto error_found;
 	}
 	return;
@@ -461,18 +481,11 @@ void debug_update_rss_free_local_page(struct local_page *lp)
 error_found:
 	printk(KERN_ERR "[DEBUG_RSS] ERROR: free_local_page with remained RSS. lp: %016lx gpa_index: %ld\n",
 				(unsigned long) lp, lp->gpa_index);
-	if (DEBUG_RSS_BITMAP_U64LEN == 1) {
-		printk(KERN_ERR "[DEBUG_RSS] (bitmap) lp: %016lx bitmap: %016llx\n",
-					(unsigned long) lp, lp->debug_rss_bitmap[0]);
-	} else if (DEBUG_RSS_BITMAP_U64LEN == 2) {
-		printk(KERN_ERR "[DEBUG_RSS] (bitmap) lp: %016lx bitmap: %016llx %016llx\n",
-					(unsigned long) lp, lp->debug_rss_bitmap[0],
-					lp->debug_rss_bitmap[1]);
-	} else {
-		for (i = 0; i < DEBUG_RSS_BITMAP_U64LEN; i++) {
-			printk(KERN_ERR "[DEBUG_RSS] (bitmap) lp: %016lx bitmap[%d]: %016llx\n",
-					(unsigned long) lp, i, lp->debug_rss_bitmap[i]);
-		}
+	for (i = 0; i < CONFIG_EMP_DEBUG_RSS_MAX_VMRS; i++) {
+		if (lp->debug_rss_pages[i] == 0)
+			continue;
+		printk(KERN_ERR "[DEBUG_RSS] (remained) lp: %016lx vmr_id: %3d pages: %u\n",
+					(unsigned long) lp, i, lp->debug_rss_pages[i]);
 	}
 	__debug_update_rss_show_progress(lp);
 	BUG();
