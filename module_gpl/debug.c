@@ -200,9 +200,9 @@ const char *debug_rss_sub_str[NUM_DEBUG_RSS_SUB_ID] = {
 	"WRITEBACK_PREV_PRO",
 	"INACTIVE_PREV_PRO",
 	"UNMAP_PTES",
+	"INSTALL_HPTES_PREV",
 	"UNMAP_GPAS",
-	"UNMAP_MAX_BLOCK_PART",
-	"UNMAP_MAX_BLOCK",
+	"UNMAP_SUBBLOCK",
 	"PUT_LOCAL_PAGE",
 	"SET_REMOTE",
 	"ALLOC_FETCH_ERR",
@@ -220,6 +220,7 @@ const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
 	"FREE_GPA_DIR",
 	"COW_MULTI_ACTIVE",
 	"VMA_SPLIT",
+	"UNMAP_SUBBLOCK",
 };
 
 void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
@@ -412,9 +413,12 @@ debug_update_rss_sub(struct emp_vmr *vmr, long val, int ID, int by_emp,
 		atomic_long_add(val, &vmr->debug_rss_sub_kernel_total); \
 	}
 
-	if (mode == DEBUG_UPDATE_RSS_SUBBLOCK) {
+	if (mode == DEBUG_UPDATE_RSS_SUBBLOCK || mode == DEBUG_UPDATE_RSS_CLOSING) {
 		debug_assert(gpa->local_page);
-		debug_assert(val == __local_gpa_to_page_len(vmr, gpa));
+		if (mode == DEBUG_UPDATE_RSS_SUBBLOCK)
+			debug_assert(val == __local_gpa_to_page_len(vmr, gpa));
+		else	/* the kernel may have zapped part of the subblock already */
+			debug_assert(val <= __local_gpa_to_page_len(vmr, gpa));
 		__debug_update_rss_sub(vmr, gpa->local_page, file, line);
 	} else {
 		struct emp_gpa *g;

@@ -1210,6 +1210,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 {
 	pte_t *ptep, pte, *ptep_base;
 	bool dirty = false;
+	int cleared = 0;
 	struct page *page;
 	unsigned long pfn, i;
 	struct vm_area_struct *vma = vmr->host_vma;
@@ -1239,6 +1240,7 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 		tlb_remove_tlb_entry((&vmr->close_tlb), ptep, hva);
 		if (!dirty && pte_dirty(pte))
 			dirty = true;
+		cleared++;
 		kernel_page_remove_rmap(page, vma, false);
 	}
 
@@ -1246,7 +1248,26 @@ __unmap_subblock_single_vmr(struct emp_vmr *vmr, struct emp_gpa *gpa,
 
 	/* We do not use wrapper __emp_put_pages_map(),
 	 * since __put_local_page_pmd() will sync the page ref for debug */
-	____emp_put_pages_map(gpa, page_len);
+	if (cleared) {
+		____emp_put_pages_map(gpa, cleared);
+		emp_update_rss_sub(vmr, cleared,
+			DEBUG_RSS_SUB_UNMAP_SUBBLOCK_SINGLE_VMR,
+			gpa, DEBUG_UPDATE_RSS_CLOSING);
+	}
+#ifdef CONFIG_EMP_DEBUG_RSS
+	else {
+		/* debugging still requires emp_update_rss_sub() on gpa */
+		emp_update_rss_sub(vmr, cleared,
+			DEBUG_RSS_SUB_UNMAP_SUBBLOCK_SINGLE_VMR,
+			gpa, DEBUG_UPDATE_RSS_CLOSING);
+	}
+
+	emp_update_rss_sub_kernel(vmr,
+		page_len - cleared,
+		DEBUG_RSS_SUB_KERNEL_UNMAP_SUBBLOCK_SINGLE_VMR,
+		gpa, DEBUG_UPDATE_RSS_CLOSING);
+#endif
+
 	return dirty;
 }
 
@@ -1266,9 +1287,6 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 		if (head->r_state != GPA_ACTIVE)
 			continue;
 		debug_assert(head->local_page);
-		pmd = emp_lp_lookup_pmd(head, vmr);
-		if (!pmd)
-			continue;
 
 #ifdef CONFIG_EMP_VM
 		/* DO NOT unmap the low memory region for VMs */
@@ -1276,53 +1294,66 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 			continue;
 #endif
 
-		/* NOTE: we acquire and release page table lock at block
-		 *       granularity to prevent deadlock with __unmap_ptes().
-		 */
-		ptl = pte_lockptr(vmr->host_mm, pmd);
-		spin_lock(ptl);
-
-		head_idx = max_head_idx + i;
-		head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, gpa_subblock_order(head));
 #ifdef CONFIG_EMP_USER
 		if (unlikely(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK))) {
 			unsigned int sb_page_off;
+			pmd = emp_lp_lookup_pmd(head, vmr);
+			if (!pmd)
+				continue;
+
+			head_idx = max_head_idx + i;
+			head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, gpa_subblock_order(head));
 			____partial_gpa_len_off(vmr, head, head_idx, head_hva,
 						sb_page_len, sb_page_off);
+			ptl = pte_lockptr(vmr->host_mm, pmd);
+			spin_lock(ptl);
+
 			dirty = __unmap_subblock_single_vmr(vmr, head,
 					head_hva + ((unsigned long) sb_page_off
 							<< PAGE_SHIFT),
 					sb_page_off, sb_page_len, pmd);
 			if (dirty)
 				set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
-			emp_update_rss_sub(vmr, sb_page_len,
-					DEBUG_RSS_SUB_UNMAP_MAX_BLOCK_PARTIAL,
-					head, DEBUG_UPDATE_RSS_BLOCK);
+
 			spin_unlock(ptl);
 			continue;
 		}
 #endif
 
-		dirty = false;
+		head_idx = max_head_idx + i;
+		head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, gpa_subblock_order(head));
 		sb_page_len = gpa_subblock_size(head);
+		dirty = false;
+		ptl = NULL;
 		for_each_gpas(gpa, head) {
-#ifdef CONFIG_EMP_DEBUG
-			/* block is aligned */
-			debug_assert(gpa == head ||
-					emp_lp_lookup_pmd(gpa, vmr) == pmd);
-#endif
+			debug_assert(gpa->local_page);
+			pmd = emp_lp_lookup_pmd(gpa, vmr);
+			if (!pmd)
+				goto next_gpa;
+
+			if (!ptl) {
+				/* NOTE: we acquire and release page table lock at block
+				 *       granularity to prevent deadlock with __unmap_ptes().
+				 */
+				ptl = pte_lockptr(vmr->host_mm, pmd);
+				spin_lock(ptl);
+			} else
+				debug_assert(pte_lockptr(vmr->host_mm, pmd) == ptl);
+
 			dirty |= __unmap_subblock_single_vmr(vmr, gpa, head_hva,
 							0, sb_page_len, pmd);
+next_gpa:
 			head_hva += sb_page_len << PAGE_SHIFT;
 		}
+
 		if (dirty)
 			set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
-		emp_update_rss_sub(vmr, gpa_block_size(head),
-					DEBUG_RSS_SUB_UNMAP_MAX_BLOCK,
-					head, DEBUG_UPDATE_RSS_BLOCK);
 
-		spin_unlock(ptl);
+		if (ptl)
+			spin_unlock(ptl);
 	}
+
+	emp_update_rss_cached(vmr);
 }
 
 static inline void
@@ -1472,11 +1503,6 @@ __wait_for_prefetch_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		if (!is_gpa_flags_set(gpa, GPA_PREFETCHED_MASK))
 			continue;
 		wait_for_prefetched_block(emm, cpu, gpa);
-		/* TODO: During unmap vma, calling sync_hpt_map_in_block() is
-		 *       NOT theoretically required. But, the following codes
-		 *       assume that hpt map in block is synchronized.*/
-		sync_hpt_map_in_block(emm, gpa, false);
-		debug_check_sync_hpt(emm, gpa, NULL, DEBUG_SYNC_HPT_AT_UNMAP);
 	}
 }
 #endif /* CONFIG_EMP_BLOCK */
