@@ -892,7 +892,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		if (!page_mapped(map_page)
 			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
 			/* the pop retains @vmr as the owner */
-			emp_lp_remove_pmd(emm, gpa->local_page, vmr);
+			emp_lp_pop_pmd(emm, gpa->local_page, vmr);
 			debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
 			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
 
