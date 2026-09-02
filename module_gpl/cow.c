@@ -1000,6 +1000,14 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 			emp_update_rss_add_kernel(vmr, page_len,
 					DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+		else { // the carry: the charge held for @old now stands for @new
+			emp_update_rss_sub_kernel(vmr, page_len,
+					DEBUG_RSS_SUB_KERNEL_COW_CARRY,
+					old, DEBUG_UPDATE_RSS_SUBBLOCK);
+			emp_update_rss_add_kernel(vmr, page_len,
+					DEBUG_RSS_ADD_KERNEL_COW_CARRY,
+					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+		}
 
 		if (owned && emp_lp_owner(old->local_page) == vmr) {
 			/* @vmr's slot now points at @new: it must not keep
