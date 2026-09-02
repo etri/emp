@@ -1655,19 +1655,21 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 			 * it also decreases RSS.
 			 */
 			int __i;
-			struct emp_gpa *__head;
+			struct emp_gpa *__head, *__gpa;
 			for (__i = 0, __head = max_head; __i < step;
 					__i += num_subblock_in_block(__head),
 					__head += num_subblock_in_block(__head)) {
 				if (__head->r_state != GPA_ACTIVE)
 					continue;
-				debug_assert(__head->local_page);
-				if (!emp_lp_lookup_vmr(__head, vmr))
-					continue;
-				emp_update_rss_sub_kernel(vmr,
-					__local_block_to_page_len(vmr, __head),
-					DEBUG_RSS_SUB_KERNEL_FREE_GPA_DIR,
-					__head, DEBUG_UPDATE_RSS_BLOCK);
+				for_each_gpas(__gpa, __head) {
+					debug_assert(__gpa->local_page);
+					if (!emp_lp_lookup_vmr(__gpa, vmr))
+						continue;
+					emp_update_rss_sub_kernel(vmr,
+						__local_gpa_to_page_len(vmr, __gpa),
+						DEBUG_RSS_SUB_KERNEL_FREE_GPA_DIR,
+						__gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+				}
 			}
 		}
 #endif

@@ -987,7 +987,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 						DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE,
 						old, DEBUG_UPDATE_RSS_SUBBLOCK);
 		} else
-			debug_assert(mapped != false); // check consistency among subblocks
+			debug_assert(mapped == false); // check consistency among subblocks
 
 		/* add mapped_pmd on @new */
 		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
