@@ -697,7 +697,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 	int sb_index;
 	unsigned int flags;
 
-	dprintk("%s new_vmr: %d prev_vmr: %d head_index: %lu boundary_index: %lu boundary_addr: %lu new_is_front: %d\n",
+	dprintk_ratelimited("%s new_vmr: %d prev_vmr: %d head_index: %lu boundary_index: %lu boundary_addr: %lu new_is_front: %d\n",
 		__func__, emp_vmr_dbgid(new_vmr), emp_vmr_dbgid(prev_vmr),
 		head_index, boundary_index, boundary_addr, new_is_front);
 
@@ -716,7 +716,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		 * and clear work requests. */
 		struct vcpu_var *cpu =
 				emp_get_vcpu_from_id(emm, head->local_page->cpu);
-		dprintk("%s wait for writeback completion. "
+		dprintk_ratelimited("%s wait for writeback completion. "
 			"split head = %p split index = %ld\n",
 			__func__, head, head_index);
 		debug_progress(head->local_page->w, head);
@@ -917,15 +917,15 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 #ifdef CONFIG_EMP_DEBUG
 	if (prev_vmr->vm_end == new_vmr->vm_start) {
-		dprintk("%s prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
+		dprintk_ratelimited("%s prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
 				__func__, emp_vmr_dbgid(prev_vmr), prev_vmr->vm_start, prev_vmr->vm_end, emp_vmr_dbgid(new_vmr), new_vmr->vm_start, new_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
 	} else if (new_vmr->vm_end == prev_vmr->vm_start) {
-		dprintk("%s new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
+		dprintk_ratelimited("%s new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
 				__func__, emp_vmr_dbgid(new_vmr), new_vmr->vm_start, new_vmr->vm_end, emp_vmr_dbgid(prev_vmr), prev_vmr->vm_start, prev_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
 	} else {
-		printk(KERN_ERR "%s ERROR: prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
+		printk_ratelimited(KERN_ERR "%s ERROR: prev_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx new_vmr(%d)->vm_start = 0x%lx vm_end = 0x%lx, block_aligned_start = %ld, gpa_len = %ld, num_region = %d\n",
 				__func__, emp_vmr_dbgid(prev_vmr), prev_vmr->vm_start, prev_vmr->vm_end, emp_vmr_dbgid(new_vmr), new_vmr->vm_start, new_vmr->vm_end,
 				prev_vmr->descs->block_aligned_start, prev_vmr->descs->gpa_len, prev_vmr->descs->num_region);
 
@@ -950,11 +950,11 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 						>> bvma_subblock_order(emm);
 
 	if (prev_vmr->vm_end == new_vmr->vm_start) { /* [prev_vmr] + [new_wmr] */
-		dprintk("%s prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld new_vmr(%d) index_start = %ld index_end = %ld\n",
+		dprintk_ratelimited("%s prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld new_vmr(%d) index_start = %ld index_end = %ld\n",
 				__func__, emp_vmr_dbgid(prev_vmr), prev_index_start, prev_index_end, emp_vmr_dbgid(new_vmr), index_start, index_end);
 		boundary = index_start;
 	} else { /* [new_vmr] + [prev_wmr] */
-		dprintk("%s new_vmr(%d) index_start = %ld index_end = %ld prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld\n",
+		dprintk_ratelimited("%s new_vmr(%d) index_start = %ld index_end = %ld prev_vmr(%d) prev_index_start = %ld prev_index_end = %ld\n",
 				__func__, emp_vmr_dbgid(new_vmr), index_start, index_end, emp_vmr_dbgid(prev_vmr), prev_index_start, prev_index_end);
 		/* prev is the upper half here, and its first subblock is
 		 * index_end - 1 when the split address falls inside a subblock
@@ -1098,7 +1098,7 @@ next_head:
 static int split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
 	struct emp_vmdesc *desc = prev_vmr->descs;
-	dprintk("%s: new: %016lx prev: %016lx \n",
+	dprintk_ratelimited("%s: new: %016lx prev: %016lx \n",
 		__func__, (unsigned long) new_vmr, (unsigned long) prev_vmr);
 
 	atomic_inc(&desc->refcount);
@@ -1367,7 +1367,7 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 
 	__copy_vma_info(new_vmr, new_vma);
 
-	dprintk("%s (BEFORE) prev: vm_start=%016lx vm_end=%016lx "
+	dprintk_ratelimited("%s (BEFORE) prev: vm_start=%016lx vm_end=%016lx "
 		"new_vmr: vm_start=%016lx vm_end=%016lx\n",
 			__func__, prev_vmr->vm_start, prev_vmr->vm_end,
 			new_vmr->vm_start, new_vmr->vm_end);
@@ -1386,7 +1386,7 @@ static void __emp_vma_split(struct emp_vmr *prev_vmr, struct emp_vmr *new_vmr,
 	 * new_vmr has no vmdesc of its own yet, so use prev's origin. */
 	mid = (mid - prev_vmr->descs->vm_base) >> PAGE_SHIFT;
 
-	dprintk("%s  (AFTER) prev: vm_start=%016lx vm_end=%016lx "
+	dprintk_ratelimited("%s  (AFTER) prev: vm_start=%016lx vm_end=%016lx "
 		"new_vmr: vm_start=%016lx, vm_end=%016lx\n",
 			__func__, prev_vmr->vm_start, prev_vmr->vm_end,
 			new_vmr->vm_start, new_vmr->vm_end);
@@ -1481,16 +1481,12 @@ static int emp_vma_split(struct vm_area_struct *vma, unsigned long addr)
 	struct emp_vmr *prev_vmr = vma->vm_private_data;
 	struct emp_vmr *new_vmr;
 
-	if (addr & bvma_va_subblock_mask(prev_vmr->emm)) {
-		printk(KERN_NOTICE "%s vma split. vma %llx addr %lx\n",
-				__func__, (u64)vma, addr);
-	}
-	dprintk("%s vma split. vma %llx addr %lx\n",
+	dprintk_ratelimited("%s vma split. vma %llx addr %lx\n",
 				__func__, (u64)vma, addr);
 
 	new_vmr = create_vmr(prev_vmr->emm, NULL);
 	if (new_vmr == NULL) {
-		printk("%s cannot allocate memory for new_vmr.\n", __func__);
+		printk(KERN_ERR "ERROR: %s cannot allocate memory for new_vmr.\n", __func__);
 		return -ENOMEM;
 	}
 
@@ -1596,7 +1592,7 @@ vm_start_aligned:
 	if (vma->vm_start != new_start) {
 		vma->vm_start = new_start;
 		vma->vm_end = new_end;
-		dprintk("%s aligned vm_start: 0x%lx vm_end: 0x%lx\n",
+		dprintk_ratelimited("%s aligned vm_start: 0x%lx vm_end: 0x%lx\n",
 				__func__, new_start, new_end);
 	}
 #endif /* CONFIG_EMP_VM */
@@ -1608,7 +1604,7 @@ vm_start_aligned:
 	}
 #endif
 
-	printk(KERN_NOTICE "%s emm: %d num_vmr: %d mm: %016lx vma:%016lx "
+	printk_ratelimited("%s emm: %d num_vmr: %d mm: %016lx vma:%016lx "
 				"vm_start: %016lx vm_end: %016lx flags: %lx\n",
 			__func__, bvma->id, bvma->num_vmrs,
 			(unsigned long) vma->vm_mm, (unsigned long) vma,
@@ -1674,7 +1670,7 @@ vm_start_aligned:
 				APIC_DEFAULT_PHYS_BASE >> PAGE_SHIFT);
 #endif
 
-	dprintk("%s (2) mm:%016lx vma:%016lx vm_flags: 0x%016lx "
+	dprintk_ratelimited("%s (2) mm:%016lx vma:%016lx vm_flags: 0x%016lx "
 		"vm_start: 0x%lx vm_end: 0x%lx\n", __func__,
 		(unsigned long) vma->vm_mm, (unsigned long) vma,
 		vma->vm_flags, vma->vm_start, vma->vm_end);
@@ -1714,7 +1710,7 @@ void register_mem_slot(struct emp_mm *bvma, unsigned long start, unsigned long s
 		bvma->ekvm.memslot[memslot].hva =
 			__gfn_to_hva_memslot(slot, gpa_to_gfn(start));
 
-		dprintk("mem region registered: "
+		dprintk_ratelimited("mem region registered: "
 			"gpa: %lx hva: %lx size: %lx base:%lx\n",
 			start, bvma->ekvm.memslot[memslot].hva, size, base);
 	}
@@ -1966,7 +1962,7 @@ static int emp_open(struct inode *inode, struct file *filp)
 	int ret = 0;
 	struct emp_mm *bvma;
 
-	dprintk("%s[%d] f_flags: 0x%x\n", __func__, __LINE__, filp->f_flags);
+	dprintk_ratelimited("%s[%d] f_flags: 0x%x\n", __func__, __LINE__, filp->f_flags);
 
 	try_module_get(THIS_MODULE);
 	mutex_lock(&emp_open_mutex);
@@ -2012,7 +2008,7 @@ static int emp_open(struct inode *inode, struct file *filp)
 				EMP_DEVICE_NAME);
 		goto open_register_err;
 	}
-	printk(KERN_NOTICE "%s (emm registered) emm: %d num_emp_mm: %ld\n",
+	printk_ratelimited(KERN_NOTICE "%s (emm registered) emm: %d num_emp_mm: %ld\n",
 			__func__, bvma->id, emp_mm_arr_len);
 
 	if (emp_procfs_add(bvma, bvma->id)) {
@@ -2048,7 +2044,7 @@ static int emp_open(struct inode *inode, struct file *filp)
 	bvma->pid = current->pid;
 
 	mutex_unlock(&emp_open_mutex);
-	printk(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
+	printk_ratelimited(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
 			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
 	return ret;
 
@@ -2093,13 +2089,13 @@ static int emp_release(struct inode *inode, struct file *filp)
 {
 	struct emp_mm *bvma;
 
-	dprintk("%s: filp->private_data=0x%lx\n", __func__,
+	dprintk_ratelimited("%s: filp->private_data=0x%lx\n", __func__,
 			(unsigned long)filp->private_data);
 
 	if (!filp->private_data)
 		return -ENODEV;
 	bvma = (struct emp_mm *)filp->private_data;
-	printk(KERN_NOTICE "%s (begin) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
+	printk_ratelimited(KERN_NOTICE "%s (begin) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
 			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
 
 	WARN_ON(atomic_dec_and_test(&bvma->refcount) != true);
@@ -2141,7 +2137,7 @@ static int emp_release(struct inode *inode, struct file *filp)
 	}
 #endif
 
-	printk(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
+	printk_ratelimited(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
 			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
 
 	emp_procfs_del(bvma);
@@ -2162,7 +2158,7 @@ static int emp_fsync(struct file *filp, loff_t s, loff_t e, int datasync)
 {
 	struct emp_mm *bvma;
 
-	printk(KERN_DEBUG "%s called s: %llx e: %llx datasync: %d",
+	dprintk(KERN_DEBUG "%s called s: %llx e: %llx datasync: %d",
 			__func__, s, e, datasync);
 
 	if (!filp->private_data)
