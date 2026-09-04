@@ -131,8 +131,8 @@ check_value(struct region *region, unsigned long idx) {
 
 static inline double
 timeval_diff(struct timeval *beg, struct timeval *end) {
-	return ((double) (end->tv_sec * 10e6 + end->tv_usec
-		- beg->tv_sec * 10e6 - beg->tv_usec)) / 10e6;
+	return ((double) (end->tv_sec * 1e6 + end->tv_usec
+		- beg->tv_sec * 1e6 - beg->tv_usec)) / 1e6;
 }
 
 static inline unsigned int rand_32bit() {
