@@ -1006,6 +1006,9 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 
 	/* update (clear and map) pte (writable) */
 	cow_update_pte(vmr, new_head, addr, ____off, page_len);
+	/* @new is now mapped by @vmr whatever @old's flag said: the flags were
+	 * copied from @old, which may not have been mapped at all. */
+	set_gpa_flags_if_unset(new_head, GPA_HPT_MASK);
 
 	/* NOTE: the remote page is removed at __dup_cow_gpadesc() */
 
