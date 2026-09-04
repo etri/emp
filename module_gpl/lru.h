@@ -223,6 +223,10 @@ static inline void temp_list_del_init(struct list_head *pos, struct temp_list *l
 	debug_assert(list->len >= 0);
 }
 
+/* We define temp_list_del() as same as temp_list_del_init().
+ * Refer to comments above emp_list_del(). */
+#define temp_list_del(pos, list) temp_list_del_init(pos, list)
+
 static inline struct list_head *temp_list_pop_head(struct temp_list *list)
 {
 	struct list_head *ret;
