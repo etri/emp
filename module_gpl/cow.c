@@ -406,23 +406,6 @@ show_new:
 #define debug_show_gpa_state_cow(emm, v, c, f, o, n, h, e) do {} while (0)
 #endif
 
-static void __cow_pmd_populate(struct mm_struct *mm, pmd_t *pmd, unsigned long hva)
-{
-	spinlock_t *ptl = pmd_lock(mm, pmd);
-	pgtable_t prealloc_pte;
-
-	if (unlikely(!pmd_none(*pmd))) {
-		spin_unlock(ptl);
-		return;
-	}
-
-	prealloc_pte = kernel_pte_alloc_one(mm, hva);
-
-	mm_inc_nr_ptes(mm);
-	pmd_populate(mm, pmd, prealloc_pte);
-	spin_unlock(ptl);
-}
-
 static void
 __cow_update_pte(struct vm_area_struct *vma, struct page *page,
 			pmd_t *pmd, unsigned long addr, unsigned int offset,
@@ -483,13 +466,9 @@ cow_update_pte(struct emp_vmr *vmr, struct emp_gpa *head,
 	debug_BUG_ON(page_len != (1 << gpa_subblock_order(head))
 			&& gpa_block_order(head) != gpa_subblock_order(head));
 
+	/* populated when recorded; only free_pgtables() empties it */
 	pmd = head->local_page->pmds.pmd;
-	if (debug_WARN_ONCE(pmd_none(*pmd),
-			"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
-			"pmd: 0x%016lx addr: 0x%016lx",
-			__func__, emp_vmr_dbgid(vmr), head->local_page->gpa_index,
-			(unsigned long) pmd, addr))
-		__cow_pmd_populate(vmr->host_mm, pmd, addr);
+	debug_BUG_ON(pmd_none(*pmd));
 
 	ptl = pte_lockptr(vmr->host_mm, pmd);
 	spin_lock(ptl);
@@ -569,12 +548,8 @@ cow_mkwrite_pte(struct emp_vmr *vmr, unsigned long head_idx, struct emp_gpa *hea
 			goto next;
 		debug_assert(emp_lp_count_pmd(gpa->local_page) == 1);
 		debug_assert(gpa->local_page->pmds.vmr == vmr);
-		if (debug_WARN_ONCE(pmd_none(*pmd),
-				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
-				"pmd: 0x%016lx hva: 0x%016lx",
-				__func__, emp_vmr_dbgid(vmr), head_idx + (gpa - head),
-				(unsigned long) pmd, addr))
-			__cow_pmd_populate(vmr->host_mm, pmd, addr);
+		/* populated when recorded */
+		debug_BUG_ON(pmd_none(*pmd));
 
 		debug_assert(vmr->host_mm == vmr->host_vma->vm_mm);
 		if (ptl == NULL) {
@@ -688,12 +663,8 @@ cow_wrprotect_pte(struct emp_vmr *vmr, unsigned long head_idx,
 		if (pmd_none(*pmd))
 			lfs_inc(lfs, pmd_none);
 
-		if (debug_WARN_ONCE(pmd_none(*pmd),
-				"WARN: (%s) pmd is none. vmr: %d gpa_idx: 0x%lx "
-				"pmd: 0x%016lx hva: 0x%016lx",
-				__func__, emp_vmr_dbgid(vmr), head_idx + (gpa - head),
-				(unsigned long) pmd, addr))
-			__cow_pmd_populate(vmr->host_mm, pmd, addr);
+		/* populated when recorded */
+		debug_BUG_ON(pmd_none(*pmd));
 
 		debug_assert(vmr->host_mm == vmr->host_vma->vm_mm);
 		if (ptl == NULL) {
