@@ -2425,14 +2425,14 @@ EXPORT_SYMBOL(__debug_sub_inactive_list_page_len);
 void debug_add_inflight_writeback_page_len(struct emp_mm *emm, struct emp_gpa *gpa)
 {
 	BUG_ON(emp_get_block_head(gpa) != gpa);
-	BUG_ON(gpa->r_state == GPA_WB);
+	BUG_ON(gpa->r_state != GPA_WB);
 }
 EXPORT_SYMBOL(debug_add_inflight_writeback_page_len);
 
 void debug_sub_inflight_writeback_page_len(struct emp_mm *emm, struct emp_gpa *gpa)
 {
 	BUG_ON(emp_get_block_head(gpa) != gpa);
-	BUG_ON(gpa->r_state == GPA_WB);
+	BUG_ON(gpa->r_state != GPA_WB);
 }
 EXPORT_SYMBOL(debug_sub_inflight_writeback_page_len);
 #endif /* CONFIG_EMP_DEBUG_LRU_LIST */
