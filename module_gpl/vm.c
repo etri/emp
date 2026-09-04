@@ -1012,7 +1012,7 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 
 #ifdef CONFIG_EMP_DEBUG_PAGE_REF
 		/* used for debug_check_page_map_status() */
-		pmd = get_pmd(new_mm, vpn << PAGE_SHIFT);
+		pmd = debug_get_pmd(new_mm, vpn << PAGE_SHIFT);
 #endif
 		idx = head_idx;
 		gpa = head;

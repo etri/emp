@@ -46,6 +46,9 @@ void kernel_tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,
 void kernel_thread_group_cputime_adjusted(struct task_struct *, u64 *, u64 *);
 unsigned long kernel_sysctl_hung_task_timeout_secs(void);
 pgtable_t kernel_pte_alloc_one(struct mm_struct *mm, unsigned long address);
+p4d_t *kernel_p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address);
+pud_t *kernel_pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address);
+pmd_t *kernel_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address);
 pte_t kernel_ptep_clear_flush(struct vm_area_struct *vma, unsigned long address, pte_t *ptep);
 
 struct k_symbol {
@@ -60,6 +63,9 @@ struct k_symbol {
 	unsigned long tlb_finish_mmu;
 	unsigned long tlb_gather_mmu;
 	unsigned long pte_alloc_one;
+	unsigned long __p4d_alloc; /* unused when the p4d level is folded */
+	unsigned long __pud_alloc;
+	unsigned long __pmd_alloc;
 	unsigned long thread_group_cputime_adjusted;
 	unsigned long sysctl_hung_task_timeout_secs;
 	unsigned long ptep_clear_flush;

@@ -953,6 +953,19 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 
 	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
 
+	pmd = emp_lp_lookup_pmd(old_head, vmr);
+	if (pmd == NULL) {
+		mapped = false;
+		pmd = get_populated_pmd(vmr->host_mm, addr, NULL);
+		if (unlikely(pmd == NULL)) {
+			printk(KERN_ERR "ERROR: %s failed to allocate page tables. "
+					"emm: %d vmr: %d head_idx: 0x%lx\n",
+					__func__, emm->id, emp_vmr_dbgid(vmr), head_idx);
+			return -ENOMEM;
+		}
+	} else
+		mapped = true;
+
 	// Duplicate old_head's local page to new_head
 	ret = dup_block_local_page(emm, NULL, vmr,
 					head_idx, old_head, new_head);
@@ -963,16 +976,9 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		return ret;
 	}
 
-	pmd = emp_lp_lookup_pmd(old_head, vmr);
-	if (pmd == NULL) {
-		mapped = false;
-		pmd = get_pmd(vmr->host_mm, addr);
-	} else
-		mapped = true;
-
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
 		/* Assert @pmd is same for all subblocks in a block. */
-		debug_assert(pmd == get_pmd(vmr->host_mm,
+		debug_assert(pmd == debug_get_pmd(vmr->host_mm,
 				vmr_offset_to_hva(vmr, idx)));
 
 		/* the pop itself moves the owner vmr */

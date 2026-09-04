@@ -570,7 +570,7 @@ void debug_check_page_map_status(struct emp_vmr *vmr, struct emp_gpa *head,
 	unsigned long _hva, i;
 	pte_t *_pte, *pte;
 
-	if (pmd_none(*pmd)) {
+	if (!pmd || pmd_none(*pmd)) {
 		if (map_expected)
 			BUG();
 		else

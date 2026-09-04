@@ -23,45 +23,59 @@ DECLARE_WAIT_QUEUE_HEAD(tmp_wq);
 #define vmf_write_fault(vmf) (((vmf)->flags & FAULT_FLAG_WRITE) ? true : false)
 
 /**
- * get_pmd - Get a pmd entry for the fault address
+ * get_populated_pmd - Get a populated pmd entry for the fault address
  * @param mm mm structure
  * @param address fault address
+ * @param prealloc page table preallocated by the caller. Consumed if used
  *
- * @return pmd entry
+ * @return pmd entry. NULL if a page table could not be allocated
  */
-pmd_t *get_pmd(struct mm_struct *mm, unsigned long address)
+pmd_t *get_populated_pmd(struct mm_struct *mm, unsigned long address,
+			pgtable_t *prealloc)
 {
 	pgd_t *pgd = pgd_offset(mm, address);
-	p4d_t *p4d = p4d_offset(pgd, address);
-	pud_t *pud = pud_offset(p4d, address);
-	pmd_t *pmd = pmd_offset(pud, address);
-	return pmd;
-}
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pgtable_t pte;
+	spinlock_t *ptl;
 
-/**
- * __pmd_populate - Populate pmd entry according to the fault address
- * @param vma virtual memory info
- * @param vmf fault address info
- */
-static void __pmd_populate(struct mm_struct *mm, struct vm_fault *vmf)
-{
-	vmf->ptl = pmd_lock(mm, vmf->pmd);
+	p4d = kernel_p4d_alloc(mm, pgd, address);
+	if (unlikely(!p4d))
+		return NULL;
+	pud = kernel_pud_alloc(mm, p4d, address);
+	if (unlikely(!pud))
+		return NULL;
+	pmd = kernel_pmd_alloc(mm, pud, address);
+	if (unlikely(!pmd))
+		return NULL;
 
-	if (unlikely(!pmd_none(*vmf->pmd))) {
-		spin_unlock(vmf->ptl);
-		return;
+	if (likely(!pmd_none(*pmd)))
+		return pmd;
+
+	if (prealloc && *prealloc) {
+		pte = *prealloc;
+		*prealloc = NULL;
+	} else {
+		pte = kernel_pte_alloc_one(mm, address);
+		if (unlikely(!pte))
+			return NULL;
 	}
 
-	if (vmf->prealloc_pte == NULL) {
-		vmf->prealloc_pte = kernel_pte_alloc_one(mm, vmf->address);
+	ptl = pmd_lock(mm, pmd);
+	if (likely(pmd_none(*pmd))) {
+		mm_inc_nr_ptes(mm);
+		/* the zeroed page table must be visible before the entry to it */
 		smp_wmb();
+		pmd_populate(mm, pmd, pte);
+		pte = NULL;
 	}
+	spin_unlock(ptl);
 
-	mm_inc_nr_ptes(mm);
-	pmd_populate(mm, vmf->pmd, vmf->prealloc_pte);
-	spin_unlock(vmf->ptl);
-
-	vmf->prealloc_pte = NULL;
+	/* another faulter populated the entry first: the page table is spare */
+	if (pte)
+		pte_free(mm, pte);
+	return pmd;
 }
 
 static void emp_hpt_fetch_barrier(struct emp_mm *bvma, struct emp_vmr *vmr,
@@ -391,6 +405,7 @@ next:
  * @param prefetch_hit already fetched page from previous fault
  *
  * @retval VM_FAULT_NOPAGE(256): Success
+ * @retval VM_FAULT_OOM: no memory for the page tables. Nothing is installed for @vmr
  * @retval 0: Error
  */
 int COMPILER_DEBUG
@@ -400,18 +415,12 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 			bool fetch, struct vm_fault *vmf, bool prefetch_hit)
 {
 	int ret;
-	pmd_t *pmd;
 	bool demand_check;
 	bool is_write = vmf->flags & FAULT_FLAG_WRITE;
 	unsigned int sb_order = gpa_subblock_order(head);
 	struct emp_gpa *prefetched_sb = prefetch_hit ?
 			(head + (head->local_page->demand_offset >> sb_order)) :
 			NULL;
-
-	pmd = get_pmd(vmr->host_mm, (unsigned long)vmf->address);
-
-	if (pmd_none(*pmd))
-		__pmd_populate(vmr->host_mm, vmf);
 
 	demand_check = prefetch_hit && (prefetched_sb == demand);
 	emp_hpt_fetch_barrier(emm, vmr, head, demand, demand_off,
@@ -421,7 +430,16 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 		sync_hpt_map_in_block(emm, head, is_write);
 		debug_check_sync_hpt(emm, head, NULL, DEBUG_SYNC_HPT_AFTER_SYNC);
 	}
-	
+
+	vmf->pmd = get_populated_pmd(vmr->host_mm, vmf->address,
+					&vmf->prealloc_pte);
+	if (unlikely(vmf->pmd == NULL)) {
+		printk(KERN_ERR "%s: failed to allocate page tables. "
+				"emm: %d vmr: %d address: 0x%lx\n", __func__,
+				emm->id, emp_vmr_dbgid(vmr), vmf->address);
+		return VM_FAULT_OOM;
+	}
+
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.prepare_install_hptes)
 		emp_ext.prepare_install_hptes(emm, vmr, head, demand,
@@ -431,7 +449,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 	/* stretching is done */
 	clear_gpa_flags_if_set(head, GPA_STRETCHED_MASK);
 
-	ret = emp_install_hptes(emm, vmr, head, demand, pmd,
+	ret = emp_install_hptes(emm, vmr, head, demand, vmf->pmd,
 							prefetch_hit, is_write);
 	debug_check_sync_hpt(emm, head, vmr, DEBUG_SYNC_HPT_AFTER_INSTALL);
 	vmf->page = demand->local_page->page
@@ -439,7 +457,7 @@ emp_page_fault_hptes_map(struct emp_mm *emm, struct emp_vmr *vmr,
 
 	if (!demand_check && (ret != VM_FAULT_NOPAGE)) {
 		printk(KERN_ERR "pmd_install does not succeed. pmd: %lx\n",
-					pmd_val(*pmd));
+					pmd_val(*vmf->pmd));
 		// XXX: what's the role of the following line?
 		wait_event_interruptible_timeout(tmp_wq, 0, 15*HZ);
 	}
@@ -493,8 +511,8 @@ static inline void __sync_hpt_map_in_block(struct emp_mm *emm,
 	n_less = emp_lp_count_pmd(lp_less);
 
 	/* TODO: handle the error from emp_install_hptes().
-	 * NOTE: __pmd_populate() is not required since at least one
-	 *       of the subblocks has the mapping.
+	 * NOTE: the pmd is populated since at least one of the subblocks
+	 *       has the mapping
 	 */
 	for (p = emp_lp_first_mapped_pmd(lp_more); p;
 			p = emp_lp_next_mapped_pmd(lp_more, p)) {
@@ -523,6 +541,8 @@ void sync_hpt_map_in_block(struct emp_mm *emm, struct emp_gpa *head,
 	struct emp_gpa *end = head + gpa_desc_size(head);
 	struct emp_gpa *gpa;
 
+	/* If unsync'ed vmr is found, we install it to every subblock in block.
+	 * Thus, one pass is enough. */
 	for (gpa = head + 1; gpa < end; gpa++)
 		__sync_hpt_map_in_block(emm, head, gpa, is_write);
 }
@@ -732,7 +752,7 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 		
 		debug_BUG_ON(!PageLocked(head->local_page->page));
 		emp_unlock_subblock(head);
-		
+
 		debug_progress(head, 0);
 		emp_pf_history_add(cpu, goto_code, 5);
 		goto _emp_page_fault_hva_fetch_posted;

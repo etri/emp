@@ -12,6 +12,33 @@
 #include <linux/vmalloc.h>
 #include <linux/gfp.h>
 
+/******************** EMP DEBUG HELPER FUNCTIONS ************************/
+
+/**
+ * debug_get_pmd - Get the pmd entry for an address without touching the
+ *                 page tables
+ * @param mm mm structure
+ * @param address address
+ *
+ * @return pmd entry. NULL if a page table above it does not exist
+ */
+static inline pmd_t *debug_get_pmd(struct mm_struct *mm, unsigned long address)
+{
+	pgd_t *pgd = pgd_offset(mm, address);
+	p4d_t *p4d;
+	pud_t *pud;
+
+	if (pgd_none(*pgd))
+		return NULL;
+	p4d = p4d_offset(pgd, address);
+	if (p4d_none(*p4d))
+		return NULL;
+	pud = pud_offset(p4d, address);
+	if (pud_none(*pud))
+		return NULL;
+	return pmd_offset(pud, address);
+}
+
 /******************** EMP DEBUG BULK MESSAGE LOCK ***********************/
 void emp_debug_bulk_msg_lock(void);
 void emp_debug_bulk_msg_unlock(void);

@@ -77,6 +77,11 @@ int kernel_symbol_init(void) {
 	KALLSYM_LOOKUP(ksym, tlb_finish_mmu, ret);
 	KALLSYM_LOOKUP(ksym, tlb_gather_mmu, ret);
 	KALLSYM_LOOKUP(ksym, pte_alloc_one, ret);
+#ifndef __PAGETABLE_P4D_FOLDED
+	KALLSYM_LOOKUP(ksym, __p4d_alloc, ret);
+#endif
+	KALLSYM_LOOKUP(ksym, __pud_alloc, ret);
+	KALLSYM_LOOKUP(ksym, __pmd_alloc, ret);
 	KALLSYM_LOOKUP(ksym, ptep_clear_flush, ret);
 	KALLSYM_LOOKUP(ksym, thread_group_cputime_adjusted, ret);
 	KALLSYM_LOOKUP(ksym, sysctl_hung_task_timeout_secs, ret);
@@ -242,6 +247,46 @@ pgtable_t kernel_pte_alloc_one(struct mm_struct *mm, unsigned long address)
 	f = (pgtable_t (*)(struct mm_struct *, unsigned long))ksym->pte_alloc_one;
 	return f(mm, address);
 #endif
+}
+
+/* kernel_p4d_alloc/kernel_pud_alloc/kernel_pmd_alloc - p4d_alloc(),
+ * pud_alloc() and pmd_alloc() of the kernel
+ *
+ * The kernel ones are inline, but the __p4d_alloc(), __pud_alloc() and
+ * __pmd_alloc() they fall back to for a none entry are not exported. Those
+ * allocate the table, take mm->page_table_lock, recheck the entry and
+ * populate it, so the callers need no p4d_populate() or pud_populate().
+ *
+ * @return the entry of the level below, or NULL if the table could not be
+ *         allocated
+ */
+p4d_t *kernel_p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
+{
+#ifndef __PAGETABLE_P4D_FOLDED
+	int (*f)(struct mm_struct *, pgd_t *, unsigned long);
+	f = (int (*)(struct mm_struct *, pgd_t *, unsigned long))ksym->__p4d_alloc;
+	if (unlikely(pgd_none(*pgd)) && f(mm, pgd, address))
+		return NULL;
+#endif
+	return p4d_offset(pgd, address);
+}
+
+pud_t *kernel_pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
+{
+	int (*f)(struct mm_struct *, p4d_t *, unsigned long);
+	f = (int (*)(struct mm_struct *, p4d_t *, unsigned long))ksym->__pud_alloc;
+	if (unlikely(p4d_none(*p4d)) && f(mm, p4d, address))
+		return NULL;
+	return pud_offset(p4d, address);
+}
+
+pmd_t *kernel_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
+{
+	int (*f)(struct mm_struct *, pud_t *, unsigned long);
+	f = (int (*)(struct mm_struct *, pud_t *, unsigned long))ksym->__pmd_alloc;
+	if (unlikely(pud_none(*pud)) && f(mm, pud, address))
+		return NULL;
+	return pmd_offset(pud, address);
 }
 
 pte_t kernel_ptep_clear_flush(struct vm_area_struct *vma, unsigned long address, pte_t *ptep)
