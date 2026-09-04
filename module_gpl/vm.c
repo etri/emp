@@ -643,7 +643,7 @@ __split_set_max_block_order(struct emp_vmr *vmr, struct emp_gpa *head,
 			&& pg_len == gpa_subblock_size(boundary) && pg_off == 0) {
 		/* perfectly aligned with this head */
 		max_order = gpa_max_block_order(head);
-		while (_emp_get_block_head(head, max_order) != head) {
+		while (_emp_get_block_head(head, max_order - sb_order) != head) {
 			max_order--;
 			debug_assert(max_order >= sb_order);
 		}
