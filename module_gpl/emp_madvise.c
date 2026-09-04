@@ -764,7 +764,7 @@ static int __emp_blk_move_to_inactive(struct emp_mm *emm, struct emp_vmr *vmr,
 			ret = r;
 		else
 			emp_stat_inc(emm, blk_dontneed_succeed);
-
+		return ret;
 	}
 
 #ifdef CONFIG_EMP_BLOCK
