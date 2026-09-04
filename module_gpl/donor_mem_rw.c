@@ -174,15 +174,10 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	} else {
 		debug_BUG_ON(page_count(local_page->page) < 1);
 
-		if (!is_stale) {
+		if (!is_stale && !io_read_mask)
 			// For the first touched pages, do zeroing.
-			if (!io_read_mask)
-				memset(page_address(local_page->page), 0,
-					PAGE_SIZE << gpa_subblock_order(gpa));
-
-			if (clear_gpa_flags_if_set(gpa, GPA_REMOTE_MASK))
-				free_remote_page(bvma, gpa, true);
-		}
+			memset(page_address(local_page->page), 0,
+				PAGE_SIZE << gpa_subblock_order(gpa));
 
 		if (io_read_mask)
 			emp_stat_inc(bvma, io_read_pages);
@@ -781,6 +776,47 @@ static bool try_wait_read_async(struct emp_mm *bvma, struct vcpu_var *cpu,
 		return false;
 }
 
+/**
+ * cancel_read_async - Wait for a fetch and release it WITHOUT consuming
+ *		       the remote copy
+ * @param bvma bvma data structure
+ * @param vcpu working vcpu ID
+ * @param gpa gpa of fetched page
+ *
+ * @retval true: a fetch was waited for and released
+ * @retval false: no work request
+ *
+ * For unwinding a failed fetch_block(): the subblock must stay refetchable,
+ * so the work requests are waited for and freed, but the remote page is
+ * kept and the CoW share is not put -- the mirror of
+ * _clear_fetching_work_request() minus __clear_fetching_work_request().
+ */
+static bool cancel_read_async(struct emp_mm *bvma, struct vcpu_var *cpu,
+			      struct emp_gpa *gpa)
+{
+	struct work_request *w = gpa->local_page->w;
+	struct work_request *head_wr;
+
+	if (w == NULL)
+		return false;
+
+	wait_read(bvma, w, cpu, false);
+
+	head_wr = w->head_wr;
+	if (w != head_wr && (!w->chained_ops || w != head_wr->eh_wr))
+		free_work_request(bvma, w);
+	if (atomic_dec_and_test(&head_wr->wr_refc)) {
+		if (head_wr->eh_wr)
+			free_work_request(bvma, head_wr->eh_wr);
+		free_work_request(bvma, head_wr);
+	}
+
+	debug_page_ref_io_end(gpa->local_page);
+	emp_put_subblock(gpa);
+	gpa->local_page->w = NULL;
+	return true;
+}
+
 #ifdef CONFIG_EMP_BLOCK
 /**
  * wait_read_async_demand_page - Wait completed a demand page fetch for CPF
@@ -827,6 +863,7 @@ void donor_mem_rw_init(struct emp_mm *bvma)
 	bvma->sops.wait_writeback_async_steal = wait_writeback_async_steal;
 	bvma->sops.wait_read_async = wait_read_async;
 	bvma->sops.try_wait_read_async = try_wait_read_async;
+	bvma->sops.cancel_read_async = cancel_read_async;
 #ifdef CONFIG_EMP_BLOCK
 	bvma->sops.wait_read_async_demand_page = wait_read_async_demand_page;
 #endif

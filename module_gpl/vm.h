@@ -413,6 +413,10 @@ struct emp_stm_ops {
 				struct emp_gpa *);
 	bool (*try_wait_read_async)(struct emp_mm *, struct vcpu_var *,
 				    struct emp_gpa *);
+	/* wait for a fetch and release it WITHOUT consuming the remote copy;
+	 * for unwinding a failed fetch_block() */
+	bool (*cancel_read_async)(struct emp_mm *, struct vcpu_var *,
+				  struct emp_gpa *);
 	int (*wait_read_async_demand_page)(struct emp_mm *, struct vcpu_var *,
 					    struct emp_gpa *, unsigned int);
 };

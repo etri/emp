@@ -302,6 +302,36 @@ int handle_local_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 	return ret;
 }
 
+/* Undo a failed fetch_block(): release the fetches in flight without
+ * consuming the remote copies, free the local pages populated by this call,
+ * and take back the first-touch marking, so the block returns to the exact
+ * uniform state a later fault can serve again. */
+static void __unwind_fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
+				 struct emp_gpa *head, unsigned long head_idx,
+				 struct vcpu_var *cpu, bool first_touch)
+{
+	struct emp_gpa *g;
+	unsigned long offset;
+
+	for_each_gpas_index(g, offset, head) {
+		if (g->local_page == NULL)
+			continue;
+		if (g->local_page->w)
+			bvma->sops.cancel_read_async(bvma, cpu, g);
+		emp_update_rss_sub(vmr,
+				__gpa_to_page_len(vmr, g, head_idx + offset),
+				DEBUG_RSS_SUB_ALLOC_FETCH_ERR,
+				g, DEBUG_UPDATE_RSS_SUBBLOCK);
+		bvma->vops.free_gpa(bvma, g, cpu);
+	}
+
+	if (first_touch) {
+		clear_gpa_flags_if_set(head, GPA_TOUCHED_MASK);
+		emp_els_stat_add(bvma, head, block_count, -1);
+	}
+	debug_assert(head->r_state == GPA_INIT);
+}
+
 /**
  * fetch_block - Fetch multiple pages in a block
  * @param bvma bvma data structure
@@ -330,6 +360,7 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	unsigned int sb_order;
 	int fip, ret;
 	int no_fetching_count = 0;
+	bool first_touch = false;
 	struct emp_gpa *g, *demand;
 	unsigned long offset;
 	struct work_request *head_wr = NULL;
@@ -344,6 +375,7 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	if (unlikely(!is_gpa_flags_set(head, GPA_TOUCHED_MASK))) {
 		set_gpa_flags_if_unset(head, GPA_TOUCHED_MASK);
 		no_fetch = true;
+		first_touch = true;
 
 		// increase block count
 		emp_els_stat_inc(bvma, head, block_count);
@@ -359,7 +391,7 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	else if (ret > 0)
 		head_wr = demand->local_page->w;
 	else /* error */
-		return ret;
+		goto err;
 	fip = ret;
 
 	// fetch the rest of pages in a block for prefetching
@@ -374,11 +406,19 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 		if (ret == 0)
 			no_fetching_count++;
 		else if (unlikely(ret < 0))
-			return ret;
+			goto err;
 		else if (head_wr == NULL) /* && ret > 0 */ {
 			head_wr = g->local_page->w;
 			fip = 1;
 		}
+	}
+
+	/* Every subblock is populated: the copies the skipped fetches left
+	 * behind are dead now, and only now. */
+	if (no_fetch && !is_stale) {
+		for_each_gpas(g, head)
+			if (clear_gpa_flags_if_set(g, GPA_REMOTE_MASK))
+				free_remote_page(bvma, g, true);
 	}
 
 	if (IS_IOTHREAD_VCPU(cpu->id) || fip == 0)
@@ -396,6 +436,10 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 #endif
 
 	return fip;
+
+err:
+	__unwind_fetch_block(bvma, vmr, head, head_idx, cpu, first_touch);
+	return ret;
 }
 
 /**
