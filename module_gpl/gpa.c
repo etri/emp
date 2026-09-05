@@ -1378,7 +1378,6 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
 	if (emp_lp_count_pmd(gpa->local_page) == 0) {
-		clear_gpa_flags_if_set(gpa, GPA_nPT_MASK);
 		if (PageReferenced(gpa->local_page->page)) {
 			ClearPageReferenced(gpa->local_page->page);
 #ifndef CONFIG_EMP_DEBUG_TRIGGER_REDUCE
@@ -1406,12 +1405,26 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 			i += num_subblock_in_block(head),
 			head += num_subblock_in_block(head)) {
 		unsigned long gpa_idx = max_head_idx + i;
+		bool any_hpt_map = false;
 		debug_progress(head, (((u64) emp_vmr_dbgid(vmr)) << 32) | head->r_state);
 		if (may_dirty)
 			set_gpa_flags_if_unset(head, GPA_DIRTY_MASK);
 		for_each_gpas(gpa, head) {
 			if (gpa->local_page)
 				__put_local_page_pmd(vmr, gpa);
+
+			/* A subblock keeps GPA_HPT_MASK only while it still has
+			 * a mapping record of its own. An extended page table
+			 * maps a block as a whole for the VM that owns it, and
+			 * that mapping is gone once the block is closed. */
+			if (gpa->local_page
+					&& emp_lp_first_mapped_pmd(gpa->local_page))
+				any_hpt_map = true;
+			else
+				clear_gpa_flags_if_set(gpa, GPA_HPT_MASK);
+#ifdef CONFIG_EMP_VM
+			clear_gpa_flags_if_set(gpa, GPA_EPT_MASK);
+#endif
 			/* If vm_refcnt > 0, this is MAP_SHARED and there is still other vmrs.
 			 * Don't decrement gpa's reference count for such case.
 			 */
@@ -1424,6 +1437,12 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 #endif
 			gpa_idx++;
 		}
+
+		/* The head's flags stand for the whole block: a subblock still
+		 * mapped by another vmr keeps GPA_HPT_MASK set, whichever
+		 * subblock it is. */
+		if (any_hpt_map)
+			set_gpa_flags_if_unset(head, GPA_HPT_MASK);
 
 		switch (head->r_state) {
 		case GPA_INIT:
