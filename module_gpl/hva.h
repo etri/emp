@@ -17,9 +17,19 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *);
 
 #ifdef CONFIG_EMP_USER
 /*
- * Set page->mapping and page->index so that get_futex_key() does
- * not return -EFAULT when a shared futex (without FUTEX_PRIVATE_FLAG)
- * is used on emp-managed memory.
+ * Give an EMP page the mapping and index of the region that maps it.
+ *
+ * EMP's pages are file-backed: the mapping is always the EMP device file's
+ * address_space, for a private region as much as for a shared one. That is
+ * what makes get_futex_key() work on EMP memory for a shared futex (it would
+ * return -EFAULT with no mapping), and it keeps the kernel's own view of the
+ * page consistent with how EMP maps it, since every pte EMP installs is
+ * accounted through the file rmap (folio_add_file_rmap_ptes) and every EMP
+ * charge lands on MM_FILEPAGES.
+ *
+ * The pages are not in the mapping's page cache: nothing looks them up by
+ * index, and the aops installed in emp_open() keep the paths that would
+ * (folio_mark_dirty) harmless.
  */
 static inline void emp_set_page_mapping_and_index(struct vm_area_struct *vma, unsigned long addr, struct page *page)
 {
@@ -33,18 +43,14 @@ static inline void emp_set_page_mapping_and_index(struct vm_area_struct *vma, un
 	 * subblock now hands over the subblock's own address and says
 	 * separately which page inside it the mapping starts at. */
 	debug_assert((addr & ((PAGE_SIZE << compound_order(page)) - 1)) == 0);
-	if (vma->vm_flags & VM_SHARED) {
-		page->mapping = vma->vm_file->f_mapping;
-		page->index   = linear_page_index(vma, addr);
-	} else {
-		page->mapping = (struct address_space *)
-			((unsigned long)vma->anon_vma | PAGE_MAPPING_ANON);
-		page->index   = linear_page_index(vma, addr);
-	}
+	/* an EMP region is always a mapping of the EMP device file */
+	debug_assert(vma->vm_file);
+	page->mapping = vma->vm_file->f_mapping;
+	page->index   = linear_page_index(vma, addr);
 }
 
 /*
- * Clear page->mapping and index which were set to support shared futexes.
+ * Clear page->mapping and index before the page leaves EMP.
  */
 static inline void emp_clear_page_mapping_and_index(struct page *page)
 {

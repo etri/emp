@@ -1939,9 +1939,9 @@ static void free_bvma(struct emp_mm *bvma)
 /*
  * In 6.5+ kernels, folio_mark_dirty() dispatches through
  * mapping->a_ops->dirty_folio with no fallback. EMP sets
- * page->mapping = vma->vm_file->f_mapping for VM_SHARED regions
- * (see emp_set_page_mapping_and_index in hva.h) to support shared
- * futexes. The default chardev aops on some kernels has dirty_folio
+ * page->mapping = vma->vm_file->f_mapping on every region it backs
+ * (see emp_set_page_mapping_and_index in hva.h). The default chardev
+ * aops on some kernels has dirty_folio
  * NULL, so munmap() oopses. Override the chardev's mapping aops
  * once with a private table that uses noop_dirty_folio. */
 #if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 4)) \

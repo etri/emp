@@ -788,13 +788,12 @@ emp_vmr_find_hva(struct emp_mm *emm, struct mm_struct *mm,
 	return vmr;
 }
 
-/* Refer to module_gpl/hva.h:emp_set_page_mapping_and_index().
- * It sets VM_SHARED mappings as a file-backed memory, and
- * non-shared mappings as a anonymous memory.
+/* EMP's pages are file-backed whatever the region is: see
+ * module_gpl/hva.h:emp_set_page_mapping_and_index(). The kernel charges a pte
+ * it zaps by the same rule (mm_counter() follows page->mapping), so EMP and
+ * the kernel debit the same counter.
  */
-#define EMP_RSS_MM_COUNTER(vmr) \
-	(((vmr)->host_vma && ((vmr)->host_vma->vm_flags & VM_SHARED)) \
-		? MM_FILEPAGES : MM_ANONPAGES)
+#define EMP_RSS_MM_COUNTER(vmr) MM_FILEPAGES
 
 static inline void
 __emp_update_rss_add(struct emp_vmr *vmr, unsigned long val)
