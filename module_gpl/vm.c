@@ -1038,6 +1038,27 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 		while (idx < idx_end) {
 			if (ACTIVE_BLOCK(head)) {
 				if (!emp_lp_lookup_vmr(gpa, prev_vmr)) {
+					/* An ACTIVE block's subblocks need not
+					 * all be mapped: a CSF fetch installs
+					 * the demand subblock alone and leaves
+					 * the rest local, charged whole to the
+					 * vmr that fetched them. That ownership
+					 * follows the view, as an inactive
+					 * block's does below. */
+					if (emp_lp_owner(gpa->local_page) == prev_vmr) {
+						emp_lp_set_owner(gpa->local_page, new_vmr);
+						debug_lru_set_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
+#ifdef CONFIG_EMP_DEBUG_RSS
+						emp_update_rss_sub_kernel(prev_vmr,
+								gpa_subblock_size(gpa),
+								DEBUG_RSS_SUB_KERNEL_VMA_SPLIT_OWNER,
+								gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+						emp_update_rss_add_kernel(new_vmr,
+								gpa_subblock_size(gpa),
+								DEBUG_RSS_ADD_KERNEL_VMA_SPLIT_OWNER,
+								gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+#endif
+					}
 					debug_check_page_map_status(new_vmr, head,
 								head_idx, pmd, false);
 					goto next_gpa;
