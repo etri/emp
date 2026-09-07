@@ -349,6 +349,7 @@ void emp_vmdesc_view_exit(struct emp_vmdesc *desc);
 void clear_block_for_reduction(struct emp_mm *emm, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx);
 #endif /* CONFIG_EMP_USER */
+void sync_block_owner(struct emp_mm *emm, struct emp_gpa *head);
 int gpas_open(struct emp_vmr *);
 void gpas_close(struct emp_vmr *, bool, bool);
 int gpa_init(struct emp_mm *);

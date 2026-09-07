@@ -1041,7 +1041,7 @@ static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
 /**
  * sync_block_owner - one owner for every unmapped subblock of a block
  * @param emm emm data structure
- * @param head head of the block, just unmapped
+ * @param head head of the block, just unmapped or left behind by a CoW
  *
  * The subblocks of a block are mapped and unmapped one by one, so the vmr
  * each of them retained as its owner is whichever popped its last mapping,
@@ -1049,10 +1049,11 @@ static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
  * subblock to a vmr any more: whichever vmr the head retained takes them
  * all, moving the residency charge with the ownership. The block then
  * stands whole on one mm, set_gpa_remote() has one owner to release, and
- * the head speaks for the block. Every vmr has been unmapped by the time we
- * are called, so no subblock has a mapping record left.
+ * the head speaks for the block. A subblock a mapping record still names
+ * keeps its representative: reclaim has unmapped every vmr by the time it
+ * calls, but the CoW arrives with the mappings of the other vmrs alive.
  */
-static void COMPILER_DEBUG
+void COMPILER_DEBUG
 sync_block_owner(struct emp_mm *emm, struct emp_gpa *head)
 {
 	struct emp_vmr *owner = emp_lp_owner(head->local_page);
@@ -1071,8 +1072,7 @@ sync_block_owner(struct emp_mm *emm, struct emp_gpa *head)
 
 	for_each_gpas(g, head) {
 		struct emp_vmr *prev = emp_lp_owner(g->local_page);
-		debug_assert(emp_lp_count_pmd(g->local_page) == 0);
-		if (prev == owner)
+		if (prev == owner || emp_lp_count_pmd(g->local_page))
 			continue;
 		/* @prev differs from subblock to subblock, so its charge goes
 		 * straight to its mm; @owner takes them all and is flushed

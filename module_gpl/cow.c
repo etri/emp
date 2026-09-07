@@ -1053,11 +1053,13 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 	if (rss_changed)
 		emp_update_rss_cached(vmr);
 
-	/* If @vmr was @old's only mapper and owner, the pop retained it and the
-	 * clear above orphaned @old: move it to the writeback list, which
-	 * allows orphans. If @old has a valid remote page,
-	 * emp_writeback_block() will skip the I/O. If another mapper survived,
-	 * the pop promoted it to owner and @old stays on its LRU chain. */
+	/* @old is @vmr's no more. Its fate is the whole block's, not its
+	 * head's: another vmr may still map or own subblocks of a CSF block.
+	 * sync_block_owner() hands what @vmr orphaned to the owner that
+	 * remains; only a block with nobody left is an orphan, and the
+	 * writeback list takes it -- emp_writeback_block() skips the I/O when
+	 * the remote page is still valid. */
+	sync_block_owner(emm, old_head);
 	if (emp_lp_owner(old_head->local_page) == NULL) {
 		debug_assert(emp_lp_count_pmd(old_head->local_page) == 0);
 		if (!WB_BLOCK(old_head)) {
