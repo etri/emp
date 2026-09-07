@@ -898,6 +898,9 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			/* The kernel zapped the ptes and released them itself.
 			 * The subblock stays local and is unmapped now: @vmr, its
 			 * owner, carries it whole until its close. */
+			emp_update_rss_sub_kernel(vmr, pages_len,
+						DEBUG_RSS_SUB_KERNEL_ZAPPED,
+						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 			emp_update_rss_add(vmr, gpa_subblock_size(gpa),
 						DEBUG_RSS_ADD_UNMAP_OWNER,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);

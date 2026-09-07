@@ -109,6 +109,8 @@ struct local_page {
 #ifdef CONFIG_EMP_DEBUG_RSS
 	/* pages each vmr (by debug id) is charged for on this subblock */
 	u16 debug_rss_pages[CONFIG_EMP_DEBUG_RSS_MAX_VMRS];
+	/* the vmr charged the whole subblock as its owner; NULL while mapped */
+	struct emp_vmr *debug_rss_owner;
 #ifdef CONFIG_EMP_DEBUG_RSS_PROGRESS
 	struct debug_rss_progress debug_rss_progress[DEBUG_RSS_PROGRESS_SIZE];
 	int debug_rss_progress_next;

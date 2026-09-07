@@ -219,6 +219,7 @@ const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
 	"COW_OTHER_ACTIVE",
 	"COW_CARRY",
 	"VMA_SPLIT",
+	"VMA_SPLIT_OWNER",
 };
 
 const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
@@ -228,6 +229,8 @@ const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
 	"COW_CARRY",
 	"VMA_SPLIT",
 	"UNMAP_SUBBLOCK",
+	"VMA_SPLIT_OWNER",
+	"ZAPPED",
 };
 
 void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
@@ -338,6 +341,39 @@ static void ____debug_update_rss_warn_once_vmr_id(const char *func, int vmr_id) 
 				func, vmr_id, CONFIG_EMP_DEBUG_RSS_MAX_VMRS);
 }
 
+/* Which side of the model an ADD is on (see the RSS model note in vm.h):
+ * the owner, who carries a local subblock whole, gpa_subblock_size(), while
+ * nobody maps it, or a mapper, who is charged its view, page_len. The
+ * kernel's beliefs (by_emp == 0) are about a mapper's ptes, except the split
+ * handing an owned subblock to the other half. A release needs no table:
+ * whoever carries the subblock whole is recorded in @lp->debug_rss_owner, so
+ * one reason code may retire a mapper on one subblock and the owner on the
+ * next, as the CoW does. */
+static const bool debug_rss_add_owner[NUM_DEBUG_RSS_ADD_ID] = {
+	[DEBUG_RSS_ADD_WRITEBACK_CURR] = true,
+	[DEBUG_RSS_ADD_INACTIVE_CURR] = true,
+	[DEBUG_RSS_ADD_WRITEBACK_CURR_PRO] = true,
+	[DEBUG_RSS_ADD_INACTIVE_CURR_PRO] = true,
+	[DEBUG_RSS_ADD_ALLOC_FETCH] = true,
+	[DEBUG_RSS_ADD_UNMAP_OWNER] = true,
+};
+static inline bool __debug_rss_add_is_owner(int ID, int by_emp)
+{
+	return by_emp ? debug_rss_add_owner[ID]
+		      : ID == DEBUG_RSS_ADD_KERNEL_VMA_SPLIT_OWNER;
+}
+
+/* what @vmr may hold on @gpa at most: its view as a mapper, plus the whole
+ * subblock while it is the recorded owner -- the install charges the view
+ * before it releases the owner, so both stand for a moment */
+static inline long __debug_rss_limit(struct emp_vmr *vmr, struct emp_gpa *gpa)
+{
+	long limit = __local_gpa_to_page_len(vmr, gpa);
+	if (gpa->local_page->debug_rss_owner == vmr)
+		limit += gpa_subblock_size(gpa);
+	return limit;
+}
+
 /* charge exactly @val pages of @lp to @vmr. @limit is what @vmr may hold on
  * @lp at most, so a repeated nominal charge still trips here. */
 static void COMPILER_DEBUG __debug_update_rss_add(struct emp_vmr *vmr, struct local_page *lp,
@@ -395,11 +431,25 @@ debug_update_rss_add(struct emp_vmr *vmr, long val, int ID, int by_emp,
 	}
 
 	if (mode == DEBUG_UPDATE_RSS_SUBBLOCK) {
-		long page_len;
-		debug_assert(gpa->local_page);
-		page_len = __local_gpa_to_page_len(vmr, gpa);
-		debug_assert(val == page_len);
-		__debug_update_rss_add(vmr, gpa->local_page, val, page_len,
+		struct local_page *lp = gpa->local_page;
+		debug_assert(lp);
+		if (__debug_rss_add_is_owner(ID, by_emp)) {
+			/* the owner takes the subblock whole, and only one may */
+			debug_assert(val == gpa_subblock_size(gpa));
+			if (lp->debug_rss_owner) {
+				printk(KERN_ERR "[DEBUG_RSS] ERROR: owner charged twice vmr_id: %d (owner: %d) gpa_index: %ld at %s:%d\n",
+					emp_vmr_dbgid(vmr),
+					emp_vmr_dbgid(lp->debug_rss_owner),
+					lp->gpa_index, file, line);
+				__debug_update_rss_show_progress(lp);
+				BUG();
+			}
+			lp->debug_rss_owner = vmr;
+		} else
+			/* a mapper is charged its view, or less where a slot
+			 * was left to the kernel's page */
+			debug_assert(val <= __local_gpa_to_page_len(vmr, gpa));
+		__debug_update_rss_add(vmr, lp, val, __debug_rss_limit(vmr, gpa),
 								file, line);
 	} else {
 		struct emp_gpa *g;
@@ -435,12 +485,19 @@ debug_update_rss_sub(struct emp_vmr *vmr, long val, int ID, int by_emp,
 	}
 
 	if (mode == DEBUG_UPDATE_RSS_SUBBLOCK || mode == DEBUG_UPDATE_RSS_CLOSING) {
-		debug_assert(gpa->local_page);
-		if (mode == DEBUG_UPDATE_RSS_SUBBLOCK)
-			debug_assert(val == __local_gpa_to_page_len(vmr, gpa));
-		else	/* the kernel may have zapped part of the subblock already */
+		struct local_page *lp = gpa->local_page;
+		debug_assert(lp);
+		if (lp->debug_rss_owner == vmr) {
+			/* the vmr carrying the subblock whole lets go of it
+			 * whole; the reason code does not decide this, the
+			 * record does */
+			debug_assert(val == gpa_subblock_size(gpa));
+			lp->debug_rss_owner = NULL;
+		} else
+			/* a mapper's view, less what the kernel zapped before
+			 * us (CLOSING) or what a foreign page holds */
 			debug_assert(val <= __local_gpa_to_page_len(vmr, gpa));
-		__debug_update_rss_sub(vmr, gpa->local_page, val, file, line);
+		__debug_update_rss_sub(vmr, lp, val, file, line);
 	} else {
 		struct emp_gpa *g;
 		long page_len, sum = 0;
@@ -464,6 +521,7 @@ void debug_update_rss_init_local_page(struct local_page *lp)
 	int i;
 	for (i = 0; i < CONFIG_EMP_DEBUG_RSS_MAX_VMRS; i++)
 		lp->debug_rss_pages[i] = 0;
+	lp->debug_rss_owner = NULL;
 #ifdef CONFIG_EMP_DEBUG_RSS_PROGRESS
 	for (i = 0; i < DEBUG_RSS_PROGRESS_SIZE; i++) {
 		lp->debug_rss_progress[i].file = NULL;
@@ -483,11 +541,14 @@ void debug_update_rss_free_local_page(struct local_page *lp)
 		if (lp->debug_rss_pages[i] != 0)
 			goto error_found;
 	}
+	if (lp->debug_rss_owner)
+		goto error_found;
 	return;
 
 error_found:
-	printk(KERN_ERR "[DEBUG_RSS] ERROR: free_local_page with remained RSS. lp: %016lx gpa_index: %ld\n",
-				(unsigned long) lp, lp->gpa_index);
+	printk(KERN_ERR "[DEBUG_RSS] ERROR: free_local_page with remained RSS. lp: %016lx gpa_index: %ld owner: %d\n",
+				(unsigned long) lp, lp->gpa_index,
+				emp_vmr_dbgid(lp->debug_rss_owner));
 	for (i = 0; i < CONFIG_EMP_DEBUG_RSS_MAX_VMRS; i++) {
 		if (lp->debug_rss_pages[i] == 0)
 			continue;

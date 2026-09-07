@@ -822,10 +822,12 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 					debug_lru_set_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
 				}
 #ifdef CONFIG_EMP_DEBUG_RSS
-				if (pmd || emp_lp_owner(gpa->local_page) == new_vmr) {
-					/* RSS has been moved.
-					 * However, host_mm of prev_vmr and new_vmr are identical.
-					 * We don't need to take care of RSS actually. */
+				/* RSS has been moved.
+				 * However, host_mm of prev_vmr and new_vmr are identical.
+				 * We don't need to take care of RSS actually. A mapper
+				 * moves its view; an owner without a mapping the whole
+				 * subblock it carried. */
+				if (pmd) {
 					emp_update_rss_sub_kernel(prev_vmr,
 							__gpa_to_page_len(new_vmr, gpa, head_index + sb_index),
 							DEBUG_RSS_SUB_KERNEL_VMA_SPLIT,
@@ -833,6 +835,15 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 					emp_update_rss_add_kernel(new_vmr,
 							__gpa_to_page_len(new_vmr, gpa, head_index + sb_index),
 							DEBUG_RSS_ADD_KERNEL_VMA_SPLIT,
+							gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+				} else if (emp_lp_owner(gpa->local_page) == new_vmr) {
+					emp_update_rss_sub_kernel(prev_vmr,
+							gpa_subblock_size(gpa),
+							DEBUG_RSS_SUB_KERNEL_VMA_SPLIT_OWNER,
+							gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+					emp_update_rss_add_kernel(new_vmr,
+							gpa_subblock_size(gpa),
+							DEBUG_RSS_ADD_KERNEL_VMA_SPLIT_OWNER,
 							gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 				}
 #endif
@@ -1064,13 +1075,14 @@ static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 					emp_lp_set_owner(gpa->local_page, new_vmr);
 					debug_lru_set_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(new_vmr));
 #ifdef CONFIG_EMP_DEBUG_RSS
+					/* the owner carried the whole subblock */
 					emp_update_rss_sub_kernel(prev_vmr,
-							__gpa_to_page_len(new_vmr, gpa, idx),
-							DEBUG_RSS_SUB_KERNEL_VMA_SPLIT,
+							gpa_subblock_size(gpa),
+							DEBUG_RSS_SUB_KERNEL_VMA_SPLIT_OWNER,
 							gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 					emp_update_rss_add_kernel(new_vmr,
-							__gpa_to_page_len(new_vmr, gpa, idx),
-							DEBUG_RSS_ADD_KERNEL_VMA_SPLIT,
+							gpa_subblock_size(gpa),
+							DEBUG_RSS_ADD_KERNEL_VMA_SPLIT_OWNER,
 							gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 #endif
 				}
