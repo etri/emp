@@ -43,11 +43,12 @@ void COMPILER_DEBUG push_free_page_list(struct emp_mm *emm, struct page *page,
 
 	debug_push_free_page_list(page);
 
+	emp_clear_page_mapping_and_index(page);
+
 	if (atomic_read(&emm->ftm.free_pages_reclaim) >= subblock_size) {
 		if (atomic_sub_return(subblock_size,
 				&emm->ftm.free_pages_reclaim) >= 0) {
 			_emp_unlock_page(page);
-			emp_clear_page_mapping_and_index(page);
 			emp_free_pages(page);
 
 			atomic_sub(subblock_size, &emm->ftm.alloc_pages_len);
