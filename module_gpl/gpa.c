@@ -1039,11 +1039,63 @@ static void unmap_ptes(struct emp_mm *emm, struct emp_gpa *head,
 }
 
 /**
+ * sync_block_owner - one owner for every unmapped subblock of a block
+ * @param emm emm data structure
+ * @param head head of the block, just unmapped
+ *
+ * The subblocks of a block are mapped and unmapped one by one, so the vmr
+ * each of them retained as its owner is whichever popped its last mapping,
+ * and they need not agree. Once the whole block is unmapped nothing ties a
+ * subblock to a vmr any more: whichever vmr the head retained takes them
+ * all, moving the residency charge with the ownership. The block then
+ * stands whole on one mm, set_gpa_remote() has one owner to release, and
+ * the head speaks for the block. Every vmr has been unmapped by the time we
+ * are called, so no subblock has a mapping record left.
+ */
+static void COMPILER_DEBUG
+sync_block_owner(struct emp_mm *emm, struct emp_gpa *head)
+{
+	struct emp_vmr *owner = emp_lp_owner(head->local_page);
+	struct emp_gpa *g;
+
+	if (!owner) {
+		/* the head was orphaned by a closed owner: any owner left */
+		for_each_gpas(g, head) {
+			owner = emp_lp_owner(g->local_page);
+			if (owner)
+				break;
+		}
+		if (!owner)
+			return;
+	}
+
+	for_each_gpas(g, head) {
+		struct emp_vmr *prev = emp_lp_owner(g->local_page);
+		debug_assert(emp_lp_count_pmd(g->local_page) == 0);
+		if (prev == owner)
+			continue;
+		/* @prev differs from subblock to subblock, so its charge goes
+		 * straight to its mm; @owner takes them all and is flushed
+		 * once, below. */
+		if (prev)
+			emp_update_rss_sub_force(prev, gpa_subblock_size(g),
+						DEBUG_RSS_SUB_SYNC_OWNER,
+						g, DEBUG_UPDATE_RSS_SUBBLOCK);
+		emp_lp_set_owner(g->local_page, owner);
+		debug_lru_set_vmr_id_mark(g->local_page, emp_vmr_dbgid(owner));
+		emp_update_rss_add(owner, gpa_subblock_size(g),
+					DEBUG_RSS_ADD_SYNC_OWNER,
+					g, DEBUG_UPDATE_RSS_SUBBLOCK);
+	}
+
+	emp_update_rss_cached(owner);
+}
+
+/**
  * unmap_gpas - Unmap gpas
  * @param emm emm data structure
  * @param head head to unmap
  * @param tlb_flush_force force to flush TLB?
- * @param rss_update RSS update or not
  *
  * Unmap pages from page tables
  */
@@ -1101,6 +1153,8 @@ unmap_gpas(struct emp_mm *emm, struct emp_gpa *head, bool *tlb_flush_force)
 		unmap_ptes(emm, head, head_hva, total_block_size);
 		debug_progress(head, head_hva);
 	}
+
+	sync_block_owner(emm, head);
 
 	for_each_gpas(g, head) {
 		if (!PageReferenced(g->local_page->page))

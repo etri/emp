@@ -42,6 +42,7 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 				    struct vcpu_var *cpu)
 {
 	struct emp_gpa *g;
+	struct emp_vmr *prev_owner;
 	struct emp_mm *emm = vmr->emm;
 	struct work_request *head_wr = head->local_page ? head->local_page->w
 							: NULL;
@@ -74,15 +75,18 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	// decrement of inactive_list.page_len is delayed
 	sub_inactive_list_page_len(emm, head);
 
+	/* one owner per unmapped block (sync_block_owner()): the block moves
+	 * from @prev_owner's mm to @vmr's whole, or stays where it is */
+	prev_owner = emp_lp_owner(head->local_page);
 	for_each_gpas_reverse(g, head) {
-		struct emp_vmr *prev_owner = emp_lp_owner(g->local_page);
 		free_remote_page(emm, g, true);
-		emp_lp_set_owner(g->local_page, vmr);
-		debug_lru_set_vmr_id_mark(g->local_page, emp_vmr_dbgid(vmr));
 		if (prev_owner == vmr)
 			continue;
+		debug_assert(emp_lp_owner(g->local_page) == prev_owner);
+		emp_lp_set_owner(g->local_page, vmr);
+		debug_lru_set_vmr_id_mark(g->local_page, emp_vmr_dbgid(vmr));
 		if (prev_owner)
-			emp_update_rss_sub_force(prev_owner, gpa_subblock_size(g),
+			emp_update_rss_sub(prev_owner, gpa_subblock_size(g),
 				DEBUG_RSS_SUB_WRITEBACK_PREV,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 		emp_update_rss_add(vmr, gpa_subblock_size(g),
@@ -90,7 +94,11 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
 
-	emp_update_rss_cached(vmr);
+	if (prev_owner != vmr) {
+		if (prev_owner)
+			emp_update_rss_cached(prev_owner);
+		emp_update_rss_cached(vmr);
+	}
 }
 
 /**
@@ -140,6 +148,7 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 {
 	int gpa_cpu;
 	struct emp_list *list;
+	struct emp_vmr *prev_owner;
 	struct emp_mm *emm = vmr->emm;
 	struct slru *slru = &emm->ftm.inactive_list;
 	struct emp_gpa *g;
@@ -154,22 +163,26 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 	clear_local_page_on_mru(head->local_page);
 	emp_list_unlock(list);
 
-	for_each_gpas(g, head) {
-		struct emp_vmr *prev_owner = emp_lp_owner(g->local_page);
-		if (prev_owner == vmr)
-			continue;
-		emp_lp_set_owner(g->local_page, vmr);
-		debug_lru_set_vmr_id_mark(g->local_page, emp_vmr_dbgid(vmr));
+	/* one owner per unmapped block (sync_block_owner()): the block moves
+	 * from @prev_owner's mm to @vmr's whole, or stays where it is */
+	prev_owner = emp_lp_owner(head->local_page);
+	if (prev_owner != vmr) {
+		for_each_gpas(g, head) {
+			debug_assert(emp_lp_owner(g->local_page) == prev_owner);
+			emp_lp_set_owner(g->local_page, vmr);
+			debug_lru_set_vmr_id_mark(g->local_page, emp_vmr_dbgid(vmr));
+			if (prev_owner)
+				emp_update_rss_sub(prev_owner, gpa_subblock_size(g),
+					DEBUG_RSS_SUB_INACTIVE_PREV,
+					g, DEBUG_UPDATE_RSS_SUBBLOCK);
+			emp_update_rss_add(vmr, gpa_subblock_size(g),
+					DEBUG_RSS_ADD_INACTIVE_CURR,
+					g, DEBUG_UPDATE_RSS_SUBBLOCK);
+		}
 		if (prev_owner)
-			emp_update_rss_sub_force(prev_owner, gpa_subblock_size(g),
-				DEBUG_RSS_SUB_INACTIVE_PREV,
-				g, DEBUG_UPDATE_RSS_SUBBLOCK);
-		emp_update_rss_add(vmr, gpa_subblock_size(g),
-				DEBUG_RSS_ADD_INACTIVE_CURR,
-				g, DEBUG_UPDATE_RSS_SUBBLOCK);
+			emp_update_rss_cached(prev_owner);
+		emp_update_rss_cached(vmr);
 	}
-
-	emp_update_rss_cached(vmr);
 
 	check_eager_wbr(emm, cpu, head);
 

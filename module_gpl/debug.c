@@ -193,6 +193,7 @@ const char *debug_rss_add_str[NUM_DEBUG_RSS_ADD_ID] = {
 	"COW_INACTIVE",
 	"COW_WRITEBACK",
 	"UNMAP_OWNER",
+	"SYNC_OWNER",
 };
 
 const char *debug_rss_sub_str[NUM_DEBUG_RSS_SUB_ID] = {
@@ -211,6 +212,7 @@ const char *debug_rss_sub_str[NUM_DEBUG_RSS_SUB_ID] = {
 	"COW_INACTIVE",
 	"COW_WRITEBACK",
 	"COW_OWNER",
+	"SYNC_OWNER",
 };
 
 const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
@@ -356,6 +358,7 @@ static const bool debug_rss_add_owner[NUM_DEBUG_RSS_ADD_ID] = {
 	[DEBUG_RSS_ADD_INACTIVE_CURR_PRO] = true,
 	[DEBUG_RSS_ADD_ALLOC_FETCH] = true,
 	[DEBUG_RSS_ADD_UNMAP_OWNER] = true,
+	[DEBUG_RSS_ADD_SYNC_OWNER] = true,
 };
 static inline bool __debug_rss_add_is_owner(int ID, int by_emp)
 {
