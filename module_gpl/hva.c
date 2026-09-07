@@ -253,7 +253,6 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 {
 	struct local_page *lp = gpa->local_page;
 	struct page *page = lp->page;
-	bool was_owner;
 	struct emp_vmr *prev_owner;
 	int ret;
 
@@ -266,18 +265,22 @@ __emp_install_hptes(struct emp_vmr *vmr, struct emp_gpa *gpa,
 
 	debug_check_notnull_pointer(lp->w);
 
-	was_owner = (emp_lp_owner(lp) == vmr);
 	prev_owner = (lp->num_pmds == 0) ? emp_lp_owner(lp) : NULL;
 	emp_lp_insert_pmd(vmr->emm, lp, vmr, pmd);
 	debug_lru_add_vmr_id_mark(lp, emp_vmr_dbgid(vmr));
 
-	if (!was_owner)
-		emp_update_rss_add(vmr, page_len,
-				DEBUG_RSS_ADD_INSTALL_HPTES,
+	/* @vmr is charged its view. The first mapping ends the subblock's
+	 * time as local-but-unmapped: its owner stops carrying it whole. */
+	emp_update_rss_add(vmr, page_len,
+			DEBUG_RSS_ADD_INSTALL_HPTES,
+			gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+	if (prev_owner == vmr)
+		emp_update_rss_sub(vmr, gpa_subblock_size(gpa),
+				DEBUG_RSS_SUB_INSTALL_HPTES_PREV,
 				gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
-	if (prev_owner && prev_owner != vmr)
-		emp_update_rss_sub(prev_owner,
-				__local_gpa_to_page_len(prev_owner, gpa),
+	else if (prev_owner)
+		/* another vmr's cache is not ours to flush: straight to its mm */
+		emp_update_rss_sub_force(prev_owner, gpa_subblock_size(gpa),
 				DEBUG_RSS_SUB_INSTALL_HPTES_PREV,
 				gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 

@@ -82,15 +82,15 @@ static void _handle_writeback_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		if (prev_owner == vmr)
 			continue;
 		if (prev_owner)
-			emp_update_rss_sub_force(prev_owner,
-				__local_gpa_to_page_len(prev_owner, g),
+			emp_update_rss_sub_force(prev_owner, gpa_subblock_size(g),
 				DEBUG_RSS_SUB_WRITEBACK_PREV,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
-		emp_update_rss_add_force(vmr,
-				__local_gpa_to_page_len(vmr, g),
+		emp_update_rss_add(vmr, gpa_subblock_size(g),
 				DEBUG_RSS_ADD_WRITEBACK_CURR,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
+
+	emp_update_rss_cached(vmr);
 }
 
 /**
@@ -161,15 +161,15 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		emp_lp_set_owner(g->local_page, vmr);
 		debug_lru_set_vmr_id_mark(g->local_page, emp_vmr_dbgid(vmr));
 		if (prev_owner)
-			emp_update_rss_sub_force(prev_owner,
-				__local_gpa_to_page_len(prev_owner, g),
+			emp_update_rss_sub_force(prev_owner, gpa_subblock_size(g),
 				DEBUG_RSS_SUB_INACTIVE_PREV,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
-		emp_update_rss_add_force(vmr,
-				__local_gpa_to_page_len(vmr, g),
+		emp_update_rss_add(vmr, gpa_subblock_size(g),
 				DEBUG_RSS_ADD_INACTIVE_CURR,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
+
+	emp_update_rss_cached(vmr);
 
 	check_eager_wbr(emm, cpu, head);
 
@@ -318,8 +318,7 @@ static void __unwind_fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 			continue;
 		if (g->local_page->w)
 			bvma->sops.cancel_read_async(bvma, cpu, g);
-		emp_update_rss_sub(vmr,
-				__gpa_to_page_len(vmr, g, head_idx + offset),
+		emp_update_rss_sub(vmr, gpa_subblock_size(g),
 				DEBUG_RSS_SUB_ALLOC_FETCH_ERR,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 		bvma->vops.free_gpa(bvma, g, cpu);

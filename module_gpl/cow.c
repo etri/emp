@@ -915,6 +915,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 	pmd_t *pmd;
 	bool mapped; // @vmr is mapped or not
 	bool owned; // @vmr is the owner of @old or not
+	bool rss_changed = false; // a cached RSS charge waits for the flush
 	unsigned long idx;
 	struct emp_gpa *old, *new;
 	unsigned long addr, page_len;
@@ -961,7 +962,9 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 			debug_lru_del_vmr_id_mark(old->local_page, emp_vmr_dbgid(vmr));
 			/* NOTE: No vmr's RSS is changed. */
 			emp_update_rss_sub_kernel(vmr, page_len,
-						DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE,
+						emp_lp_count_pmd(old->local_page) > 0
+							? DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE
+							: DEBUG_RSS_SUB_KERNEL_COW_OTHER_ACTIVE,
 						old, DEBUG_UPDATE_RSS_SUBBLOCK);
 		} else
 			debug_assert(mapped == false); // check consistency among subblocks
@@ -970,20 +973,43 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
 		debug_lru_add_vmr_id_mark(new->local_page, emp_vmr_dbgid(vmr));
 
-		if (!mapped && !owned) // newly mapped, and not previously owned
+		if (!mapped && !owned) { // newly mapped, and not previously owned
 			emp_update_rss_add(vmr, page_len, DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
-		else if (mapped) // shared -> private pages. Total RSS is not changed.
+			rss_changed = true;
+		} else if (mapped) // shared -> private pages. Total RSS is not changed.
 			emp_update_rss_add_kernel(vmr, page_len,
 					DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
-		else { // the carry: the charge held for @old now stands for @new
-			emp_update_rss_sub_kernel(vmr, page_len,
-					DEBUG_RSS_SUB_KERNEL_COW_CARRY,
-					old, DEBUG_UPDATE_RSS_SUBBLOCK);
-			emp_update_rss_add_kernel(vmr, page_len,
-					DEBUG_RSS_ADD_KERNEL_COW_CARRY,
-					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+		else {
+			/* @vmr owned @old without mapping it and carried it
+			 * whole; it maps @new now and is charged its view. */
+			/* The sizes differ only if the block is partial map. */
+			if (unlikely(gpa_subblock_size(old) != page_len)) {
+#ifdef CONFIG_EMP_DEBUG_RSS
+				emp_update_rss_sub(vmr,
+						gpa_subblock_size(old),
+						DEBUG_RSS_SUB_COW_OTHER_ACTIVE,
+						old, DEBUG_UPDATE_RSS_SUBBLOCK);
+				emp_update_rss_add(vmr,
+						page_len,
+						DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
+						new, DEBUG_UPDATE_RSS_SUBBLOCK);
+#else
+				emp_update_rss_sub(vmr,
+						gpa_subblock_size(old) - page_len,
+						DEBUG_RSS_SUB_COW_OWNER,
+						new, DEBUG_UPDATE_RSS_SUBBLOCK);
+#endif
+				rss_changed = true;
+			} else {
+				emp_update_rss_sub_kernel(vmr, gpa_subblock_size(old),
+						DEBUG_RSS_SUB_KERNEL_COW_OTHER_ACTIVE,
+						old, DEBUG_UPDATE_RSS_SUBBLOCK);
+				emp_update_rss_add_kernel(vmr, page_len,
+						DEBUG_RSS_ADD_KERNEL_COW_OTHER_ACTIVE,
+						new, DEBUG_UPDATE_RSS_SUBBLOCK);
+			}
 		}
 
 		if (owned && emp_lp_owner(old->local_page) == vmr) {
@@ -1023,6 +1049,9 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 			 * can have only single subblock. */
 		}
 	}
+
+	if (rss_changed)
+		emp_update_rss_cached(vmr);
 
 	/* If @vmr was @old's only mapper and owner, the pop retained it and the
 	 * clear above orphaned @old: move it to the writeback list, which

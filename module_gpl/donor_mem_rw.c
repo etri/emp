@@ -145,7 +145,9 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 
 	debug_BUG_ON(!list_empty(&local_page->lru_list));
 	gpa->local_page = local_page;
-	emp_update_rss_add(vmr, __gpa_to_page_len(vmr, gpa, gpa_idx),
+	/* local and unmapped: @vmr, the owner, carries the whole subblock
+	 * until its first mapping is installed */
+	emp_update_rss_add(vmr, gpa_subblock_size(gpa),
 				DEBUG_RSS_ADD_ALLOC_FETCH,
 				gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 
@@ -164,7 +166,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			page->private = 0;
 			emp_clear_pg_mlocked(page);
 			gpa->local_page = NULL;
-			emp_update_rss_sub(vmr, __gpa_to_page_len(vmr, gpa, gpa_idx),
+			emp_update_rss_sub(vmr, gpa_subblock_size(gpa),
 						DEBUG_RSS_SUB_ALLOC_FETCH_ERR,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 			push_free_page_list(bvma, page, cpu);

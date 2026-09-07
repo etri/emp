@@ -46,6 +46,7 @@ enum DEBUG_RSS_ADD_ID {
 	DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
 	DEBUG_RSS_ADD_COW_INACTIVE,
 	DEBUG_RSS_ADD_COW_WRITEBACK,
+	DEBUG_RSS_ADD_UNMAP_OWNER,
 	NUM_DEBUG_RSS_ADD_ID,
 };
 
@@ -61,14 +62,17 @@ enum DEBUG_RSS_SUB_ID {
 	DEBUG_RSS_SUB_PUT_LOCAL_PAGE,
 	DEBUG_RSS_SUB_SET_REMOTE,
 	DEBUG_RSS_SUB_ALLOC_FETCH_ERR,
+	DEBUG_RSS_SUB_COW_OTHER_ACTIVE,
 	DEBUG_RSS_SUB_COW_INACTIVE,
 	DEBUG_RSS_SUB_COW_WRITEBACK,
+	DEBUG_RSS_SUB_COW_OWNER,
 	NUM_DEBUG_RSS_SUB_ID,
 };
 
 enum DEBUG_RSS_ADD_KERNEL_ID {
 	DEBUG_RSS_ADD_KERNEL_VMA_OPEN,
 	DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
+	DEBUG_RSS_ADD_KERNEL_COW_OTHER_ACTIVE,
 	DEBUG_RSS_ADD_KERNEL_COW_CARRY,
 	DEBUG_RSS_ADD_KERNEL_VMA_SPLIT,
 	NUM_DEBUG_RSS_ADD_KERNEL_ID,
@@ -77,6 +81,7 @@ enum DEBUG_RSS_ADD_KERNEL_ID {
 enum DEBUG_RSS_SUB_KERNEL_ID {
 	DEBUG_RSS_SUB_KERNEL_FREE_GPA_DIR,
 	DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE,
+	DEBUG_RSS_SUB_KERNEL_COW_OTHER_ACTIVE,
 	DEBUG_RSS_SUB_KERNEL_COW_CARRY,
 	DEBUG_RSS_SUB_KERNEL_VMA_SPLIT,
 	DEBUG_RSS_SUB_KERNEL_UNMAP_SUBBLOCK_SINGLE_VMR,
@@ -792,6 +797,13 @@ emp_vmr_find_hva(struct emp_mm *emm, struct mm_struct *mm,
  * module_gpl/hva.h:emp_set_page_mapping_and_index(). The kernel charges a pte
  * it zaps by the same rule (mm_counter() follows page->mapping), so EMP and
  * the kernel debit the same counter.
+ *
+ * RSS model: a subblock is charged to a vmr's mm in one of two ways.
+ *   - mapped: a vmr with a mapping record on an ACTIVE subblock is charged
+ *     its view, page_len. A pte the kernel zaps, the kernel releases.
+ *   - owned: a local subblock with no mapping record (INACTIVE, WB, or
+ *     ACTIVE not yet mapped) is charged whole, gpa_subblock_size(), to its
+ *     owner, emp_lp_owner(); the charge moves with the owner.
  */
 #define EMP_RSS_MM_COUNTER(vmr) MM_FILEPAGES
 

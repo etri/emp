@@ -192,6 +192,7 @@ const char *debug_rss_add_str[NUM_DEBUG_RSS_ADD_ID] = {
 	"COW_OTHER_ACTIVE",
 	"COW_INACTIVE",
 	"COW_WRITEBACK",
+	"UNMAP_OWNER",
 };
 
 const char *debug_rss_sub_str[NUM_DEBUG_RSS_SUB_ID] = {
@@ -206,13 +207,16 @@ const char *debug_rss_sub_str[NUM_DEBUG_RSS_SUB_ID] = {
 	"PUT_LOCAL_PAGE",
 	"SET_REMOTE",
 	"ALLOC_FETCH_ERR",
+	"COW_OTHER_ACTIVE",
 	"COW_INACTIVE",
 	"COW_WRITEBACK",
+	"COW_OWNER",
 };
 
 const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
 	"VMA_OPEN",
 	"COW_MULTI_ACTIVE",
+	"COW_OTHER_ACTIVE",
 	"COW_CARRY",
 	"VMA_SPLIT",
 };
@@ -220,6 +224,7 @@ const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
 const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
 	"FREE_GPA_DIR",
 	"COW_MULTI_ACTIVE",
+	"COW_OTHER_ACTIVE",
 	"COW_CARRY",
 	"VMA_SPLIT",
 	"UNMAP_SUBBLOCK",

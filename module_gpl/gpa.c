@@ -857,7 +857,6 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 	unsigned long hva, addr, pfn;
 	unsigned int pages_len, page_off;
 	bool mapped, accessed, dirty;
-	bool owned;
 	int i;
 
 	/* @hva is the address of the subblock itself; @page_off is where the
@@ -896,7 +895,12 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 			debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
 			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
 
-			/* NOTE: RSS is not changed. @vmr is the only vmr and it is the owner. */
+			/* The kernel zapped the ptes and released them itself.
+			 * The subblock stays local and is unmapped now: @vmr, its
+			 * owner, carries it whole until its close. */
+			emp_update_rss_add(vmr, gpa_subblock_size(gpa),
+						DEBUG_RSS_ADD_UNMAP_OWNER,
+						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 			goto next;
 		}
 
@@ -907,21 +911,17 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		/* block is aligned */
 		debug_assert(emp_lp_lookup_pmd(gpa, vmr) == pmd
 				|| emp_lp_lookup_pmd(gpa, vmr) == NULL);
-		owned = (emp_lp_owner(gpa->local_page) == vmr);
 		if (emp_lp_remove_pmd(emm, gpa->local_page, vmr) == false)
 			goto next;
 		debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
-		if (!owned)
-			/* a non-owner mapper releases its own charge */
-			emp_update_rss_sub(vmr, pages_len,
-						DEBUG_RSS_SUB_UNMAP_PTES,
-						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
-		else if (emp_lp_owner(gpa->local_page) != vmr)
-			/* the pop promoted a mapped survivor: the owner charge
-			 * moves to it -- the survivor's own mapping charge
-			 * becomes its owner charge, so only @vmr releases */
-			emp_update_rss_sub(vmr, pages_len,
-						DEBUG_RSS_SUB_UNMAP_PTES,
+		/* @vmr releases its view. When the last mapping leaves, the
+		 * retained owner carries the subblock whole. */
+		emp_update_rss_sub(vmr, pages_len,
+					DEBUG_RSS_SUB_UNMAP_PTES,
+					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+		if (emp_lp_count_pmd(gpa->local_page) == 0)
+			emp_update_rss_add(vmr, gpa_subblock_size(gpa),
+						DEBUG_RSS_ADD_UNMAP_OWNER,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 
 		ptep = emp_pte_map(pmd, hva);
@@ -1372,8 +1372,8 @@ __put_local_page_pmd(struct emp_vmr *vmr, struct emp_gpa *gpa)
 		debug_lru_set_vmr_id_mark(gpa->local_page,
 				emp_vmr_dbgid(emp_lp_owner(gpa->local_page)));
 		if (!removed)
-			emp_update_rss_sub(vmr,
-					__local_gpa_to_page_len(vmr, gpa),
+			/* an owner without a mapping carried the subblock whole */
+			emp_update_rss_sub(vmr, gpa_subblock_size(gpa),
 					DEBUG_RSS_SUB_PUT_LOCAL_PAGE,
 					gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
@@ -1976,8 +1976,9 @@ set_gpa_remote(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *g)
 
 	/* NOTE: free_gpa() clears g->local_page */
 	if (likely(g->local_page) && emp_lp_owner(g->local_page)) {
-		struct emp_vmr *vmr = emp_lp_owner(g->local_page);
-		emp_update_rss_sub(vmr, __local_gpa_to_page_len(vmr, g),
+		/* the local copy goes: its owner stops carrying it whole */
+		emp_update_rss_sub(emp_lp_owner(g->local_page),
+					gpa_subblock_size(g),
 					DEBUG_RSS_SUB_SET_REMOTE,
 					g, DEBUG_UPDATE_RSS_SUBBLOCK);
 	}
