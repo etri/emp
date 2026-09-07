@@ -17,15 +17,19 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *);
 
 #ifdef CONFIG_EMP_USER
 /*
- * Give an EMP page the mapping and index of the region that maps it.
+ * Give an EMP page what a file-backed page has: the EMP device file's
+ * address_space, and the kernel's linear index (its offset in the region plus
+ * vma->vm_pgoff). get_futex_key() keys a shared futex on EMP memory by
+ * (device inode, page->index), and emp_mmap() gives every region its own
+ * slice of the index space so no two EMP pages share a key; see
+ * emp_alloc_index_slice() in vm.c. Private futexes, keyed by (mm, address),
+ * need none of it. The file mapping also accounts every pte EMP installs
+ * through the file rmap and every charge on MM_FILEPAGES.
  *
- * EMP's pages are file-backed: the mapping is always the EMP device file's
- * address_space, for a private region as much as for a shared one. That is
- * what makes get_futex_key() work on EMP memory for a shared futex (it would
- * return -EFAULT with no mapping), and it keeps the kernel's own view of the
- * page consistent with how EMP maps it, since every pte EMP installs is
- * accounted through the file rmap (folio_add_file_rmap_ptes) and every EMP
- * charge lands on MM_FILEPAGES.
+ * Called at every install and idempotent: the kernel keeps vm_pgoff stable
+ * (copies it at fork, adjusts it on a split, keeps it on a move), so every
+ * vma that maps a page agrees on its index, which a sleeping waiter's key
+ * depends on. The debug build checks it.
  *
  * The pages are not in the mapping's page cache: nothing looks them up by
  * index, and the aops installed in emp_open() keep the paths that would
@@ -45,6 +49,9 @@ static inline void emp_set_page_mapping_and_index(struct vm_area_struct *vma, un
 	debug_assert((addr & ((PAGE_SIZE << compound_order(page)) - 1)) == 0);
 	/* an EMP region is always a mapping of the EMP device file */
 	debug_assert(vma->vm_file);
+	debug_assert(!page->mapping
+			|| (page->mapping == vma->vm_file->f_mapping
+				&& page->index == linear_page_index(vma, addr)));
 	page->mapping = vma->vm_file->f_mapping;
 	page->index   = linear_page_index(vma, addr);
 }

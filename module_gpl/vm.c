@@ -1527,6 +1527,44 @@ struct vm_operations_struct emp_vma_ops = {
 	.fault = emp_page_fault_hva,
 };
 
+#ifdef CONFIG_EMP_USER
+/* A per-region base for vm_pgoff, so that shared futexes do not alias.
+ *
+ * Every EMP region maps the one EMP device inode and every EMP page carries
+ * that inode's mapping and its linear index (emp_set_page_mapping_and_index()
+ * in hva.h), so get_futex_key() keys a shared futex by (inode, page->index)
+ * = (inode, offset in region + vm_pgoff). libemp passes 0 as the mmap offset,
+ * so without a base every region starts at index 0 and a futex word aliases
+ * the word at the same offset in every other EMP region on the host: a wake
+ * there could consume this region's waiter. The kernel keeps vm_pgoff stable
+ * afterwards, so an evicted page faulted back keeps its key whichever process
+ * or vma half faults it.
+ *
+ * A slice of 2^36 pages exceeds the largest region a 47-bit address space
+ * holds, so a region may grow without reaching the next slice and the low
+ * bits of an index stay the offset inside the block; 64 bits of pgoff leave
+ * 2^28 slices per module lifetime.
+ *
+ * Note: a fork child's private copy keeps the parent's vm_pgoff, so a
+ * process-shared futex on PRIVATE memory reaches both processes, where Linux
+ * separates them by keying an anonymous page on (mm, address). Degenerate
+ * use; FUTEX_PRIVATE_FLAG futexes are keyed that way too and unaffected.
+ */
+#define EMP_INDEX_SLICE_ORDER	36
+static atomic64_t emp_index_space = ATOMIC64_INIT(0);
+
+static pgoff_t emp_alloc_index_slice(void)
+{
+	u64 base = atomic64_fetch_add(1ULL << EMP_INDEX_SLICE_ORDER,
+				      &emp_index_space);
+
+	/* 2^28 regions have been created since the module was loaded */
+	WARN_ONCE(base + (1ULL << EMP_INDEX_SLICE_ORDER) < base,
+		  "emp: futex index space wrapped, keys may alias\n");
+	return (pgoff_t) base;
+}
+#endif /* CONFIG_EMP_USER */
+
 /**
  * emp_mmap - mmap for EMP
  * @param filp emp device file pointer
@@ -1627,6 +1665,12 @@ vm_start_aligned:
 	if (mem_size < (vma->vm_end - vma->vm_start))
 		return -ENOMEM;
 
+#ifdef CONFIG_EMP_USER
+	/* its own slice of the futex index space (above); the offset user space
+	 * passed to mmap() has never meant anything for an EMP mapping */
+	if (!is_emm_with_kvm(bvma))
+		vma->vm_pgoff = emp_alloc_index_slice();
+#endif
 	vmr = create_vmr(bvma, vma);
 	if (vmr == NULL)
 		return -ENOMEM;
