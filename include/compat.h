@@ -187,32 +187,6 @@ extern struct block_device *kernel_blkdev_get_no_open(dev_t dev);
 #define emp_mmu_notifier_range_to_vma(range) vma_lookup((range)->mm, (range)->start)
 #endif
 
-/* After RHEL 10 or kernel 6.6.0, a large folio is taken off the deferred split
- * queue only when PG_large_rmappable is set: folio_unqueue_deferred_split(),
- * which the page free path runs, starts with
- *
- *	if (folio_order(folio) <= 1 || !folio_test_large_rmappable(folio))
- *		return false;
- *
- * while deferred_split_folio(), which puts the folio on that queue, tests
- * nothing of the sort. Only folio_prep_large_rmappable() sets the flag, and
- * only for transparent huge pages, so a compound page from alloc_pages() is
- * queued and never dequeued. See emp_arm_deferred_split_unqueue() in debug.h.
- *
- * Before 6.6 the dequeue was the free_transhuge_page() compound destructor,
- * which prep_transhuge_page() arms and a plain alloc_pages() page never gets
- * either, so the folio is left on the queue there as well. Neither function is
- * exported, so a module cannot arm it; and the free-time report,
- * bad_page(page, "on deferred list"), only arrived in 6.12 and in the distro
- * kernels that backport it, so on those kernels it passes unnoticed.
- */
-#if (RHEL_RELEASE_CODE >= 0 && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(10, 0)) \
-	|| (RHEL_RELEASE_CODE < 0 && LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
-	// RHEL_RELEASE_VERSION >= 10.0 or KERNEL_VERSION >= 6.6.0
-#define EMP_HAVE_LARGE_RMAPPABLE 1
-#else
-#define EMP_HAVE_LARGE_RMAPPABLE 0
-#endif
 
 /* Upstream converted these page flags to FOLIO_FLAG(), which emits only
  * folio_{test,set,clear}_<flag>() and drops the Page<Flag>()/SetPage<Flag>()/
