@@ -1156,6 +1156,9 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 #else
 		__sub_inactive_list_page_len(promote_pages_len, bvma);
 #endif
+		temp_list_for_each(cur, &to_promote)
+			check_eager_wbr(bvma, cpu,
+					__get_local_page_from_list(cur)->gpa);
 		__promote_gpas(bvma, cpu_id, &to_promote, promote_pages_len, false);
 	}
 
