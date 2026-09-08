@@ -896,6 +896,70 @@ error:
 	return ret;
 }
 
+/**
+ * __handoff_block_local_page - give @dst_head the pages @src_head holds
+ * @param emm emm data structure
+ * @param dst_vmr the vmr faulting on the block
+ * @param head_idx index of the block
+ * @param src_head block giving its pages up, locked
+ * @param dst_head block receiving them, locked
+ *
+ * @retval 0: success
+ * @retval -ENOMEM: nothing changed
+ *
+ * A local_page belongs to one gpa descriptor for its whole lifetime; the page
+ * it holds does not. So the page moves and the object does not: @dst gets a
+ * new local_page over @src's page, and @src's is destroyed by the caller once
+ * the mapping has moved across. Nothing is copied and no page reference
+ * changes, because the pte keeps pointing at the same page.
+ *
+ * On failure every binding is as it was, so the caller can fall back to
+ * copying with nothing to unwind.
+ */
+static int
+__handoff_block_local_page(struct emp_mm *emm, struct emp_vmr *dst_vmr,
+			unsigned long head_idx, struct emp_gpa *src_head,
+			struct emp_gpa *dst_head)
+{
+	unsigned long idx;
+	struct emp_gpa *src, *dst;
+	int ret = 0;
+
+	for_each_old_new_gpas(idx, src, dst, head_idx, src_head, dst_head) {
+		debug_assert(src->local_page);
+		debug_assert(dst->local_page == NULL);
+		dst->local_page = emm->lops.alloc_local_page(emm, dst_vmr,
+					NULL, src->local_page->page,
+					gpa_subblock_order(src), idx, dst);
+		if (unlikely(dst->local_page == NULL)) {
+			printk(KERN_ERR "ERROR: %s failed to allocate local "
+					"page. emm: %d vmr: %d idx: 0x%lx\n",
+					__func__, emm->id,
+					emp_vmr_dbgid(dst_vmr), idx);
+			ret = -ENOMEM;
+			goto error;
+		}
+		__debug_page_ref_update_page_len(dst->local_page,
+						gpa_subblock_size(src_head));
+		debug_lru_set_vmr_id_mark(dst->local_page,
+						emp_vmr_dbgid(dst_vmr));
+	}
+
+	return 0;
+
+error:
+	for_each_old_new_gpas(idx, src, dst, head_idx, src_head, dst_head) {
+		if (dst->local_page == NULL)
+			break;
+		/* the page never left @src; give it its backlink back */
+		src->local_page->page->private = (unsigned long) src;
+		emm->lops.free_local_page(emm, dst->local_page);
+		dst->local_page = NULL;
+	}
+
+	return ret;
+}
+
 enum DUP_COW_RET {
 	DUP_COW_DO_NOTHING = 0,
 	DUP_COW_ADD_ACTIVE = 1, // if we need add new head on active list
@@ -1063,6 +1127,110 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 	return ret >= 0 ? DUP_COW_ADD_ACTIVE : ret;
 }
 
+/**
+ * __block_mapped_by_only - does @vmr map every subblock, and nobody else any?
+ * @param head head of the block, locked
+ * @param vmr the vmr asking
+ *
+ * Asked of every subblock, not of the head: the subblocks of a block need not
+ * agree on who maps them, since an elastic-block stretch merges two blocks
+ * whose mapper sets may differ. One record means the embedded one alone, and
+ * num_pmds tells that mapper from a retained owner, which the embedded record
+ * also names.
+ */
+static bool
+__block_mapped_by_only(struct emp_gpa *head, struct emp_vmr *vmr)
+{
+	struct emp_gpa *gpa;
+
+	for_each_gpas(gpa, head) {
+		struct local_page *lp = gpa->local_page;
+
+		if (unlikely(lp == NULL))
+			return false;
+		if (lp->num_pmds != 1 || emp_lp_owner(lp) != vmr)
+			return false;
+	}
+
+	return true;
+}
+
+/**
+ * dup_cow_gpadesc_handoff - CoW an active block by handing its pages over
+ * @param vmr the faulting vmr, the only vmr mapping @old_head
+ * @param head_idx index of the block
+ * @param old_head the block being CoWed, locked
+ * @param new_head the new descriptor for the faulting vmdesc, locked
+ *
+ * @retval DUP_COW_ADD_ACTIVE: handled; the caller lists @new_head
+ * @retval negative: nothing changed, the caller should copy instead
+ *
+ * Nobody but @vmr maps this block and the donor holds its current contents,
+ * so the other directory owners can refetch them and the pages themselves can
+ * go to @vmr's private copy. Nothing is copied.
+ *
+ * What moves is the page and the mapping record. The local_page object does
+ * not: @new gets its own, bound to @new for good, and @old's is destroyed. The
+ * pte is not reinstalled either, since it already points at this page; it is
+ * only granted the write.
+ */
+static int
+dup_cow_gpadesc_handoff(struct emp_vmr *vmr, unsigned long head_idx,
+			struct emp_gpa *old_head, struct emp_gpa *new_head)
+{
+	struct emp_mm *emm = vmr->emm;
+	unsigned long idx;
+	struct emp_gpa *old, *new;
+	pmd_t *pmd;
+	int ret;
+
+	debug_assert(!is_gpa_flags_set(old_head, GPA_REMOTE_MASK));
+	debug_assert(!is_gpa_flags_set(old_head, GPA_DIRTY_MASK));
+	debug_assert(is_block_remote_page_valid(old_head));
+
+	ret = __handoff_block_local_page(emm, vmr, head_idx,
+						old_head, new_head);
+	if (unlikely(ret < 0))
+		return ret;
+
+	/* @old is about to have no local page. Only a head is listed, so this
+	 * delists the whole block. */
+	__remove_from_lru(emm, old_head);
+
+	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
+		/* a work request would name the local page being freed; the
+		 * block is active and the CoW entry drained @w */
+		debug_assert(old->local_page->w == NULL);
+
+		/* the pte already points at this page, so only the record of
+		 * who maps it moves */
+		pmd = emp_lp_pop_pmd(emm, old->local_page, vmr);
+		debug_lru_del_vmr_id_mark(old->local_page, emp_vmr_dbgid(vmr));
+		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
+		debug_lru_add_vmr_id_mark(new->local_page, emp_vmr_dbgid(vmr));
+
+		/* the same pages stay mapped by the same vmr: no RSS moves on
+		 * the mm, only the ledger's booking follows the local page */
+		emp_update_rss_sub_kernel(vmr, __local_gpa_to_page_len(vmr, old),
+					DEBUG_RSS_SUB_KERNEL_COW_HANDOFF,
+					old, DEBUG_UPDATE_RSS_SUBBLOCK);
+		emp_update_rss_add_kernel(vmr, __local_gpa_to_page_len(vmr, new),
+					DEBUG_RSS_ADD_KERNEL_COW_HANDOFF,
+					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+		debug_page_ref_mark_map(emp_vmr_dbgid(vmr), new->local_page);
+
+		emm->lops.free_local_page(emm, old->local_page);
+		old->local_page = NULL;
+	}
+
+	cow_mkwrite_pte(vmr, head_idx, new_head);
+
+	/* @old keeps its remote page and nothing else */
+	__set_block_remote(old_head);
+
+	return DUP_COW_ADD_ACTIVE;
+}
+
 static int
 dup_cow_gpadesc_remote(struct emp_vmr *vmr, unsigned long head_idx,
 			struct emp_gpa *old_head, struct emp_gpa *new_head)
@@ -1170,7 +1338,24 @@ dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 
 	if (old_head->r_state != GPA_INIT) {
 		debug_progress_cow(old_head, new_head, emp_vmr_dbgid(vmr));
-		ret = dup_cow_gpadesc_local(vmr, head_idx,
+
+		/* Handing the pages over is cheaper than copying them, and
+		 * costs nothing when it cannot be done: a failed handoff
+		 * changes nothing, so copying is always the fallback. The
+		 * other views are left with @old's donor copy alone, so it
+		 * has to be the current one: a block dirtied since its last
+		 * writeback, or one whose donor copy was declared stale, is
+		 * copied instead. */
+		ret = -EAGAIN;
+		if (!is_gpa_flags_set(old_head, GPA_PARTIAL_MAP_MASK
+						| GPA_DIRTY_MASK
+						| GPA_STALE_BLOCK_MASK)
+				&& is_block_remote_page_valid(old_head)
+				&& __block_mapped_by_only(old_head, vmr))
+			ret = dup_cow_gpadesc_handoff(vmr, head_idx,
+						old_head, new_head);
+		if (ret < 0)
+			ret = dup_cow_gpadesc_local(vmr, head_idx,
 						old_head, new_head);
 	} else { /* old_head->r_state == GPA_INIT */
 		debug_progress_cow(old_head, new_head, emp_vmr_dbgid(vmr));

@@ -222,6 +222,7 @@ const char *debug_rss_add_kernel_str[NUM_DEBUG_RSS_ADD_KERNEL_ID] = {
 	"COW_CARRY",
 	"VMA_SPLIT",
 	"VMA_SPLIT_OWNER",
+	"COW_HANDOFF",
 };
 
 const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
@@ -233,6 +234,7 @@ const char *debug_rss_sub_kernel_str[NUM_DEBUG_RSS_SUB_KERNEL_ID] = {
 	"UNMAP_SUBBLOCK",
 	"VMA_SPLIT_OWNER",
 	"ZAPPED",
+	"COW_HANDOFF",
 };
 
 void __emp_update_rss_show(struct emp_vmr *vmr, const char *func)
