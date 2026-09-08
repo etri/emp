@@ -856,7 +856,10 @@ long emp_blk_move_to_inactive(struct emp_mm *emm, unsigned long addr, long __siz
 out:
 	r = (long) blks_ctx_flush_dontneed(emm, &ctx, true);
 	mmap_read_unlock(mm);
-	if (ret == 0)
+	/* Errors only: a positive return means "advice not supported", so
+	 * libemp would run the kernel's madvise() and zap the ptes of the
+	 * blocks EMP kept, leaving records that name ptes that are gone. */
+	if (ret == 0 && r < 0)
 		ret = r;
 	dprintk("[BLK_DONTNEED] addr: %ld size: %ld force: %d (STAT) called: %ld try: %ld trylock_failed: %ld prefetched: %ld succeed: %ld active: %ld inactive: %ld wb: %ld remote: %ld\n",
 			addr_start, size, force,
