@@ -95,7 +95,7 @@ int add_gpas_to_active_list(enum lru_list_type, struct emp_mm *,
 int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				struct emp_gpa **gpas, int n_new);
 void check_eager_wbr(struct emp_mm *, struct vcpu_var *, struct emp_gpa *);
-void clear_block_w(struct emp_mm *, struct vcpu_var *, struct emp_gpa *);
+void __clear_block_w(struct emp_mm *, struct vcpu_var *, struct emp_gpa *);
 struct eager_wbr *alloc_eager_wbr(struct vcpu_var *);
 void free_eager_wbr(struct emp_mm *, struct eager_wbr *);
 int emp_writeback_block(struct emp_mm *, struct emp_gpa *, struct vcpu_var *);
@@ -109,6 +109,20 @@ void reclaim_exit(struct emp_mm *);
 
 void wait_for_prefetched_block(struct emp_mm *emm,
 				struct vcpu_var *cpu, struct emp_gpa *head);
+
+/* Nothing in @w and no prefetch pending: __clear_block_w() would find
+ * nothing to wait for. An armed eager writeback, an unmapped_block and a
+ * writeback in flight all leave @w set; a prefetch leaves the work requests
+ * on the subblocks, so the flag speaks for them. */
+static inline void
+clear_block_w(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head)
+{
+	if (likely(head->local_page->w == NULL
+			&& !is_gpa_flags_set(head, GPA_PREFETCHED_MASK)))
+		return;
+
+	__clear_block_w(emm, cpu, head);
+}
 
 /**
  * is_unmapped_active - Check the pages status (unmapped and active)

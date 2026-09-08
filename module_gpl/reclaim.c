@@ -984,7 +984,7 @@ void check_eager_wbr(struct emp_mm *bvma, struct vcpu_var *cpu,
 }
 
 /**
- * clear_block_w - wait for what the block holds in @w and leave it NULL
+ * __clear_block_w - wait for what the block holds in @w and leave it NULL
  * @param bvma bvma data structure
  * @param cpu working vcpu ID
  * @param head head of the block, locked
@@ -994,9 +994,10 @@ void check_eager_wbr(struct emp_mm *bvma, struct vcpu_var *cpu,
  * while the block is GPA_WB, or the fetch work requests of a block whose
  * prefetch is still in flight. Whoever is about to store into @w calls this
  * first, so nothing in flight is overwritten and no reader finds a pointer
- * of another kind.
+ * of another kind. Callers reach this through clear_block_w(), which skips
+ * the call when the block holds nothing.
  */
-void clear_block_w(struct emp_mm *bvma, struct vcpu_var *cpu,
+void __clear_block_w(struct emp_mm *bvma, struct vcpu_var *cpu,
 		   struct emp_gpa *head)
 {
 	if (is_gpa_flags_set(head, GPA_EAGER_WBR_MASK))
