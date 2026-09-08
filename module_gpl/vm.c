@@ -1484,8 +1484,7 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 	/* A child or split vma inherits VM_WIPEONFORK from the vma it was
 	 * opened from, where emp_mmap() set it. Set it again in case it was
 	 * lost; see emp_mmap() for what it is for. */
-	if (!(new_vma->vm_flags & VM_SHARED))
-		vm_flags_set(new_vma, VM_WIPEONFORK);
+	vm_flags_set(new_vma, VM_WIPEONFORK);
 #endif /* CONFIG_EMP_USER */
 
 #ifdef CONFIG_EMP_EXT
@@ -1740,11 +1739,15 @@ vm_start_aligned:
 	 * anon_vma and copies the page table *before* it calls ->open, so a
 	 * flag turned on in emp_vma_open() only protects the grandchildren.
 	 *
+	 * A shared mapping needs it as much as a private one: the copy would
+	 * give the child ptes on EMP pages that no mapping record names, and
+	 * EMP is the backing either way -- a child that faults the block in
+	 * shares the same pages through its own, recorded, mapping.
+	 *
 	 * The flag is never cleared. The user's MADV_WIPEONFORK/MADV_KEEPONFORK
 	 * intent lives in emp_vmr.fork_policy instead; see enum emp_fork_policy.
 	 */
-	if (!(vma->vm_flags & VM_SHARED))
-		vm_flags_set(vma, VM_WIPEONFORK);
+	vm_flags_set(vma, VM_WIPEONFORK);
 #endif /* CONFIG_EMP_USER */
 
 	/* private data first: from the moment vm_ops is set, this vma is an EMP
