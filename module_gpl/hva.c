@@ -710,9 +710,16 @@ vm_fault_t emp_page_fault_hva(struct vm_fault *vmf)
 	fe = head + num_subblock_in_block(head);
 
 #ifdef CONFIG_EMP_BLOCK
-	/* release (wait && map) all the prefetched sub-blocks in a block */
-	if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
+	/* release (wait && map) all the prefetched sub-blocks in a block. Only
+	 * while it is active: an inactive or writeback block with the flag
+	 * still on goes through its state handler below first, and the install
+	 * after that resumes the prefetch. */
+	if (ACTIVE_BLOCK(head) && is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
 		debug___emp_page_fault_hva(head);
+		/* the barrier below reads @w as fetch work requests; a block
+		 * promoted without a mapping may carry an armed eager
+		 * writeback there instead */
+		clear_block_w(emm, cpu, head);
 
 		if (is_gpa_flags_set(head, GPA_HPT_MASK)) {
 			emp_page_fault_hptes_map(emm, vmr, head, demand,

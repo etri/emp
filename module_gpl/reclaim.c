@@ -984,6 +984,35 @@ void check_eager_wbr(struct emp_mm *bvma, struct vcpu_var *cpu,
 }
 
 /**
+ * clear_block_w - wait for what the block holds in @w and leave it NULL
+ * @param bvma bvma data structure
+ * @param cpu working vcpu ID
+ * @param head head of the block, locked
+ *
+ * A local page's @w means one thing at a time, and the block says which: an
+ * eager_wbr while GPA_EAGER_WBR_MASK is set, the writeback work request
+ * while the block is GPA_WB, or the fetch work requests of a block whose
+ * prefetch is still in flight. Whoever is about to store into @w calls this
+ * first, so nothing in flight is overwritten and no reader finds a pointer
+ * of another kind.
+ */
+void clear_block_w(struct emp_mm *bvma, struct vcpu_var *cpu,
+		   struct emp_gpa *head)
+{
+	if (is_gpa_flags_set(head, GPA_EAGER_WBR_MASK))
+		check_eager_wbr(bvma, cpu, head);
+
+	if (WB_BLOCK(head)) {
+		if (head->local_page->w)
+			bvma->sops.clear_writeback_block(bvma, head,
+					head->local_page->w, cpu, true, false);
+	} else if (is_gpa_flags_set(head, GPA_PREFETCHED_MASK))
+		wait_for_prefetched_block(bvma, cpu, head);
+
+	debug_assert(head->local_page->w == NULL);
+}
+
+/**
  * check_block_free - Check if the block will be freed
  * @param bvma bvma data structure
  * @param head head of the block
@@ -1163,6 +1192,8 @@ evict_block(struct emp_mm *emm, struct vcpu_var *cpu, struct emp_gpa *head,
 	eh_wr = NULL;
 
 	debug_evict_block(emm, head);
+
+	clear_block_w(emm, cpu, head);
 
 	if (!alloc_remote_page(emm, head))
 		goto error;
@@ -1638,6 +1669,7 @@ static int do_eager_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 		e->g = head;
 		e->w = w;
+		debug_check_notnull_pointer(head->local_page->w);
 		head->local_page->w = (struct work_request *) e;
 		set_gpa_flags_if_unset(head, GPA_EAGER_WBR_MASK);
 		emp_els_stat_inc(bvma, head, writeback);

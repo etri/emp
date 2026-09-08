@@ -95,6 +95,7 @@ int add_gpas_to_active_list(enum lru_list_type, struct emp_mm *,
 int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				struct emp_gpa **gpas, int n_new);
 void check_eager_wbr(struct emp_mm *, struct vcpu_var *, struct emp_gpa *);
+void clear_block_w(struct emp_mm *, struct vcpu_var *, struct emp_gpa *);
 struct eager_wbr *alloc_eager_wbr(struct vcpu_var *);
 void free_eager_wbr(struct emp_mm *, struct eager_wbr *);
 int emp_writeback_block(struct emp_mm *, struct emp_gpa *, struct vcpu_var *);

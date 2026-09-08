@@ -105,6 +105,9 @@ struct local_page {
 	// (fetched block on) demand offset used by csf
 	// valid only if CSF flag is set
 	u16             demand_offset; // on head
+	/* the subblock's fetch or writeback work request, an eager_wbr under
+	 * GPA_EAGER_WBR_MASK, or (module_pro) an unmapped_block under
+	 * GPA_UNMAPPED_MASK: one at a time, drained by clear_block_w() */
 	struct work_request     *w;
 #ifdef CONFIG_EMP_DEBUG_RSS
 	/* pages each vmr (by debug id) is charged for on this subblock */

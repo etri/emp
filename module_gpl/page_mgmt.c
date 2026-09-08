@@ -184,7 +184,7 @@ _handle_gpa_on_inactive_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		emp_update_rss_cached(vmr);
 	}
 
-	check_eager_wbr(emm, cpu, head);
+	clear_block_w(emm, cpu, head);
 
 	debug__handle_gpa_on_inactive_fault(emm, head);
 
