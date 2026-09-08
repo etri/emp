@@ -2064,7 +2064,8 @@ void emp_put_mmu_notifier(struct emp_vmr *vmr)
 
 static void __dup_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {
-	struct emp_mm *emm = new_vmr->emm;
+	/* the subblock-order helpers ignore it without CONFIG_EMP_BLOCK */
+	struct emp_mm *emm __maybe_unused = new_vmr->emm;
 	struct emp_vmdesc *desc = new_vmr->descs;
 	unsigned long head_idx, idx;
 	struct emp_gpa *gpa, *head;
