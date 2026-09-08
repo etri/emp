@@ -1551,15 +1551,17 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 
 		/* @head has some owner but we don't know who is.
 		 * Move it to writeback lists which does not require the owner.
+		 * emp_writeback_block() expects @head to be counted in
+		 * inactive_list.page_len: its no-writeback branch discharges
+		 * the count itself, and the writeback branch's clear does. Count
+		 * it up front, as __add_to_writeback() does for a CoW orphan.
 		 */
-
+		add_inactive_list_page_len(emm, head);
 #ifdef CONFIG_EMP_EXT
 		emp_ops.emp_writeback_block(emm, head, cpu);
 #else
 		emp_writeback_block(emm, head, cpu);
 #endif
-		if (head->r_state == GPA_WB)
-			add_inactive_list_page_len(emm, head);
 #endif /* CONFIG_EMP_USER */
 	}
 
