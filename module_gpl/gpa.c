@@ -890,20 +890,25 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		 * only errs toward that walk; page_mapcount() went in 6.11. */
 		if (!page_mapped(map_page)
 			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
-			/* the pop retains @vmr as the owner */
-			emp_lp_pop_pmd(emm, gpa->local_page, vmr);
-			debug_lru_del_vmr_id_mark(gpa->local_page, emp_vmr_dbgid(vmr));
-			debug_assert(EMP_LP_PMDS_EMPTY(&gpa->local_page->pmds));
-
-			/* The kernel zapped the ptes and released them itself.
-			 * The subblock stays local and is unmapped now: @vmr, its
-			 * owner, carries it whole until its close. */
-			emp_update_rss_sub_kernel(vmr, pages_len,
+			/* Nobody maps this subblock, and @vmr need not be
+			 * its mapper: reclaim walks every subblock of the
+			 * block for a vmr taken from ONE subblock's records,
+			 * while a CSF block leaves the other 63 carried by
+			 * whoever fetched them. Only a vmr whose own record
+			 * retires here has anything to settle; the pop keeps
+			 * it as the owner of a subblock nobody maps, and the
+			 * kernel released the ptes it zapped. */
+			if (emp_lp_remove_pmd(emm, gpa->local_page, vmr)) {
+				debug_lru_del_vmr_id_mark(gpa->local_page,
+							emp_vmr_dbgid(vmr));
+				emp_update_rss_sub_kernel(vmr, pages_len,
 						DEBUG_RSS_SUB_KERNEL_ZAPPED,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
-			emp_update_rss_add(vmr, gpa_subblock_size(gpa),
+				if (emp_lp_count_pmd(gpa->local_page) == 0)
+					emp_update_rss_add(vmr, gpa_subblock_size(gpa),
 						DEBUG_RSS_ADD_UNMAP_OWNER,
 						gpa, DEBUG_UPDATE_RSS_SUBBLOCK);
+			}
 			goto next;
 		}
 
