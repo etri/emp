@@ -913,8 +913,6 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 	unsigned int ____off;
 	struct emp_mm *emm = vmr->emm;
 	pmd_t *pmd;
-	bool mapped; // @vmr is mapped or not
-	bool owned; // @vmr is the owner of @old or not
 	bool rss_changed = false; // a cached RSS charge waits for the flush
 	unsigned long idx;
 	struct emp_gpa *old, *new;
@@ -925,9 +923,14 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 
 	____gpa_to_hva_len_off(vmr, old_head, head_idx, addr, page_len, ____off);
 
-	pmd = emp_lp_lookup_pmd(old_head, vmr);
+	/* @vmr's pmd for the block, from whichever subblock it maps */
+	pmd = NULL;
+	for_each_gpas(old, old_head) {
+		pmd = emp_lp_lookup_pmd(old, vmr);
+		if (pmd)
+			break;
+	}
 	if (pmd == NULL) {
-		mapped = false;
 		pmd = get_populated_pmd(vmr->host_mm, addr, NULL);
 		if (unlikely(pmd == NULL)) {
 			printk(KERN_ERR "ERROR: %s failed to allocate page tables. "
@@ -935,8 +938,7 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 					__func__, emm->id, emp_vmr_dbgid(vmr), head_idx);
 			return -ENOMEM;
 		}
-	} else
-		mapped = true;
+	}
 
 	// Duplicate old_head's local page to new_head
 	ret = dup_block_local_page(emm, NULL, vmr,
@@ -948,40 +950,53 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 		return ret;
 	}
 
+	/* @new: @vmr's mapping, recorded before the ptes are rewritten */
 	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
 		/* Assert @pmd is same for all subblocks in a block. */
 		debug_assert(pmd == debug_get_pmd(vmr->host_mm,
 				vmr_offset_to_hva(vmr, idx)));
+		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
+		debug_lru_add_vmr_id_mark(new->local_page, emp_vmr_dbgid(vmr));
 
-		/* the pop itself moves the owner vmr */
-		owned = (emp_lp_owner(old->local_page) == vmr);
+		/* increase reference count */
+		debug_page_ref_will_pte_beg(new->local_page, page_len);
+		__emp_get_pages_map(vmr, new, page_len);
+		debug_page_ref_will_pte_end(new->local_page, page_len);
 
-		/* remove mapped_pmd from @old */
+		/* we does not update page_len since partial map gpa block
+		 * can have only single subblock. */
+	}
+
+	/* update (clear and map) pte (writable) */
+	cow_update_pte(vmr, new_head, addr, ____off, page_len);
+	/* @new is now mapped by @vmr whatever @old's flag said: the flags were
+	 * copied from @old, which may not have been mapped at all. */
+	set_gpa_flags_if_unset(new_head, GPA_HPT_MASK);
+
+	/* NOTE: the remote page is removed at __dup_cow_gpadesc() */
+
+	/* @old, subblock by subblock: where @vmr mapped it, its ptes point at
+	 * @new now -- retire the record, the rmap and the install's refs;
+	 * where it did not, its owner charge is what @new's view needs. */
+	for_each_old_new_gpas(idx, old, new, head_idx, old_head, new_head) {
+		bool owned = (emp_lp_owner(old->local_page) == vmr);
+
 		if (emp_lp_pop_pmd(emm, old->local_page, vmr)) {
-			debug_assert(mapped == true);
 			debug_lru_del_vmr_id_mark(old->local_page, emp_vmr_dbgid(vmr));
+			/* decrease ref_count and map_count of old page */
+			__remove_rmap_on_pages(gpa_page(old), ____off,
+						vmr->host_vma, page_len);
+			__emp_put_pages_map(vmr, old, page_len);
 			/* NOTE: No vmr's RSS is changed. */
 			emp_update_rss_sub_kernel(vmr, page_len,
 						emp_lp_count_pmd(old->local_page) > 0
 							? DEBUG_RSS_SUB_KERNEL_COW_MULTI_ACTIVE
 							: DEBUG_RSS_SUB_KERNEL_COW_OTHER_ACTIVE,
 						old, DEBUG_UPDATE_RSS_SUBBLOCK);
-		} else
-			debug_assert(mapped == false); // check consistency among subblocks
-
-		/* add mapped_pmd on @new */
-		emp_lp_insert_pmd(emm, new->local_page, vmr, pmd);
-		debug_lru_add_vmr_id_mark(new->local_page, emp_vmr_dbgid(vmr));
-
-		if (!mapped && !owned) { // newly mapped, and not previously owned
-			emp_update_rss_add(vmr, page_len, DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
-					new, DEBUG_UPDATE_RSS_SUBBLOCK);
-			rss_changed = true;
-		} else if (mapped) // shared -> private pages. Total RSS is not changed.
 			emp_update_rss_add_kernel(vmr, page_len,
 					DEBUG_RSS_ADD_KERNEL_COW_MULTI_ACTIVE,
 					new, DEBUG_UPDATE_RSS_SUBBLOCK);
-		else {
+		} else if (owned) {
 			/* @vmr owned @old without mapping it and carried it
 			 * whole; it maps @new now and is charged its view. */
 			/* The sizes differ only if the block is partial map. */
@@ -1010,43 +1025,19 @@ dup_cow_gpadesc_local(struct emp_vmr *vmr, unsigned long head_idx,
 						DEBUG_RSS_ADD_KERNEL_COW_OTHER_ACTIVE,
 						new, DEBUG_UPDATE_RSS_SUBBLOCK);
 			}
+		} else {
+			/* neither mapped nor owned: a new mapping on @new */
+			emp_update_rss_add(vmr, page_len, DEBUG_RSS_ADD_COW_OTHER_ACTIVE,
+					new, DEBUG_UPDATE_RSS_SUBBLOCK);
+			rss_changed = true;
 		}
 
 		if (owned && emp_lp_owner(old->local_page) == vmr) {
 			/* @vmr's slot now points at @new: it must not keep
 			 * owning @old. The pop retained it (no other mapper),
-			 * so clear -- @old becomes an orphan, and the charge
-			 * was carried to @new (the "owned" arm above). */
+			 * so clear -- @old becomes an orphan. */
 			emp_lp_clear_owner(old->local_page);
 			debug_lru_set_vmr_id_mark(old->local_page, -1);
-		}
-
-		/* increase reference count */
-		debug_page_ref_will_pte_beg(new->local_page, page_len);
-		__emp_get_pages_map(vmr, new, page_len);
-		debug_page_ref_will_pte_end(new->local_page, page_len);
-
-		/* we does not update page_len since partial map gpa block
-		 * can have only single subblock. */
-	}
-
-	/* update (clear and map) pte (writable) */
-	cow_update_pte(vmr, new_head, addr, ____off, page_len);
-	/* @new is now mapped by @vmr whatever @old's flag said: the flags were
-	 * copied from @old, which may not have been mapped at all. */
-	set_gpa_flags_if_unset(new_head, GPA_HPT_MASK);
-
-	/* NOTE: the remote page is removed at __dup_cow_gpadesc() */
-
-	if (mapped) {
-		for_each_gpas(old, old_head) {
-			/* decrease ref_count and map_count of old page */
-			__remove_rmap_on_pages(gpa_page(old), ____off, vmr->host_vma,
-						page_len);
-			__emp_put_pages_map(vmr, old, page_len);
-
-			/* we does not update page_len since partial map gpa block
-			 * can have only single subblock. */
 		}
 	}
 
