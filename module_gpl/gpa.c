@@ -1519,8 +1519,9 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 					continue;
 				break;
 		case GPA_ACTIVE:
-				if (head->local_page->num_pmds > 0)
-					/* This is ACTIVE and mapped to other process. */
+				/* a CSF fetch maps the demand subblock alone,
+				 * so the head does not speak for the block */
+				if (any_hpt_map)
 					continue;
 				break;
 #ifdef CONFIG_EMP_DEBUG
