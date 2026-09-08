@@ -1687,6 +1687,16 @@ static int handle_emp_cow_fault_mmu(struct emp_mm *emm, struct mm_struct *mm,
 		if (unlikely(!gpa))
 			return -ENOMEM;
 		head = emp_get_block_head(gpa);
+	} else if (ret == 0) {
+		/* Nothing to copy, but wp_page_copy() installs its own
+		 * anonymous page unless this pte changes: grant the write. */
+		gpa = get_gpadesc(vmr, gpa_idx);
+		if (unlikely(!gpa))
+			return -ENOMEM;
+		head = emp_get_block_head(gpa);
+		head_idx = gpa_idx - (gpa - head);
+		if (likely(head->r_state == GPA_ACTIVE && head->local_page))
+			cow_mkwrite_pte(vmr, head_idx, head);
 	}
 
 	/* This is write fault, mark it. */
