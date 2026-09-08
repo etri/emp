@@ -249,7 +249,8 @@ int handle_active_fault(struct emp_vmr *vmr, struct emp_gpa *head,
 		return 0;
 #endif
 
-	if (emp_lp_lookup_vmr(head, vmr)) {
+	/* CSF maps the demand subblock alone, so ask it, not the head */
+	if (emp_lp_lookup_vmr(dma, vmr)) {
 		debug_handle_active_fault_handled(vmr, head);
 		*vmf_ret = VM_FAULT_NOPAGE;
 		return 1;
