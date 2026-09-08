@@ -1481,18 +1481,9 @@ static void COMPILER_DEBUG emp_vma_open(struct vm_area_struct *new_vma)
 	vm_flags_set(new_vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
 
 #ifdef CONFIG_EMP_USER
-	/* EMP does its own lazy fork: keep the kernel from copying this vma's
-	 * PTEs so a fork child starts with empty page tables and EMP's metadata
-	 * COW is the only mechanism inheriting the parent's contents.
-	 *
-	 * Set here rather than in emp_vma_open(): dup_mmap() decides the child's
-	 * anon_vma *before* it calls ->open, so turning the flag on later would
-	 * suppress the copy but leave the child with an anon_vma a real
-	 * VM_WIPEONFORK vma would not have.
-	 *
-	 * The flag is never cleared. The user's MADV_WIPEONFORK/MADV_KEEPONFORK
-	 * intent lives in emp_vmr.fork_policy instead; see enum emp_fork_policy.
-	 */
+	/* A child or split vma inherits VM_WIPEONFORK from the vma it was
+	 * opened from, where emp_mmap() set it. Set it again in case it was
+	 * lost; see emp_mmap() for what it is for. */
 	if (!(new_vma->vm_flags & VM_SHARED))
 		vm_flags_set(new_vma, VM_WIPEONFORK);
 #endif /* CONFIG_EMP_USER */
@@ -1735,6 +1726,26 @@ vm_start_aligned:
 
 	// prevent numa from relocating the related pages
 	vm_flags_set(vma, VM_MIXEDMAP | VM_NOHUGEPAGE | VM_DONTEXPAND);
+
+#ifdef CONFIG_EMP_USER
+	/* EMP does its own lazy fork: keep the kernel from copying this vma's
+	 * PTEs so a fork child starts with empty page tables and EMP's metadata
+	 * COW is the only mechanism inheriting the parent's contents. Without
+	 * the flag dup_mmap() copies them (VM_MIXEDMAP alone decides that, see
+	 * vma_needs_copy()): the child then maps the parent's pages through ptes
+	 * no mapping record names, reclaim cannot find them, and the page goes
+	 * back to the free list while the child still maps it.
+	 *
+	 * Set here, on the mapping itself: dup_mmap() decides the child's
+	 * anon_vma and copies the page table *before* it calls ->open, so a
+	 * flag turned on in emp_vma_open() only protects the grandchildren.
+	 *
+	 * The flag is never cleared. The user's MADV_WIPEONFORK/MADV_KEEPONFORK
+	 * intent lives in emp_vmr.fork_policy instead; see enum emp_fork_policy.
+	 */
+	if (!(vma->vm_flags & VM_SHARED))
+		vm_flags_set(vma, VM_WIPEONFORK);
+#endif /* CONFIG_EMP_USER */
 
 	/* private data first: from the moment vm_ops is set, this vma is an EMP
 	 * vma and its private data will be read as one */
