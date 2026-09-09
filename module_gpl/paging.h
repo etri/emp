@@ -100,7 +100,7 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
  * which begins inside the subblock is reported as @off, and the caller adds it
  * where it needs the first mapped address.
  */
-#define ____partial_gpa_len_off(vmr, g, idx, hva, len, off) do { \
+#define ____partial_gpa_len_off(vmr, g, hva, len, off) do { \
 	unsigned long ____end = (hva) + ((1 << PAGE_SHIFT) << gpa_subblock_order(g)); \
 	debug_assert(gpa_subblock_order(g) == gpa_block_order(g)); \
 	(len) = 1 << gpa_subblock_order(g); \
@@ -119,7 +119,7 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 		(len) = 1 << gpa_subblock_order(g); \
 		(off) = 0; \
 	} else \
-		____partial_gpa_len_off(vmr, g, idx, hva, len, off); \
+		____partial_gpa_len_off(vmr, g, hva, len, off); \
 } while (0)
 
 #define ____local_gpa_to_hva_len_off(vmr, g, hva, len, off) \
@@ -166,6 +166,7 @@ __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 				(g)->local_page->gpa_index, gpa_subblock_order(g))
 #endif /* !CONFIG_EMP_USER */
 
+#ifdef CONFIG_EMP_DEBUG
 static inline int
 __local_gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa)
 {
@@ -195,6 +196,7 @@ __local_block_to_page_len(struct emp_vmr *vmr, struct emp_gpa *head)
 	return gpa_block_size(head);
 }
 #endif /* !CONFIG_EMP_USER */
+#endif /* CONFIG_EMP_DEBUG */
 
 static inline void
 ____emp_get_pages_map(struct emp_gpa *gpa, unsigned long page_len)

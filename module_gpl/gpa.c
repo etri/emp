@@ -1359,7 +1359,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 
 			head_idx = max_head_idx + i;
 			head_hva = GPN_OFFSET_TO_HVA(vmr, head_idx, gpa_subblock_order(head));
-			____partial_gpa_len_off(vmr, head, head_idx, head_hva,
+			____partial_gpa_len_off(vmr, head, head_hva,
 						sb_page_len, sb_page_off);
 			ptl = pte_lockptr(vmr->host_mm, pmd);
 			spin_lock(ptl);
