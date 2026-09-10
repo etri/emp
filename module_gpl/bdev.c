@@ -431,8 +431,16 @@ static int test_bdev(struct connection *conn)
 	int ret = 0, i;
 	u64 *test_addr, *backup_addr;
 	struct page *test_pg, *backup_pg;
-	struct work_request w;
+	struct work_request *w;
 	sector_t base[2];
+
+	/* the test is optional, so a work request this large belongs off the
+	 * stack, and a failed allocation only skips the test */
+	w = emp_kmalloc(sizeof(struct work_request), GFP_KERNEL);
+	if (w == NULL) {
+		printk("Skip to check the pages: failed to allocate work request\n");
+		return 0;
+	}
 
 	test_pg = emp_alloc_page(GFP_KERNEL);
 	if (test_pg == NULL) {
@@ -458,24 +466,24 @@ static int test_bdev(struct connection *conn)
 		printk("Try to check the page on block %llx\n", (u64)base[i]);
 		// Backup the original contents
 		memset(backup_addr, 0, PAGE_SIZE);
-		memset(&w, 0, sizeof(w));
-		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, &w,
+		memset(w, 0, sizeof(*w));
+		init_completion(&w->wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, w,
 				READ_FROM_BLOCK, 0);
 		if (ret)
 			break;
-		ret = emp_bdev_wait_rw(NULL, &w, 0, false, READ_FROM_BLOCK);
+		ret = emp_bdev_wait_rw(NULL, w, 0, false, READ_FROM_BLOCK);
 		if (ret)
 			break;
 
 		// First write test with safe contents
-		memset(&w, 0, sizeof(w));
-		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, &w,
+		memset(w, 0, sizeof(*w));
+		init_completion(&w->wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, w,
 				WRITE_TO_BLOCK, 0);
 		if (ret)
 			break;
-		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
+		ret = emp_bdev_wait_rw(NULL, w, 0, false, WRITE_TO_BLOCK);
 		if (ret)
 			break;
 
@@ -485,25 +493,25 @@ static int test_bdev(struct connection *conn)
 
 		// Write the test contents
 		write_deadbeef_page((unsigned long)test_addr, 0);
-		memset(&w, 0, sizeof(w));
-		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, test_pg, &w,
+		memset(w, 0, sizeof(*w));
+		init_completion(&w->wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, test_pg, w,
 				WRITE_TO_BLOCK, 0);
 		if (ret)
 			break;
-		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
+		ret = emp_bdev_wait_rw(NULL, w, 0, false, WRITE_TO_BLOCK);
 		if (ret)
 			break;
 
 		// Read the written data
 		memset(test_addr, 0, PAGE_SIZE);
-		memset(&w, 0, sizeof(w));
-		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, test_pg, &w,
+		memset(w, 0, sizeof(*w));
+		init_completion(&w->wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, test_pg, w,
 				READ_FROM_BLOCK, 0);
 		if (ret)
 			break;
-		ret = emp_bdev_wait_rw(NULL, &w, 0, false, READ_FROM_BLOCK);
+		ret = emp_bdev_wait_rw(NULL, w, 0, false, READ_FROM_BLOCK);
 		if (ret)
 			break;
 
@@ -514,13 +522,13 @@ static int test_bdev(struct connection *conn)
 			break;
 
 		// Restore the original contents
-		memset(&w, 0, sizeof(w));
-		init_completion(&w.wait);
-		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, &w,
+		memset(w, 0, sizeof(*w));
+		init_completion(&w->wait);
+		ret = emp_bdev_rw_page(conn->bdev, base[i], PAGE_SIZE, backup_pg, w,
 				WRITE_TO_BLOCK, 0);
 		if (ret)
 			break;
-		ret = emp_bdev_wait_rw(NULL, &w, 0, false, WRITE_TO_BLOCK);
+		ret = emp_bdev_wait_rw(NULL, w, 0, false, WRITE_TO_BLOCK);
 		if (ret)
 			break;
 
@@ -532,6 +540,7 @@ succeed:
 free_test_pg_out:
 	emp_free_page(test_pg);
 out:
+	emp_kfree(w);
 	return ret;
 }
 

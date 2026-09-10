@@ -1780,7 +1780,7 @@ static inline void __clear_work_request(struct work_request *w)
 static int COMPILER_DEBUG test_read_latency(struct connection *c)
 {
 	u64 dma_addr;
-	struct work_request w;
+	struct work_request *w = NULL;
 	struct ib_wc wc;
 	struct ib_sge sge;
 	struct ib_cq *cq;
@@ -1823,18 +1823,28 @@ static int COMPILER_DEBUG test_read_latency(struct connection *c)
 	sge.lkey = context->mr->lkey;
 	sge.length = PAGE_SIZE;
 
-	__clear_work_request(&w);
-	w.wr.wr.num_sge = 1;
-	w.wr.wr.sg_list = &sge;
-	w.wr.wr.opcode = IB_WR_RDMA_READ;
-	w.wr.wr.send_flags = IB_SEND_SIGNALED;
-	w.wr.remote_addr = context->rdma_addr;
-	w.wr.rkey = context->rdma_rkey;
+	/* the test is optional, so a work request this large belongs off the
+	 * stack, and a failed allocation only skips the test */
+	w = emp_kmalloc(sizeof(struct work_request), GFP_KERNEL);
+	if (w == NULL) {
+		pr_info("%s: conn%d-%d failed to allocate work request\n", __func__,
+				conn_get_mr_id(c), context->id);
+		sum = 0;
+		goto out;
+	}
+
+	__clear_work_request(w);
+	w->wr.wr.num_sge = 1;
+	w->wr.wr.sg_list = &sge;
+	w->wr.wr.opcode = IB_WR_RDMA_READ;
+	w->wr.wr.send_flags = IB_SEND_SIGNALED;
+	w->wr.remote_addr = context->rdma_addr;
+	w->wr.rkey = context->rdma_rkey;
 
 	invalid_count = 0;
 	for (n_loop = 0, sum = 0; n_loop < 1000; n_loop++) {
 		a = get_ts_in_ns();
-		ret = ib_post_send(context->cm_id->qp, &w.wr.wr, NULL);
+		ret = ib_post_send(context->cm_id->qp, &w->wr.wr, NULL);
 		if (ret) {
 			pr_info("%s: conn%d-%d ip: %x failed to ib_post_send\n",
 					__func__, conn_get_mr_id(c), context->id,
@@ -1883,6 +1893,8 @@ static int COMPILER_DEBUG test_read_latency(struct connection *c)
 				invalid_count);
 	}
 out:
+	if (w)
+		emp_kfree(w);
 	ib_dma_unmap_single(context->cm_id->device, dma_addr, 4096,
 			DMA_BIDIRECTIONAL);
 	emp_free_pages(page);
