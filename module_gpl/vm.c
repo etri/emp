@@ -71,9 +71,22 @@ atomic64_t num_emp_hva_fault = {0};
 /* ----- local variables ----- */
 static int                  emp_major = 0;
 static struct class         *emp_class;
-struct emp_mm               **emp_mm_arr;
-unsigned long               emp_mm_arr_len;
-spinlock_t                  emp_mm_arr_lock;
+/* every live emp_mm. @emp_mm_next_id only ever counts up: an id is never
+ * reused, so a stale id resolves to nothing rather than to the emp_mm that
+ * happened to take the slot. */
+LIST_HEAD(emp_mm_list);
+spinlock_t                  emp_mm_list_lock;
+/* @emp_mm_len is read with no lock held -- the printks below, and the count
+ * emp_exit() checks -- so it is atomic. @emp_mm_next_id is only ever touched
+ * under emp_mm_list_lock and does not need to be. */
+atomic_t                    emp_mm_len;
+static unsigned long        emp_mm_next_id;
+#ifdef CONFIG_EMP_DEBUG
+/* a flat table of the live emp_mm objects, so a debugger or a crash dump can
+ * enumerate them without walking emp_mm_list. Maintained under
+ * emp_mm_list_lock; nothing in the module reads it. */
+struct emp_mm               *debug_emp_mm_arr[EMP_MM_ARR_MAX];
+#endif /* CONFIG_EMP_DEBUG */
 /* ----- local variables ----- */
 
 #ifdef CONFIG_EMP_EXT
@@ -1886,26 +1899,14 @@ reg_kvm_get_vcpus_err:
  */
 static int register_bvma(struct emp_mm *bvma)
 {
-	int i, emp_index, ret;
+	spin_lock(&emp_mm_list_lock);
+	bvma->id = emp_mm_next_id++;
+	list_add_tail(&bvma->mm_list, &emp_mm_list);
+	atomic_inc(&emp_mm_len);
+	debug_register_bvma(bvma);
+	spin_unlock(&emp_mm_list_lock);
 
-	ret = -EBUSY;
-	emp_index = -1;
-	spin_lock(&emp_mm_arr_lock);
-	for (i = 0; i < EMP_MM_MAX; i++) {
-		if (emp_mm_arr[i] == NULL) {
-			emp_index = i;
-			break;
-		}
-	}
-	if (emp_index != -1) {
-		bvma->id = emp_index;
-		emp_mm_arr_len++;
-		emp_mm_arr[emp_index] = bvma;
-		ret = 0;
-	}
-	spin_unlock(&emp_mm_arr_lock);
-
-	return ret;
+	return 0;
 }
 
 /**
@@ -1917,16 +1918,18 @@ static int register_bvma(struct emp_mm *bvma)
  */
 static int unregister_bvma(struct emp_mm *bvma)
 {
-	if (emp_mm_arr[bvma->id] == NULL ||
-			emp_mm_arr[bvma->id] != bvma)
+	spin_lock(&emp_mm_list_lock);
+	/* an emp_mm that is not on the list was never registered, or is
+	 * being unregistered twice */
+	if (list_empty(&bvma->mm_list)) {
+		spin_unlock(&emp_mm_list_lock);
 		return -EINVAL;
-
-	spin_lock(&emp_mm_arr_lock);
-	emp_mm_arr[bvma->id] = NULL;
-	emp_mm_arr_len--;
+	}
+	list_del_init(&bvma->mm_list);
+	atomic_dec(&emp_mm_len);
 
 	debug_unregister_bvma(bvma);
-	spin_unlock(&emp_mm_arr_lock);
+	spin_unlock(&emp_mm_list_lock);
 	return 0;
 }
 
@@ -1951,6 +1954,10 @@ static struct emp_mm *create_emm(void)
 							BVMA_SIZE);
 		return NULL;
 	}
+	/* kzalloc leaves mm_list all-zero, and list_empty() is false on that:
+	 * unregister_bvma() tests membership with it, so it has to be a real
+	 * empty list before anything can fail on the way to register_bvma(). */
+	INIT_LIST_HEAD(&bvma->mm_list);
 	bvma->possible_cpus = num_possible_cpus();
 
 	if (donor_mgmt_init(bvma))
@@ -2060,13 +2067,6 @@ static int emp_open(struct inode *inode, struct file *filp)
 		goto open_err;
 	}
 
-	if (emp_mm_arr_len >= EMP_MM_MAX) {
-		printk(KERN_ERR "%s: failed to open: no vma slot\n",
-				EMP_DEVICE_NAME);
-		ret = -EBUSY;
-		goto open_err;
-	}
-
 	bvma = create_emm();
 	if (!bvma) {
 		printk(KERN_ERR "%s: failed to open: lack of memory\n",
@@ -2089,7 +2089,7 @@ static int emp_open(struct inode *inode, struct file *filp)
 		goto open_register_err;
 	}
 	printk_ratelimited(KERN_NOTICE "%s (emm registered) emm: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, emp_mm_arr_len);
+			__func__, bvma->id, (long) atomic_read(&emp_mm_len));
 
 	if (emp_procfs_add(bvma, bvma->id)) {
 		ret = -ENOENT;
@@ -2125,7 +2125,7 @@ static int emp_open(struct inode *inode, struct file *filp)
 
 	mutex_unlock(&emp_open_mutex);
 	printk_ratelimited(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
+			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, (long) atomic_read(&emp_mm_len));
 	return ret;
 
 open_procfs_err:
@@ -2176,7 +2176,7 @@ static int emp_release(struct inode *inode, struct file *filp)
 		return -ENODEV;
 	bvma = (struct emp_mm *)filp->private_data;
 	printk_ratelimited(KERN_NOTICE "%s (begin) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
+			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, (long) atomic_read(&emp_mm_len));
 
 	mutex_lock(&emp_open_mutex);
 
@@ -2216,7 +2216,7 @@ static int emp_release(struct inode *inode, struct file *filp)
 #endif
 
 	printk_ratelimited(KERN_NOTICE "%s (exit) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
-			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
+			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, (long) atomic_read(&emp_mm_len));
 
 	emp_procfs_del(bvma);
 	emp_kfree(bvma);
@@ -2331,13 +2331,9 @@ static int __init emp_init(void)
 	register_emp_mod(&emp_mod);
 #endif /* CONFIG_EMP_VM */
 
-	emp_mm_arr = emp_kzalloc(EMP_MM_MAX * sizeof(struct emp_mm *), GFP_KERNEL);
-	if (!emp_mm_arr) {
-		printk(KERN_ERR "failed to allocate memory for vmas\n");
-		return -ENOMEM;
-	}
-	emp_mm_arr_len = 0;
-	spin_lock_init(&emp_mm_arr_lock);
+	atomic_set(&emp_mm_len, 0);
+	spin_lock_init(&emp_mm_list_lock);
+	emp_mm_next_id = 0;
 
 	dma_init();
 
@@ -2391,7 +2387,6 @@ static int __init emp_init(void)
 
 err:
 	emp_procfs_exit();
-	emp_kfree(emp_mm_arr);
 	return ret;
 }
 
@@ -2407,7 +2402,7 @@ static void __exit emp_exit(void)
 	memset(&emp_mod, 0, sizeof(struct emp_mod));
 #endif /* CONFIG_EMP_VM */
 
-	if (emp_mm_arr_len != 0) {
+	if (atomic_read(&emp_mm_len) != 0) {
 		printk(KERN_ERR "unable to unregister %s: %d\n",
 				EMP_DEVICE_NAME,
 				emp_major);
@@ -2420,8 +2415,6 @@ static void __exit emp_exit(void)
 	mutex_lock(&emp_open_mutex);
 	mutex_unlock(&emp_open_mutex);
 
-	if (emp_mm_arr)
-		emp_kfree(emp_mm_arr);
 	dma_exit();
 
 	device_destroy(emp_class, MKDEV(emp_major,0));

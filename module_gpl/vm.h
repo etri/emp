@@ -595,6 +595,7 @@ struct emp_mmu_notifier {
 
 struct emp_mm {
 	int                 id;
+	struct list_head    mm_list;
 	pid_t               pid;
 	int                 possible_cpus;
 

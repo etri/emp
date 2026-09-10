@@ -1934,13 +1934,37 @@ void debug_flush_direct_pages(struct emp_gpa *g) {
 	BUG_ON(__is_gpa_flags_set(g, GPA_PREFETCHED_MASK));
 }
 
+/*
+ * debug_emp_mm_arr - the live emp_mm objects, flat
+ *
+ * emp_mm_list is the authority; this table is a convenience for a debugger or
+ * a crash dump, which can read a global array at a fixed address without
+ * knowing how to walk a list. Both hooks run from register_bvma() and
+ * unregister_bvma() with emp_mm_list_lock held, so the table changes with the
+ * list. Nothing in the module consumes it.
+ */
+void debug_register_bvma(struct emp_mm *bvma)
+{
+	extern struct emp_mm *debug_emp_mm_arr[];
+	int i = bvma->id & (EMP_MM_ARR_MAX - 1);
+
+	if (debug_emp_mm_arr[i]) {
+		printk(KERN_ERR "%s: debug_emp_mm_arr[%d] is already occupied, emm %d will be kicked out by emm %d\n",
+				__func__, i, debug_emp_mm_arr[i]->id, bvma->id);
+	}
+
+	debug_emp_mm_arr[i] = bvma;
+}
+
 void debug_unregister_bvma(struct emp_mm *bvma)
 {
-	int i;
-	extern struct emp_mm **emp_mm_arr;
+	extern struct emp_mm *debug_emp_mm_arr[];
+	int i = bvma->id & (EMP_MM_ARR_MAX - 1);
 
-	for (i = 0; i < EMP_MM_MAX; i++)
-		BUG_ON(emp_mm_arr[i] == bvma);
+	BUG_ON(!list_empty(&bvma->mm_list));
+
+	if (debug_emp_mm_arr[i] == bvma)
+		debug_emp_mm_arr[i] = NULL;
 }
 
 void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new, int type) {

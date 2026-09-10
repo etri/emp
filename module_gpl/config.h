@@ -37,7 +37,6 @@
 #define COMPILER_OPT __attribute__((optimize("-O2")))
 #define COMPILER_DEBUG_FORCE __attribute__((optimize("-O0")))
 #define EMP_DEVICE_NAME "emp"
-#define EMP_MM_MAX      (256)
 
 #if defined(CONFIG_EMP_DEBUG_GPA_STATE) || defined(CONFIG_EMP_DEBUG_PROGRESS_GPA_LOCK)
 /* DEBUG_GPA_STATE uses DEBUG_PROGRESS */

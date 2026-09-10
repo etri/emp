@@ -16,8 +16,6 @@
 #endif
 #include "pcalloc.h"
 
-extern struct emp_mm **emp_mm_arr;
-extern unsigned long emp_mm_arr_len;
 DECLARE_WAIT_QUEUE_HEAD(tmp_wq);
 
 #define vmf_write_fault(vmf) (((vmf)->flags & FAULT_FLAG_WRITE) ? true : false)

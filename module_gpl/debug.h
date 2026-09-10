@@ -12,6 +12,9 @@
 #include <linux/vmalloc.h>
 #include <linux/gfp.h>
 
+/* how many live emp_mm objects debug_emp_mm_arr can hold */
+#define EMP_MM_ARR_MAX  (256)
+
 /******************** EMP DEBUG HELPER FUNCTIONS ************************/
 
 /**
@@ -296,6 +299,7 @@ void debug_update_inactive_list2(struct emp_mm *, struct emp_gpa *);
 void debug_add_gpas_to_inactive(struct emp_gpa **gpas, int n_new);
 void debug_add_gpas_to_inactive2(struct emp_gpa *head, struct emp_gpa *g);
 void debug_flush_direct_pages(struct emp_gpa *g);
+void debug_register_bvma(struct emp_mm *);
 void debug_unregister_bvma(struct emp_mm *);
 void debug_add_gpas_to_active_list(struct emp_gpa **gpas, int n_new, int type);
 void debug_add_list_count(struct slru *target_list, int count);
@@ -357,6 +361,7 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_add_gpas_to_inactive(gpas, n_new) do{}while(0)
 #define debug_add_gpas_to_inactive2(head, g) do{}while(0)
 #define debug_flush_direct_pages(g) do{}while(0)
+#define debug_register_bvma(bvma) do{}while(0)
 #define debug_unregister_bvma(bvma) do{}while(0)
 #define debug_add_gpas_to_active_list(gpas, n_new, type) do{}while(0)
 #define debug_add_list_count(target_list, count) do{}while(0)
