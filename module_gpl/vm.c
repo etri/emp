@@ -217,16 +217,6 @@ int register_emp_ext(struct emp_ext *ext) {
 EXPORT_SYMBOL(register_emp_ext);
 #endif
 
-/**
- * get_emp_mm_arr - Get the whole bvma array
- *
- * @return array of bvma
- */
-struct emp_mm **get_emp_mm_arr(void)
-{
-	return emp_mm_arr;
-}
-
 #ifdef CONFIG_EMP_VM
 static inline void set_kvm_emp_mm(struct kvm *kvm, void *emp_mm) {
 	container_of(kvm, struct kvm_emp_container, kvm)->emp_mm = emp_mm;	
@@ -1976,7 +1966,6 @@ static struct emp_mm *create_emm(void)
 	spin_lock_init(&bvma->mrs.memregs_lock);
 	init_waitqueue_head(&bvma->mrs.mrs_ctrl_wq);
 
-	atomic_set(&bvma->refcount, 1);
 	atomic_set(&bvma->ftm.alloc_pages_len, 0);
 
 	init_emp_list(&bvma->ftm.free_page_list);
@@ -2188,8 +2177,6 @@ static int emp_release(struct inode *inode, struct file *filp)
 	bvma = (struct emp_mm *)filp->private_data;
 	printk_ratelimited(KERN_NOTICE "%s (begin) emm: %d pid: %d current: %d num_vmrs: %d num_emp_mm: %ld\n",
 			__func__, bvma->id, bvma->pid, current->pid, bvma->num_vmrs, emp_mm_arr_len);
-
-	WARN_ON(atomic_dec_and_test(&bvma->refcount) != true);
 
 	mutex_lock(&emp_open_mutex);
 

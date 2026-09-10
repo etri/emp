@@ -594,7 +594,6 @@ struct emp_mmu_notifier {
 #endif
 
 struct emp_mm {
-	atomic_t            refcount;
 	int                 id;
 	pid_t               pid;
 	int                 possible_cpus;
@@ -754,8 +753,6 @@ struct emp_mm {
 #else /* !CONFIG_EMP_VM */
 #define is_emm_with_kvm(emm) (false)
 #endif /* !CONFIG_EMP_VM */
-
-struct emp_mm **get_emp_mm_arr(void);
 
 static inline u64 get_ts_in_ns(void)
 {

@@ -264,35 +264,4 @@ static inline struct emp_vmr *__get_emp_vmr(struct vm_area_struct *vma)
 		return NULL;
 	return (struct emp_vmr *)vma->vm_private_data;
 }
-
-
-static inline struct emp_mm *get_emp_mm(int id)
-{
-	extern struct emp_mm **emp_mm_arr;
-	extern spinlock_t emp_mm_arr_lock;
-	struct emp_mm *bvma = NULL;
-
-	if (id < 0 || id >= EMP_MM_MAX)
-		return NULL;
-
-	spin_lock(&emp_mm_arr_lock);
-	bvma = emp_mm_arr[id];
-	spin_unlock(&emp_mm_arr_lock);
-
-	if (bvma) {
-		atomic_inc(&bvma->refcount);
-		printk(KERN_ERR "bvma:id:%d refcount:%d\n", bvma->id, 
-				atomic_read(&bvma->refcount));
-	}
-	return bvma;
-}
-
-static inline void put_emp_mm(struct emp_mm *emm)
-{
-	bool zero;
-	zero = atomic_dec_and_test(&emm->refcount);
-	WARN_ON(zero == true);
-	printk(KERN_ERR "emm:id:%d refcount:%d\n", emm->id, 
-			atomic_read(&emm->refcount));
-}
 #endif /* __PAGING_H__ */
