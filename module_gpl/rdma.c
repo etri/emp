@@ -1326,11 +1326,18 @@ static int rdma_destroy_conn(struct emp_mm *emm, struct connection *conn)
 				__func__, mrid, i, ret);
 	}
 
-	// wait for disconnection of all the related contexts
-	do {
-		ret = wait_event_interruptible(emm->mrs.mrs_ctrl_wq,
-				atomic_read(&conn->refcount) == 0);
-	} while (ret == -ERESTARTSYS);
+	/* Wait for disconnection of all the related contexts. The retry loop
+	 * this replaces fed every signal back into the wait, so a device that
+	 * never completes its disconnect wedged the caller with no way out.
+	 * Report the interrupt instead and leave @conn to the contexts that
+	 * still hold a reference to it. */
+	ret = wait_event_interruptible(emm->mrs.mrs_ctrl_wq,
+			atomic_read(&conn->refcount) == 0);
+	if (ret) {
+		pr_warn("%s: conn%d interrupted. refc: %d. leaving it\n",
+				__func__, mrid, atomic_read(&conn->refcount));
+		return -EINTR;
+	}
 
 	emp_kfree(conn->contexts);
 	emp_kfree(conn);

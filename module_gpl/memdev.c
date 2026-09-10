@@ -388,8 +388,14 @@ static int destroy_conn(struct emp_mm *emm, struct connection *conn)
 	conn->contexts[0] = NULL;
 	conn->n_contexts--;
 	context->ctrl_state = CONTEXT_DESTROYING;
-	wait_event_interruptible(context->wr_wq,
-				atomic_read(&context->wr_len) == 0);
+	if (wait_event_interruptible(context->wr_wq,
+				atomic_read(&context->wr_len) == 0)) {
+		/* see the same wait in bdev.c: a signal leaves the requests in
+		 * flight, and they name @context and the pages it maps */
+		conn->contexts[0] = context;
+		conn->n_contexts++;
+		return -EINTR;
+	}
 	atomic_dec(&conn->refcount);
 	if (context->memdev_map) {
 #ifdef CONFIG_EMP_DEBUG

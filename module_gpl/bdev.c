@@ -668,8 +668,17 @@ static int destroy_conn(struct emp_mm *emm, struct connection *conn)
 	conn->contexts[0] = NULL;
 	conn->n_contexts--;
 	context->ctrl_state = CONTEXT_DESTROYING;
-	wait_event_interruptible(context->wr_wq,
-				atomic_read(&context->wr_len) == 0);
+	if (wait_event_interruptible(context->wr_wq,
+				atomic_read(&context->wr_len) == 0)) {
+		/* A signal, not the last completion: the requests still in
+		 * flight name @context, so freeing it here is a use-after-free
+		 * when they complete. Give @conn its context back and leave it
+		 * standing. CONTEXT_DESTROYING stays set: it takes no new
+		 * request, the ones in flight drain, and a retry waits again. */
+		conn->contexts[0] = context;
+		conn->n_contexts++;
+		return -EINTR;
+	}
 	atomic_dec(&conn->refcount);
 	emp_kfree(context);
 	emp_kfree(conn->contexts);

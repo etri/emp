@@ -242,13 +242,26 @@ static void disconnect_mr(struct memreg *mr)
 	if (mr->conn) {
 		struct dma_ops *ops = mr->ops;
 
-		(ops->destroy_conn)(mr->bvma, mr->conn);
+		/* A device that never finishes leaves the connection standing.
+		 * The teardown below would then destroy a cache and free an mr
+		 * that the work requests in flight still name: leak them. */
+		if ((ops->destroy_conn)(mr->bvma, mr->conn)) {
+			printk(KERN_WARNING "%s: mr%d destroy_conn interrupted."
+					" leaking the memory region\n",
+					__func__, mr->id);
+			return;
+		}
 	}
 	if (mr->wr_cache) {
 		// wait for that corresponding work requests are released
 		mr->state = MR_STATE_CLOSING;
-		wait_event_interruptible(mr->wr_wq,
-				(atomic_read(&mr->wr_len) == 0));
+		if (wait_event_interruptible(mr->wr_wq,
+				(atomic_read(&mr->wr_len) == 0))) {
+			printk(KERN_WARNING "%s: mr%d work requests still in "
+					"flight. leaking the memory region\n",
+					__func__, mr->id);
+			return;
+		}
 		emp_kmem_cache_destroy(mr->wr_cache);
 		mr->wr_cache = NULL;
 	}
