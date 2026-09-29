@@ -37,8 +37,6 @@ enum lru_list_type {
 	INACTIVE_LIST
 };
 
-#define D_HEADS_SIZE 16 /* eager_writeback */
-
 #ifdef CONFIG_EMP_VM
 static inline void lock_kvm_mmu_lock(struct kvm *kvm) {
 	if (!kvm)

@@ -690,8 +690,6 @@ static int destroy_conn(struct emp_mm *emm, struct connection *conn)
 	return ret;
 }
 
-void check_and_writeback_inactive_block(struct emp_mm *, int);
-
 /**
  * wait_for_wc - Wait for the work request completion
  * @param bvma bvma data structure

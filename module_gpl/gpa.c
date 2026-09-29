@@ -1506,7 +1506,9 @@ __put_max_block(struct emp_mm *emm, struct vcpu_var *cpu,
 		if (any_hpt_map)
 			set_gpa_flags_if_unset(head, GPA_HPT_MASK);
 
+#ifdef CONFIG_EMP_OPT
 		check_eager_wbr(emm, cpu, head);
+#endif
 
 		switch (head->r_state) {
 		case GPA_INIT:

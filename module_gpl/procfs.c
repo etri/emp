@@ -407,7 +407,27 @@ EMP_PROC_INITIAL_BOOLEAN(mem_poll)
 EMP_PROC_INITIAL_BOOLEAN(remote_reuse)
 #ifdef CONFIG_EMP_OPT
 EMP_PROC_INITIAL_BOOLEAN(eval_media)
-EMP_PROC_INITIAL_BOOLEAN(async_invlept)
+EMP_PROC_INITIAL_BOOLEAN_READ(async_invlept)
+static ssize_t initial_async_invlept_write(struct file *file, const char __user *buf,
+							size_t count, loff_t *ppos) {
+	extern int initial_eager_writeback;
+	extern int initial_async_invlept;
+	int async_invlept = initial_async_invlept;
+	ssize_t ret = __integer_write(file, buf, count, ppos,
+							&async_invlept, 0, 1);
+
+	if (ret < 0) return ret;
+
+	if (async_invlept == 0 && initial_eager_writeback == 1) {
+		printk(KERN_ERR "async_invlept must be enabled for eager_writeback\n");
+		return -EINVAL;
+	}
+
+	initial_async_invlept = async_invlept;
+	printk(KERN_INFO "initial_async_invlept: %d\n", initial_async_invlept);
+
+	return ret;
+}
 EMP_PROC_INITIAL_BOOLEAN(writeback_optimization_disable)
 EMP_PROC_INITIAL_BOOLEAN_READ(eager_writeback)
 static ssize_t initial_eager_writeback_write(struct file *file, const char __user *buf,
@@ -699,7 +719,30 @@ EMP_PROC_VM_CONFIG_BOOLEAN(mem_poll);
 #ifdef CONFIG_EMP_OPT
 EMP_PROC_VM_CONFIG_BOOLEAN(next_pt_premapping)
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(eval_media);
-EMP_PROC_VM_CONFIG_BOOLEAN(async_invlept);
+EMP_PROC_VM_CONFIG_BOOLEAN_READ(async_invlept);
+static ssize_t async_invlept_write(struct file *file, const char __user *buf,
+						size_t count, loff_t *ppos)
+{
+	ssize_t ret;
+	int async_invlept;
+	struct emp_mm *bvma = __get_emp_mm_by_file(file);
+	if (bvma == NULL) return 0;
+	async_invlept = bvma->config.async_invlept;
+
+	ret = __integer_write(file, buf, count, ppos,
+						&async_invlept, 0, 1);
+	if (ret < 0) return ret;
+
+	if (async_invlept == 0 && bvma->config.eager_writeback == 1) {
+		printk(KERN_ERR "ERROR: [emp_id: %d] async_invlept must be enabled for eager_writeback\n",
+						bvma->id);
+		return -EINVAL;
+	}
+
+	bvma->config.async_invlept = async_invlept;
+	printk(KERN_INFO "async_invlept: emp_id: %d value: %d\n", bvma->id, async_invlept);
+	return ret;
+}
 EMP_PROC_VM_CONFIG_BOOLEAN(writeback_optimization_disable);
 EMP_PROC_VM_CONFIG_BOOLEAN_READ(eager_writeback);
 static ssize_t eager_writeback_write(struct file *file, const char __user *buf,

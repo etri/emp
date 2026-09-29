@@ -951,6 +951,7 @@ update_active_list(struct emp_mm *emm, struct vcpu_var *local_cpu,
 	return n_vs;
 }
 
+#ifdef CONFIG_EMP_OPT
 /**
  * check_eager_wbr - Check eager writeback block and handle the writeback
  * @param bvma bvma data structure
@@ -982,6 +983,7 @@ void check_eager_wbr(struct emp_mm *bvma, struct vcpu_var *cpu,
 	/* Clear GPA_DIRTY_MASK to prevent duplicated writebacks. */
 	clear_gpa_flags_if_set(head, GPA_DIRTY_MASK);
 }
+#endif /* CONFIG_EMP_OPT */
 
 /**
  * __clear_block_w - wait for what the block holds in @w and leave it NULL
@@ -1000,8 +1002,10 @@ void check_eager_wbr(struct emp_mm *bvma, struct vcpu_var *cpu,
 void __clear_block_w(struct emp_mm *bvma, struct vcpu_var *cpu,
 		   struct emp_gpa *head)
 {
+#ifdef CONFIG_EMP_OPT
 	if (is_gpa_flags_set(head, GPA_EAGER_WBR_MASK))
 		check_eager_wbr(bvma, cpu, head);
+#endif
 
 	if (WB_BLOCK(head)) {
 		if (head->local_page->w)
@@ -1028,10 +1032,12 @@ static bool check_block_free(struct emp_mm *bvma, struct emp_gpa *head)
 {
 	struct emp_gpa *g;
 	struct page *p;
-	int pc;
 	bool is_free = true;
-
-	pc = is_gpa_flags_set(head, GPA_EAGER_WBR_MASK)? 2: 1;
+#ifdef CONFIG_EMP_OPT
+	int pc = is_gpa_flags_set(head, GPA_EAGER_WBR_MASK)? 2: 1;
+#else
+	const int pc = 1;
+#endif
 
 	for_each_gpas(g, head) {
 		p = g->local_page->page;
@@ -1157,9 +1163,11 @@ static int select_victims_inactive_list(struct emp_mm *bvma,
 #else
 		__sub_inactive_list_page_len(promote_pages_len, bvma);
 #endif
+#ifdef CONFIG_EMP_OPT
 		temp_list_for_each(cur, &to_promote)
 			check_eager_wbr(bvma, cpu,
 					__get_local_page_from_list(cur)->gpa);
+#endif
 		__promote_gpas(bvma, cpu_id, &to_promote, promote_pages_len, false);
 	}
 
@@ -1298,6 +1306,7 @@ error:
 	return ERR_PTR(-ENXIO);
 }
 
+#ifdef CONFIG_EMP_OPT
 /**
  * check_need_writeback - Check if the block needs writeback
  * @param bvma bvma data structure
@@ -1332,6 +1341,7 @@ static bool check_need_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 
 	return need_writeback;
 }
+#endif /* CONFIG_EMP_OPT */
 
 /**
  * emp_writeback_block - Writeback blocks to donor if needed
@@ -1586,8 +1596,9 @@ static int update_inactive_list(struct emp_mm *bvma, struct vcpu_var *local_cpu,
 
 		debug_update_inactive_list(head,
 				emp_get_block_head(victims[i]));
-
+#ifdef CONFIG_EMP_OPT
 		check_eager_wbr(bvma, local_cpu, head);
+#endif
 		debug_update_inactive_list2(bvma, head);
 
 		n_victim_pages += gpa_block_size(head);
@@ -1634,6 +1645,7 @@ error:
 	return n_victim_pages;
 }
 
+#ifdef CONFIG_EMP_OPT
 /**
  * do_eager_writeback - Do writeback unmapped dirty block eagerly
  * @param bvma bvma data structure
@@ -1663,7 +1675,8 @@ static int do_eager_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 		}
 
 		e = alloc_eager_wbr(cpu);
-		debug_check_null_pointer(e);
+		if (unlikely(!e))
+			return 0; // not a correctness problem
 		w = evict_block(bvma, cpu, head, true);
 		if (!w) {
 			free_eager_wbr(bvma, e);
@@ -1691,7 +1704,8 @@ alloc_eager_wbr(struct vcpu_var *cpu)
 {
 	struct eager_wbr *w;
 	w = emp_kmem_cache_alloc(cpu->eager_wbr_cache, GFP_ATOMIC);
-	w->cpu = cpu->id;
+	if (w)
+		w->cpu = cpu->id;
 	return w;
 }
 
@@ -1701,6 +1715,7 @@ void free_eager_wbr(struct emp_mm *emm, struct eager_wbr *w)
 	v = emp_get_vcpu_from_id(emm, w->cpu);
 	emp_kmem_cache_free(v->eager_wbr_cache, w);
 }
+#endif /* CONFIG_EMP_OPT */
 
 /**
  * add_gpas_to_inactive - Add blocks to inactive list
@@ -1714,13 +1729,15 @@ void free_eager_wbr(struct emp_mm *emm, struct eager_wbr *w)
 int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 				struct emp_gpa **gpas, int n_new)
 {
+#ifdef CONFIG_EMP_OPT
+	int ret;
+#endif
 	int new_pages_len = 0;
 
 	/* inactive list */
 	struct slru *slru;
 	struct emp_list *list;
 	int i, cpu_id;
-	int ret;
 	struct emp_gpa *head;
 
 	debug_add_gpas_to_inactive(gpas, n_new);
@@ -1747,9 +1764,13 @@ int add_gpas_to_inactive(struct emp_mm *bvma, struct vcpu_var *cpu,
 	if (new_pages_len)
 		__add_inactive_list_page_len(new_pages_len, bvma);
 
-	ret = do_eager_writeback(bvma, cpu, gpas, n_new);
-	if (unlikely(ret < 0))
-		return ret;
+#ifdef CONFIG_EMP_OPT
+	if (bvma->config.eager_writeback) {
+		ret = do_eager_writeback(bvma, cpu, gpas, n_new);
+		if (unlikely(ret < 0))
+			return ret;
+	}
+#endif
 
 	return new_pages_len;
 }
@@ -1945,8 +1966,12 @@ void reclaim_gpa_many(struct emp_mm *bvma, struct emp_gpa *gpas[], int n_gpas)
 	for (i = 0; i < end; i++)
 		bvma->vops.unmap_gpas(bvma, gpas[i], &tlb_flush_force);
 
+#ifdef CONFIG_EMP_OPT
 	if (!bvma->config.async_invlept)
 		tlb_flush_force = true;
+#else /* !CONFIG_EMP_OPT */
+	tlb_flush_force = true;
+#endif /* !CONFIG_EMP_OPT */
 
 	bvma->vops.unmap_gpas(bvma, gpas[end], &tlb_flush_force);
 
