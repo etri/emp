@@ -2166,6 +2166,7 @@ void reclaim_set(struct emp_mm *emm)
 {
 	struct emp_ftm *f = &emm->ftm;
 	f->inactive_pages_len = atomic_read(&f->local_cache_pages) >> 3;
+	f->inactive_keep_pages_len = f->inactive_pages_len - (f->inactive_pages_len >> 2);
 	f->active_pages_len = atomic_read(&f->local_cache_pages) >> 1;
 
 	f->proactive_pages_len = (atomic_read(&f->local_cache_pages) -
