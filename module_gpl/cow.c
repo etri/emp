@@ -1294,8 +1294,10 @@ static void __dup_cow_gpadesc(struct emp_vmr *vmr, unsigned long head_idx,
 		init_gpa_flags(new, get_gpa_flags(old));
 		clear_gpa_flags_if_set(new, GPA_REMOTE_MASK);
 		clear_gpa_flags_if_set(new, GPA_WPROTECT_MASK);
+#ifdef CONFIG_EMP_BLOCK
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CSF_MASK));
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_CPF_MASK));
+#endif
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_PREFETCHED_BLK_MASK));
 #ifdef CONFIG_EMP_IO
 		debug_BUG_ON(__is_gpa_flags_set(new, GPA_IO_READ_MASK));
@@ -1588,13 +1590,17 @@ __handle_emp_cow_fault_reduced(struct emp_mm *emm, struct emp_vmr *vmr,
 		if (idx == demand_idx)
 			continue;
 #ifdef CONFIG_EMP_DEBUG
+#ifdef CONFIG_EMP_BLOCK
 		if (idx == emp_get_block_head_index(vmr, idx))
 			emp_unlock_block(new);
 		else
 			__emp_unlock_block(new);
 #else
-		__emp_unlock_block(new);
+		emp_unlock_block(new);
 #endif
+#else /* !CONFIG_EMP_DEBUG */
+		__emp_unlock_block(new);
+#endif /* !CONFIG_EMP_DEBUG */
 	}
 
 	return 1;

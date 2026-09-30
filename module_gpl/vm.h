@@ -698,9 +698,7 @@ struct emp_mm {
 #define vmdesc_subblock_size(d)   (1 << vmdesc_subblock_order(d))
 #define vmdesc_subblock_mask(d)   (vmdesc_subblock_size(d) - 1)
 
-#ifdef CONFIG_EMP_BLOCK
-#define EMPTY_PAGE	((u64)(0xDEADBEEF)) // for CPF
-#endif
+#define EMPTY_PAGE	((u64)(0xDEADBEEF)) // for CPF and MEMPOLL
 
 #define VCPU_START_ID (1)
 

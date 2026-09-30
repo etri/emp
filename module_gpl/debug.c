@@ -1462,10 +1462,12 @@ static inline void __check_pmd_list(struct emp_gpa *head, struct emp_gpa *gpa)
 void debug_emp_unlock_block(struct emp_gpa *head) {
 	struct emp_gpa *gpa;
 	BUG_ON(!____emp_gpa_is_locked(head));
+#ifdef CONFIG_EMP_BLOCK
 	if (head != emp_get_block_head(head)) {
 		// _emp_lock_block() may unlock non-head gpa
 		return;
 	}
+#endif
 
 #ifdef CONFIG_EMP_EXT
 	if (emp_ext.debug_emp_unlock_block) {
@@ -1841,8 +1843,10 @@ void debug___emp_page_fault_hva(struct emp_gpa *head) {
 	BUG_ON(__is_gpa_flags_set(head, GPA_HPT_MASK) &&
 			__is_gpa_flags_set(head, GPA_EPT_MASK));
 #endif
+#ifdef CONFIG_EMP_BLOCK
 	BUG_ON(__is_gpa_flags_set(head, GPA_HPT_MASK) &&
 			__is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK));
+#endif
 }
 
 void debug___emp_page_fault_hva2(struct emp_mm *emm, struct emp_gpa *head)
@@ -2515,7 +2519,7 @@ void __debug_sub_inactive_list_page_len(struct emp_mm *emm, struct emp_gpa *gpa,
 	gpa->contrib_inactive_len -= gpa_block_size(gpa);
 	gpa->contrib_last_file = file;
 	gpa->contrib_last_line = line;
-	gpa->contrib_last_val = -gpa_block_size(gpa);
+	gpa->contrib_last_val = -(int)gpa_block_size(gpa);
 }
 EXPORT_SYMBOL(__debug_sub_inactive_list_page_len);
 

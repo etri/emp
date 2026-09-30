@@ -593,6 +593,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 }
 
 #ifdef CONFIG_EMP_USER
+#ifdef CONFIG_EMP_BLOCK
 /* Tile [gpa, gpa + num_gpa) with the largest blocks that fit, where @off is the
  * distance from the block head: a piece crossing the grid line of its own size
  * is not a head to emp_get_block_head(), and the split then skips it. */
@@ -910,6 +911,18 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 
 	return true;
 }
+#else /* !CONFIG_EMP_BLOCK */
+static bool
+__split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
+		struct emp_gpa *head, unsigned long head_index,
+		unsigned long boundary_index, unsigned long boundary_addr,
+		bool new_is_front)
+{
+	/* Without CONFIG_EMP_BLOCK, every block is 4KB and must be aligned
+	 * with the boundary. No need to __split_gpadesc(). */
+	return new_is_front;
+}
+#endif /* !CONFIG_EMP_BLOCK */
 
 static void __split_vmdesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr)
 {

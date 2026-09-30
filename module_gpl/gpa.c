@@ -335,7 +335,7 @@ set_gpadesc_regions(struct emp_vmr *vmr,
 			unsigned long vm_start, unsigned long vm_end,
 			unsigned long sb_at_head, unsigned long sb_at_tail)
 {
-#if defined(CONFIG_EMP_VM) || defined(CONFIG_EMP_BLOCK)
+#if defined(CONFIG_EMP_VM) || defined(CONFIG_EMP_BLOCK) || defined(CONFIG_EMP_DEBUG)
 	struct emp_mm *emm = vmr->emm;
 #endif
 	struct emp_vmdesc *desc = vmr->descs;
@@ -1629,16 +1629,20 @@ __unlock_max_block(struct emp_gpa *max_head, unsigned long num)
 	/* unlock all subblocks */
 #ifdef CONFIG_EMP_DEBUG
 	for (i = 0, gpa = max_head + (num - 1); i < num; i++, gpa--) {
+#ifdef CONFIG_EMP_BLOCK
 		if (gpa == emp_get_block_head(gpa))
 			/* for head, we should check more things */
 			emp_unlock_block(gpa);
 		else
 			__emp_unlock_block(gpa);
-	}
 #else
+		emp_unlock_block(gpa);
+#endif
+	}
+#else /* !CONFIG_EMP_DEBUG */
 	for (i = 0, gpa = max_head + (num - 1); i < num; i++, gpa--)
 		__emp_unlock_block(gpa);
-#endif
+#endif /* !CONFIG_EMP_DEBUG */
 }
 
 /* desc_refcnt: after decrement
