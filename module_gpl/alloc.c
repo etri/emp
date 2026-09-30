@@ -311,7 +311,7 @@ int wait_pages_available(struct emp_mm *bvma, struct vcpu_var *cpu)
 	emp_vcpu_stat_inc(cpu, alloc_pages_wait_count);
 	res = wait_event_interruptible_timeout(
 			bvma->ftm.free_pages_wq, //wait queue
-			is_local_free_pages_list_empty(bvma, cpu->id) || //condition to wakeup
+			!is_local_free_pages_list_empty(bvma, cpu->id) || //condition to wakeup
 			emp_list_len(&bvma->ftm.free_page_list) ||
 			(atomic_read(&bvma->ftm.alloc_pages_len) <
 			 LOCAL_CACHE_MAX(bvma)), HZ/10);
@@ -420,7 +420,6 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 	int num_try = 0;
 #ifdef CONFIG_EMP_DEBUG
 	int __num_try = 0;
-	int __num_try_inner = 0;
 #endif
 
 	WARN_ON(page_order != bvma_subblock_order(bvma));
@@ -449,61 +448,56 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 		/* If code flows to here, obviously there is not enough memory */ 
 
 		/* (3) now we have to wait for a free page to be allocated. */
-		do {
-#ifdef CONFIG_EMP_DEBUG
-			__num_try_inner++;
-#endif
-			/* (3)-1 wait for writeback requests of normal vcpus */
-			if (bvma->sops.wait_writeback_async(bvma, cpu,
-							bvma_block_size(bvma), false))
-				break;
+		/* (3)-1 wait for writeback requests of normal vcpus */
+		if (bvma->sops.wait_writeback_async(bvma, cpu,
+						bvma_block_size(bvma), false))
+			continue;
 
-			if (unlikely(check_alloc_pages_available(bvma)))
-				break;
+		if (unlikely(check_alloc_pages_available(bvma)))
+			continue;
 
-			/* (3)-2 generate a writeback requests.
-			 * By triggering pressure hadling routines for inactive lists,
-			 * try to retrieve free pages. */ 
+		/* (3)-2 generate a writeback requests.
+		 * By triggering pressure hadling routines for inactive lists,
+		 * try to retrieve free pages. */ 
 #ifdef CONFIG_EMP_EXT
-			res = emp_ops.reclaim_emp_pages(bvma, cpu,
-						bvma_block_size(bvma));
+		res = emp_ops.reclaim_emp_pages(bvma, cpu,
+					bvma_block_size(bvma));
 #else
-			res = reclaim_emp_pages(bvma, cpu,
-						bvma_block_size(bvma));
+		res = reclaim_emp_pages(bvma, cpu,
+					bvma_block_size(bvma));
 #endif
-			if (res > 0)
-				break;
-			else if (unlikely(res < 0)) /* error */
-				return ERR_PTR(-ENXIO);
+		if (res > 0)
+			continue;
+		else if (unlikely(res < 0)) /* error */
+			return ERR_PTR(-ENXIO);
 
-			if (unlikely(check_alloc_pages_available(bvma)))
-				break;
+		if (unlikely(check_alloc_pages_available(bvma)))
+			continue;
 
-			/* (3)-4 wait for global free page list to be filled.
-			 * The code below wakes up this thread when there is
-			 * a new insertion to global free page list */
-			res = wait_pages_available(bvma, cpu);
+		/* (3)-3 wait for global free page list to be filled.
+		 * The code below wakes up this thread when there is
+		 * a new insertion to global free page list */
+		res = wait_pages_available(bvma, cpu);
 
-			/* wait_event_interruptible_timeout returns -ERESTARTSYS
-			 * on signal; check explicitly so a killed task escapes
-			 * the loop instead of being re-queued as a "timeout".
-			 * wait_pages_available() does not set @page. jsut do
-			 * return. */
-			if (fatal_signal_pending(current))
-				return ERR_PTR(-EINTR);
+		/* wait_event_interruptible_timeout returns -ERESTARTSYS
+		 * on signal; check explicitly so a killed task escapes
+		 * the loop instead of being re-queued as a "timeout".
+		 * wait_pages_available() does not set @page. jsut do
+		 * return. */
+		if (fatal_signal_pending(current))
+			return ERR_PTR(-EINTR);
 
-			if (res <= 0 && ((++num_try) % 10 == 0)) {
-				/* Since timeout for wait_pages_available() is HZ/10,
-				 * this message is shown at most once per second.
-				 */
-				printk(KERN_ERR "WARN: hard to alloc pages for EMP. "
-						"emm: %d cpu: %d "
-						"free_pages: %d alloc_pages: %d\n",
-						bvma->id, cpu->id,
-						emp_list_len(&bvma->ftm.free_page_list),
-						atomic_read(&bvma->ftm.alloc_pages_len));
-			}
-		} while (res <= 0);
+		if (res == 0 && ((++num_try) % 10 == 0)) {
+			/* Since timeout for wait_pages_available() is HZ/10,
+			 * this message is shown at most once per second.
+			 */
+			printk(KERN_ERR "WARN: hard to alloc pages for EMP. "
+					"emm: %d cpu: %d "
+					"free_pages: %d alloc_pages: %d\n",
+					bvma->id, cpu->id,
+					emp_list_len(&bvma->ftm.free_page_list),
+					atomic_read(&bvma->ftm.alloc_pages_len));
+		}
 	}
 
 	mark_empty_page(bvma, page, page_order, demand_offset);
