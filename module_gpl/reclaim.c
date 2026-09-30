@@ -2067,7 +2067,7 @@ int adjust_local_cache_size(struct emp_mm *bvma, ssize_t diff_size, ssize_t new_
 				bvma->ftm.inactive_pages_len);
 
 	if (sign > 0) {
-		wake_up_interruptible(&bvma->ftm.free_pages_wq);
+		wake_up(&bvma->ftm.free_pages_wq);
 	} else {
 		int reclaimed = 1;
 		struct vcpu_var *cpu = emp_this_cpu_ptr(bvma->pcpus);

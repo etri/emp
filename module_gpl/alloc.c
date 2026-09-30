@@ -97,7 +97,7 @@ void COMPILER_DEBUG push_free_page_list(struct emp_mm *emm, struct page *page,
 	}
 	emp_list_splice_tail(&to_global, global_list);
 	emp_list_unlock(global_list);
-	wake_up_interruptible(&emm->ftm.free_pages_wq);
+	wake_up(&emm->ftm.free_pages_wq);
 }
 
 static inline struct page *
@@ -302,14 +302,18 @@ static struct page *__alloc_page_from_host(struct emp_mm *emm)
  *
  * @retval 0: condition false
  * @retval n: condition true
- * @retval -n: interrupted by a signal
+ * @retval -n: interrupted by a fatal signal
+ *
+ * The sleep is killable, not interruptible: a fault that is allocating does
+ * not return to user space, so a pending signal that is not fatal stays
+ * pending and would end every wait at once.
  */
 int wait_pages_available(struct emp_mm *bvma, struct vcpu_var *cpu)
 {
 	int res;
 
 	emp_vcpu_stat_inc(cpu, alloc_pages_wait_count);
-	res = wait_event_interruptible_timeout(
+	res = wait_event_killable_timeout(
 			bvma->ftm.free_pages_wq, //wait queue
 			!is_local_free_pages_list_empty(bvma, cpu->id) || //condition to wakeup
 			emp_list_len(&bvma->ftm.free_page_list) ||
@@ -479,9 +483,9 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 		 * a new insertion to global free page list */
 		res = wait_pages_available(bvma, cpu);
 
-		/* wait_event_interruptible_timeout returns -ERESTARTSYS
-		 * on signal; check explicitly so a killed task escapes
-		 * the loop instead of being re-queued as a "timeout".
+		/* wait_event_killable_timeout returns -ERESTARTSYS
+		 * on a fatal signal; check explicitly so a killed task
+		 * escapes the loop instead of being re-queued as a "timeout".
 		 * wait_pages_available() does not set @page. jsut do
 		 * return. */
 		if (fatal_signal_pending(current))
