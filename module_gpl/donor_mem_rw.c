@@ -76,8 +76,8 @@ int emp_wait_for_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 	if (reclaimed_pages >= pressure)
 		return reclaimed_pages;
 
-	reclaimed_pages += ops->wait_writeback_async(bvma, cpu, false,
-						pressure - reclaimed_pages);
+	reclaimed_pages += ops->wait_writeback_async(bvma, cpu,
+						pressure - reclaimed_pages, false);
 	if (reclaimed_pages >= pressure)
 		return reclaimed_pages;
 

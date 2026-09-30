@@ -227,8 +227,6 @@ static struct page *pop_free_page_list_global(struct emp_mm *emm, struct vcpu_va
 		emp_list_lock(remote_list);
 		emp_list_cut_count(remote_list, num_pull, &pull);
 		emp_list_unlock(remote_list);
-		if (page)
-			return page;
 	}
 
 	if (temp_list_len(&pull) == 0) {
