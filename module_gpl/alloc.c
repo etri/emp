@@ -314,7 +314,7 @@ int wait_pages_available(struct emp_mm *bvma, struct vcpu_var *cpu)
 			!is_local_free_pages_list_empty(bvma, cpu->id) || //condition to wakeup
 			emp_list_len(&bvma->ftm.free_page_list) ||
 			(atomic_read(&bvma->ftm.alloc_pages_len) <
-			 LOCAL_CACHE_MAX(bvma)), HZ/10);
+			 LOCAL_CACHE_MAX(bvma)), 1);
 
 	return res;
 }
@@ -487,8 +487,8 @@ struct page *_alloc_pages(struct emp_mm *bvma, int page_order,
 		if (fatal_signal_pending(current))
 			return ERR_PTR(-EINTR);
 
-		if (res == 0 && ((++num_try) % 10 == 0)) {
-			/* Since timeout for wait_pages_available() is HZ/10,
+		if (res == 0 && ((++num_try) % HZ == 0)) {
+			/* Since timeout for wait_pages_available() is a jiffy,
 			 * this message is shown at most once per second.
 			 */
 			printk(KERN_ERR "WARN: hard to alloc pages for EMP. "
