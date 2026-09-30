@@ -494,7 +494,10 @@ __wait_writeback_async(struct emp_mm *bvma, struct vcpu_var *cpu, struct vcpu_va
 			temp_list_add_tail(cur, &to_clear);
 			head = emp_get_block_head(w->gpa);
 			if (!is_gpa_flags_set(head, GPA_PROMOTE_MASK)) {
-				reclaimed += w->wr_size;
+				/* @pressure is in pages, and clearing the block
+				 * frees every page of it (clear_writeback_work_request());
+				 * w->wr_size counts its work requests */
+				reclaimed += gpa_block_size(head);
 				if (reclaimed >= pressure)
 					break;
 			}
