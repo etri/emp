@@ -279,9 +279,9 @@ void debug_emp_install_sptes(struct emp_mm *, struct emp_gpa *);
 void debug_emp_install_sptes2(struct emp_mm *, struct emp_gpa *, struct emp_gpa *);
 void debug__alloc_pages(struct page *, int);
 void debug_emp_bdev_wait_rw(struct work_request *, int);
-void debug_alloc_and_fetch_pages(struct emp_mm *, struct emp_gpa *,
+void debug_fetch_subblock(struct emp_mm *, struct emp_gpa *,
 		struct page *, int, int);
-void debug_alloc_and_fetch_pages2(struct emp_vmr *, struct emp_gpa *);
+void debug_fetch_subblock2(struct emp_vmr *, struct emp_gpa *);
 void debug_unmap_gpas(struct emp_mm *, struct emp_gpa *, u64, bool *);
 void debug_set_gpa_remote(struct emp_mm *, struct emp_gpa *);
 void debug_clear_and_map_pages(struct emp_mm *emm, struct emp_gpa *);
@@ -339,8 +339,8 @@ void debug_alloc_exit(struct emp_mm *emm);
 #define debug_emp_install_sptes2(emm, h, g) do{}while(0)
 #define debug__alloc_pages(page, page_order) do{}while(0)
 #define debug_emp_bdev_wait_rw(w, rw) do{}while(0)
-#define debug_alloc_and_fetch_pages(bvma, gpa, free_page, page_order, avail_dma_order) do{}while(0)
-#define debug_alloc_and_fetch_pages2(v, gpa) do{}while(0)
+#define debug_fetch_subblock(bvma, gpa, page, page_order, avail_dma_order) do{}while(0)
+#define debug_fetch_subblock2(v, gpa) do{}while(0)
 #define debug_unmap_gpas(bvma, head, addr, tlb_flush_force) do{}while(0)
 #define debug_set_gpa_remote(bvma, g) do{}while(0)
 #define debug_clear_and_map_pages(emm, head) do{}while(0)

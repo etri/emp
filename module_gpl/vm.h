@@ -405,10 +405,15 @@ struct emp_ftm {
 // ops to control data copy between first tier and second tier
 struct emp_stm_ops {
 	/* function pointers for page management */
-	int (*alloc_and_fetch_pages)(struct emp_vmr *, struct emp_gpa *,
-				unsigned long, int, int, struct vcpu_var *,
+	int (*fetch_subblock)(struct emp_vmr *, struct emp_gpa *,
+				unsigned long, int, struct page *,
+				struct vcpu_var *,
 				struct work_request *, struct work_request **,
 				int, bool, bool, bool);
+	int (*alloc_block)(struct emp_mm *, struct vcpu_var *,
+				struct list_head *, int);
+	void (*push_free_page_list)(struct emp_mm *, struct page *,
+				struct vcpu_var *);
 	struct work_request *
 		(*post_writeback_async)(struct emp_mm *, struct emp_gpa *,
 				struct vcpu_var *,

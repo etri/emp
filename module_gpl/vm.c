@@ -241,6 +241,7 @@ static int init_vcpu_var(struct vcpu_var *v, int id)
 	int ret;
 	memset(v, 0, sizeof(*v));
 	(v)->id = id;
+	mutex_init(&v->alloc_block_lock);
 	ret = emp_pf_history_init(v);
 	if (ret)
 		return ret;

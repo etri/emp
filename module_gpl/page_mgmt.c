@@ -5,6 +5,7 @@
 #include "reclaim.h"
 #include "page_mgmt.h"
 #include "donor_mem_rw.h"
+#include "alloc.h"
 #include "block-flag.h"
 #include "kvm_mmu.h"
 #include "kvm_emp.h"
@@ -316,13 +317,80 @@ int handle_local_fault(struct emp_vmr *vmr, struct emp_gpa **head,
 	return ret;
 }
 
+/**
+ * free_block_pages - Give back the pages of a block that no subblock took
+ * @param emm emm data structure
+ * @param cpu working vcpu
+ * @param pages pages from alloc_block(), linked by page->lru; left empty
+ */
+static void free_block_pages(struct emp_mm *emm, struct vcpu_var *cpu,
+			     struct list_head *pages)
+{
+	struct page *page, *n;
+
+	list_for_each_entry_safe(page, n, pages, lru) {
+		list_del_init(&page->lru);
+		/* a page on a free page list is locked, as free_gpa() leaves it */
+		clear_page_state(page);
+		_emp_lock_page(page);
+		push_free_page_list(emm, page, cpu);
+	}
+}
+
+/**
+ * alloc_block - Allocate the pages of a block, one per subblock
+ * @param emm emm data structure
+ * @param cpu working vcpu
+ * @param pages the list the pages are added to, linked by page->lru
+ * @param n_subblocks the number of subblocks of the block
+ *
+ * @retval 0: @n_subblocks pages were added to @pages
+ * @retval -n: error; @pages is as it was
+ *
+ * A fault holds the pages of its block until the block is populated, and
+ * none of them is evictable before that. The headroom above the local cache
+ * has room for one BLOCK_MAX_SIZE block per cpu (LOCAL_CACHE_BUFFER_SIZE),
+ * so allocate one block per cpu at a time: more faulting threads than cpus
+ * could otherwise take every page into half-allocated blocks and wait for
+ * each other forever. Only the allocation is serialized: a block that has
+ * its pages needs no more to be fetched.
+ */
+int alloc_block(struct emp_mm *emm, struct vcpu_var *cpu,
+		struct list_head *pages, int n_subblocks)
+{
+	LIST_HEAD(block);
+	struct page *page;
+	int i, ret = 0;
+
+	if (mutex_lock_killable(&cpu->alloc_block_lock))
+		return -EINTR;
+	for (i = 0; i < n_subblocks; i++) {
+		page = _alloc_pages(emm, bvma_subblock_order(emm), -1, cpu);
+		if (unlikely(IS_ERR_OR_NULL(page))) {
+			ret = page ? PTR_ERR(page) : -ENOMEM;
+			break;
+		}
+		list_add_tail(&page->lru, &block);
+	}
+	mutex_unlock(&cpu->alloc_block_lock);
+
+	if (unlikely(ret)) {
+		free_block_pages(emm, cpu, &block);
+		return ret;
+	}
+	list_splice_tail(&block, pages);
+	return 0;
+}
+
 /* Undo a failed fetch_block(): release the fetches in flight without
- * consuming the remote copies, free the local pages populated by this call,
- * and take back the first-touch marking, so the block returns to the exact
- * uniform state a later fault can serve again. */
+ * consuming the remote copies, free the local pages populated by this call
+ * and the pages of the block no subblock took yet, and take back the
+ * first-touch marking, so the block returns to the exact uniform state a
+ * later fault can serve again. */
 static void __unwind_fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 				 struct emp_gpa *head, unsigned long head_idx,
-				 struct vcpu_var *cpu, bool first_touch)
+				 struct vcpu_var *cpu, bool first_touch,
+				 struct list_head *pages)
 {
 	struct emp_gpa *g;
 	unsigned long offset;
@@ -337,6 +405,7 @@ static void __unwind_fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 				g, DEBUG_UPDATE_RSS_SUBBLOCK);
 		bvma->vops.free_gpa(bvma, g, cpu);
 	}
+	free_block_pages(bvma, cpu, pages);
 
 	if (first_touch) {
 		clear_gpa_flags_if_set(head, GPA_TOUCHED_MASK);
@@ -357,13 +426,14 @@ static void __unwind_fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
  * @retval 0: Fetch failed
  * @retval -1: error
  *
- * It calls alloc_and_fetch_page function (block_size / page_size) times. \n
+ * It allocates the pages of the block with alloc_block(), and then calls
+ * fetch_subblock() (block_size / page_size) times. \n
  * First, it fetches a demand page first with priority. \n
  * And then, it fetches the rest of pages in a block for prefetching
  */
-/* fetch multiple pages in a block. it calls alloc_and_fetch_page function 
- * (block_size / page_size) times, the alloc_and_fetch_page funnction fetchs
- * multiple pages in a single local_pages 
+/* fetch multiple pages in a block. it allocates the pages of the block with
+ * alloc_block() and calls fetch_subblock() (block_size / page_size) times,
+ * the fetch_subblock function fetchs multiple pages in a single local_pages
  * emp block uses 4k local_page */
 int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx,
@@ -377,12 +447,17 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	struct emp_gpa *g, *demand;
 	unsigned long offset;
 	struct work_request *head_wr = NULL;
+	LIST_HEAD(pages);
 
 	WARN_ON_ONCE(gpa_block_order(head) < bvma_subblock_order(bvma));
 
 	sb_order = gpa_subblock_order(head);
 	offset = demand_offset >> sb_order;
 	demand = head + offset;
+
+	ret = alloc_block(bvma, cpu, &pages, num_subblock_in_block(head));
+	if (unlikely(ret))
+		return ret;
 
 	// for the first touch on a block
 	if (unlikely(!is_gpa_flags_set(head, GPA_TOUCHED_MASK))) {
@@ -394,8 +469,8 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 		emp_els_stat_inc(bvma, head, block_count);
 	}
 	
-	ret = bvma->sops.alloc_and_fetch_pages(vmr, demand, head_idx + offset,
-						sb_order, demand_offset, cpu,
+	ret = bvma->sops.fetch_subblock(vmr, demand, head_idx + offset,
+						sb_order, pop_block_page(&pages), cpu,
 						NULL, NULL, 1,
 						no_fetch,
 						is_stale, io_read_mask);
@@ -412,8 +487,9 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 		if (g == demand)
 			continue;
 
-		ret = bvma->sops.alloc_and_fetch_pages(vmr, g, head_idx + offset,
-					       sb_order, -1, cpu, head_wr, NULL,
+		ret = bvma->sops.fetch_subblock(vmr, g, head_idx + offset,
+					       sb_order, pop_block_page(&pages),
+					       cpu, head_wr, NULL,
 					       bvma_csf_enabled(bvma)? 0: 1,
 					       no_fetch, is_stale, io_read_mask);
 		if (ret == 0)
@@ -425,6 +501,8 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 			fip = 1;
 		}
 	}
+
+	debug_assert(list_empty(&pages));
 
 	/* Every subblock is populated: the copies the skipped fetches left
 	 * behind are dead now, and only now. */
@@ -451,7 +529,7 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 	return fip;
 
 err:
-	__unwind_fetch_block(bvma, vmr, head, head_idx, cpu, first_touch);
+	__unwind_fetch_block(bvma, vmr, head, head_idx, cpu, first_touch, &pages);
 	return ret;
 }
 

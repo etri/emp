@@ -1,6 +1,7 @@
 #ifndef __VCPU_VAR_H__
 #define __VCPU_VAR_H__
 
+#include <linux/mutex.h>
 #include <rdma/rdma_cm.h>
 #include "config.h"
 #include "gpa.h"
@@ -116,6 +117,8 @@ struct vcpu_var {
 
 	int                     id;
 	u64                     private;
+	/* one alloc_block() at a time on this cpu: see alloc_block() */
+	struct mutex            alloc_block_lock;
 #ifdef CONFIG_EMP_DEBUG_PF_HISTORY
 	struct emp_pf_history *pf_history;
 #endif

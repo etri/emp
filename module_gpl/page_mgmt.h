@@ -18,6 +18,17 @@ int fetch_block(struct emp_mm *bvma, struct emp_vmr *vmr,
 			struct emp_gpa *head, unsigned long head_idx,
 			int demand_offset, struct vcpu_var *cpu,
 			bool no_fetch, bool is_stale, bool io_read_mask);
+int alloc_block(struct emp_mm *, struct vcpu_var *, struct list_head *, int);
+
+/* the next page of a list alloc_block() filled */
+static inline struct page *pop_block_page(struct list_head *pages)
+{
+	struct page *page = list_first_entry(pages, struct page, lru);
+
+	/* as it leaves a free page list: see emp_list_pop_head() */
+	list_del_init(&page->lru);
+	return page;
+}
 
 int handle_active_fault(struct emp_vmr *, struct emp_gpa *, struct emp_gpa *,
 			struct vcpu_var *, int *);

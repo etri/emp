@@ -1777,16 +1777,16 @@ void debug_emp_bdev_wait_rw(struct work_request *w, int rw)
 }
 #endif /* CONFIG_EMP_BLOCKDEV */
 
-void debug_alloc_and_fetch_pages(struct emp_mm *bvma, struct emp_gpa *gpa,
-		struct page *free_page, int page_order, int avail_dma_order)
+void debug_fetch_subblock(struct emp_mm *bvma, struct emp_gpa *gpa,
+		struct page *page, int page_order, int avail_dma_order)
 {
-	BUG_ON(free_page == NULL);
+	BUG_ON(page == NULL);
 
 	BUG_ON(page_order > avail_dma_order);
 	BUG_ON(gpa->local_page);
 }
 
-void debug_alloc_and_fetch_pages2(struct emp_vmr *v, struct emp_gpa *gpa)
+void debug_fetch_subblock2(struct emp_vmr *v, struct emp_gpa *gpa)
 {
 	BUG_ON(page_count(gpa->local_page->page) > 1 &&
 		!__is_gpa_flags_set(emp_get_block_head(gpa), GPA_HPT_MASK));

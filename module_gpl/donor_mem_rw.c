@@ -5,6 +5,7 @@
 #include "reclaim.h"
 #include "block-flag.h"
 #include "donor_mem_rw.h"
+#include "page_mgmt.h"
 #include "debug.h"
 #ifdef CONFIG_EMP_USER
 #include "cow.h"
@@ -87,11 +88,12 @@ int emp_wait_for_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
 }
 
 /**
- * alloc_and_fetch_pages - Allocate local pages and fetch saved page contents to local page
+ * fetch_subblock - Fetch saved page contents of a subblock into a local page
  * @param bvma bvma data structure
  * @param gpa gpa
  * @param page_order the size of page
- * @param free_page allocatable freed page
+ * @param page the page to fetch into, from alloc_block(). It is taken over:
+ *             on an error it goes back to the free page list.
  * @param vcpu working vcpu ID
  * @param head_wr work request for the head of a block
  * @param criticality priority
@@ -101,10 +103,10 @@ int emp_wait_for_writeback(struct emp_mm *bvma, struct vcpu_var *cpu,
  * @retval 0: Nothing to fetch
  * @retval -1: Error
  *
- * Fetch the contents from the remote page into the local allocatable freed page
+ * Fetch the contents from the remote page into @page
  */
-static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
-		unsigned long gpa_idx, int page_order, int demand_offset,
+static int fetch_subblock(struct emp_vmr *vmr, struct emp_gpa *gpa,
+		unsigned long gpa_idx, int page_order, struct page *page,
 		struct vcpu_var *cpu, struct work_request *head_wr,
 		struct work_request **tail_wr, int criticality,
 		bool no_fetch, bool is_stale, bool io_read_mask)
@@ -113,25 +115,16 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 	struct local_page *local_page;
 	off_t dma_len;
 	int avail_dma_order;
-	struct page *free_page;
-	struct page *page = NULL;
 	struct work_request *w = NULL;
 	struct emp_mm *bvma = vmr->emm;
-
-	free_page = _alloc_pages(bvma, page_order, demand_offset, cpu);
-	if (unlikely(IS_ERR_OR_NULL(free_page)))
-		return PTR_ERR(free_page);
 
 	mr = !is_gpa_remote_page_free(gpa) ?
 		bvma->mrs.memregs[get_gpa_remote_page_mrid(gpa)] : NULL;
 	avail_dma_order = mr ? mr->dma_order : bvma_subblock_order(bvma);
 
-	debug_alloc_and_fetch_pages(bvma, gpa, free_page, page_order, 
-				    avail_dma_order);
+	debug_fetch_subblock(bvma, gpa, page, page_order, avail_dma_order);
 
 	dma_len = (1 << page_order);
-	/* make sure that free pages are available */
-	page = free_page;
 
 	/* allocate a local page for a dma block*/
 	local_page = bvma->lops.alloc_local_page(bvma, vmr, mr, page,
@@ -185,7 +178,7 @@ static int alloc_and_fetch_pages(struct emp_vmr *vmr, struct emp_gpa *gpa,
 			emp_stat_inc(bvma, io_read_pages);
 		w = NULL;
 		
-		debug_alloc_and_fetch_pages2(vmr, gpa);
+		debug_fetch_subblock2(vmr, gpa);
 	}
 	debug_check_notnull_pointer(local_page->w);
 	local_page->w = w;
@@ -860,7 +853,9 @@ static int wait_read_async_demand_page(struct emp_mm *bvma, struct vcpu_var *cpu
  */
 void donor_mem_rw_init(struct emp_mm *bvma)
 {
-	bvma->sops.alloc_and_fetch_pages = alloc_and_fetch_pages;
+	bvma->sops.fetch_subblock = fetch_subblock;
+	bvma->sops.alloc_block = alloc_block;
+	bvma->sops.push_free_page_list = push_free_page_list;
 	bvma->sops.post_writeback_async = post_writeback_async;
 	bvma->sops.clear_writeback_block = clear_writeback_block;
 	bvma->sops.push_writeback_request = push_writeback_request;

@@ -1139,7 +1139,7 @@ unmap_gpas(struct emp_mm *emm, struct emp_gpa *head, bool *tlb_flush_force)
 
 		/* NOTE: unmap EPT but do not decrease RSS.
 		 *       Current version does not support multiple VMRs
-		 *       on a gpa for VMs. Thus, RSS is increased on alloc_and_fetch_pages()
+		 *       on a gpa for VMs. Thus, RSS is increased on fetch_subblock()
 		 *       and decreased on set_gpa_remote().
 		 *       The following lines are for the future, when multiple
 		 *       VMs share a EMP-managed memory region.
