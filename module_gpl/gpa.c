@@ -788,7 +788,7 @@ __get_sb_hva_base(struct vm_area_struct *vma, struct emp_gpa *head,u64 head_hva,
 	sb_hva = head_hva + (sb_dist << sb_page_order);
 
 #ifdef CONFIG_EMP_USER
-	if (unlikely(is_gpa_flags_set(sb_head, GPA_PARTIAL_MAP_MASK))) {
+	if (unlikely(__is_gpa_flags_set_partial_map(sb_head))) {
 		if (sb_hva < vma->vm_start) {
 			*sb_offset = ((u64)vma->vm_start - sb_hva) >> PAGE_SHIFT;
 			*sb_pages_len = gpa_subblock_size(sb_head) - *sb_offset;
@@ -812,7 +812,7 @@ __get_sb_pages(struct vm_area_struct *vma, struct emp_gpa *head,
 	u64 sb_hva;
 	int sb_dist, sb_pages_len;
 
-	if (likely(!is_gpa_flags_set(sb_head, GPA_PARTIAL_MAP_MASK)))
+	if (likely(!is_gpa_flags_set_partial_map(sb_head)))
 		return gpa_subblock_size(sb_head);
 
 	sb_dist = sb_head - head;
@@ -889,7 +889,7 @@ __unmap_ptes(struct emp_vmr *vmr, struct emp_gpa *head, unsigned long head_hva,
 		 * vmr's record is removed. page_mapped() is folio-wide, so it
 		 * only errs toward that walk; page_mapcount() went in 6.11. */
 		if (!page_mapped(map_page)
-			&& !__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)) {
+			&& !is_gpa_flags_set_partial_map(gpa)) {
 			/* Nobody maps this subblock, and @vmr need not be
 			 * its mapper: reclaim walks every subblock of the
 			 * block for a vmr taken from ONE subblock's records,
@@ -1351,7 +1351,7 @@ __unmap_max_block(struct emp_vmr *vmr, struct emp_gpa *max_head,
 #endif
 
 #ifdef CONFIG_EMP_USER
-		if (unlikely(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK))) {
+		if (unlikely(is_gpa_flags_set_partial_map(head))) {
 			unsigned int sb_page_off;
 			pmd = emp_lp_lookup_pmd(head, vmr);
 			if (!pmd)
@@ -1667,7 +1667,9 @@ free_gpa_dir_region(struct emp_vmr *vmr, struct vcpu_var *cpu,
 	struct emp_gpa *max_head;
 	unsigned long i, step, start, end;
 	int put_refcnt;
+#ifdef CONFIG_EMP_USER
 	int sb_order = bvma_subblock_order(emm);
+#endif
 	int desc_order = region->alloc_order - bvma_subblock_order(emm);
 	struct kmem_cache *cachep = get_gpadesc_alloc(emm, desc_order);
 	bool may_dirty = false;

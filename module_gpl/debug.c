@@ -1724,7 +1724,7 @@ void debug_emp_install_sptes(struct emp_mm *emm, struct emp_gpa *head)
 
 void debug_emp_install_sptes2(struct emp_mm *emm, struct emp_gpa *head, struct emp_gpa *gpa) {
 	struct emp_gpa *g;
-	bool cpf_prefetched = __is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool cpf_prefetched = __is_gpa_flags_set_prefetched_cpf(head);
 
 	if (__is_gpa_flags_set(head, GPA_PREFETCHED_MASK)) {
 		for_each_gpas(g, head) {

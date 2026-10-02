@@ -254,6 +254,12 @@ struct emp_vmdesc {
 };
 
 #ifdef CONFIG_EMP_USER
+#define emp_vmdesc_refcount(d) atomic_read(&(d)->refcount)
+#else
+#define emp_vmdesc_refcount(d) (1)
+#endif
+
+#ifdef CONFIG_EMP_USER
 /*
  * EMP's logical fork policy of a private mapping.
  *

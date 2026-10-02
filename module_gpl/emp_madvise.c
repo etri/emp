@@ -875,7 +875,7 @@ out:
 	return ret;
 }
 
-
+#ifdef CONFIG_EMP_USER
 /*
  * emp_madv_set_fork_policy - set EMP's logical fork policy of a range
  * @param emm emm data structure
@@ -926,3 +926,4 @@ out:
 	mmap_read_unlock(mm);
 	return ret;
 }
+#endif /* CONFIG_EMP_USER */

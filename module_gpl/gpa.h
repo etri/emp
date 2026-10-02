@@ -253,6 +253,24 @@ static inline bool __clear_gpa_flags_if_set(struct emp_gpa *gpa, unsigned int ma
 	__clear_gpa_flags_if_set(gpa, mask); \
 })
 
+#ifdef CONFIG_EMP_BLOCK
+#define is_gpa_flags_set_prefetched_csf(gpa) is_gpa_flags_set(gpa, GPA_PREFETCHED_CSF_MASK)
+#define is_gpa_flags_set_prefetched_cpf(gpa) is_gpa_flags_set(gpa, GPA_PREFETCHED_CPF_MASK)
+#define __is_gpa_flags_set_prefetched_cpf(gpa) __is_gpa_flags_set(gpa, GPA_PREFETCHED_CPF_MASK)
+#else /* !CONFIG_EMP_BLOCK */
+#define is_gpa_flags_set_prefetched_csf(gpa) (false)
+#define is_gpa_flags_set_prefetched_cpf(gpa) (false)
+#define __is_gpa_flags_set_prefetched_cpf(gpa) (false)
+#endif /* !CONFIG_EMP_BLOCK */
+
+#ifdef CONFIG_EMP_USER
+#define is_gpa_flags_set_partial_map(gpa) is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)
+#define __is_gpa_flags_set_partial_map(gpa) __is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)
+#else /* !CONFIG_EMP_USER */
+#define is_gpa_flags_set_partial_map(gpa) (false)
+#define __is_gpa_flags_set_partial_map(gpa) (false)
+#endif /* !CONFIG_EMP_USER */
+
 /* get gpa descriptor of the given index in vmr */
 struct emp_gpa *new_gpadesc(struct emp_vmr *vmr, unsigned long index);
 #define raw_get_gpadesc(vmr, index) ((vmr)->descs->gpa_dir[index])

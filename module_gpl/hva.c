@@ -11,9 +11,7 @@
 #include "donor_mem_rw.h"
 #include "debug.h"
 #include "stat.h"
-#ifdef CONFIG_EMP_USER
 #include "cow.h"
-#endif
 #include "pcalloc.h"
 
 DECLARE_WAIT_QUEUE_HEAD(tmp_wq);
@@ -860,7 +858,7 @@ _emp_page_fault_hva_fetch_posted:
 	{
 		int rss_count;
 #ifdef CONFIG_EMP_USER
-		if (!is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)) {
+		if (!is_gpa_flags_set_partial_map(head)) {
 			rss_count = gpa_block_size(head);
 		} else {
 			int shm_count = emp_lp_count_pmd(head->local_page);

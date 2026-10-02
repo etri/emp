@@ -2286,7 +2286,9 @@ int reclaim_init(struct emp_mm *bvma)
 		init_emp_list(&inactive->lru_bufs[i]);
 	}
 
+#ifdef CONFIG_EMP_USER
 skip_alloc_bufs:
+#endif
 #endif /* CONFIG_EMP_VM */
 	
 	/* initialize per-pcpu proactive_list */

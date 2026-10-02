@@ -27,9 +27,9 @@
 #include "local_page.h"
 #include "block-flag.h"
 #include "debug.h"
+#include "pcalloc.h"
 #ifdef CONFIG_EMP_USER
 #include "cow.h"
-#include "pcalloc.h"
 #endif
 #include "ioctl.h"
 #include "procfs.h"
@@ -556,7 +556,7 @@ static void emp_vma_close(struct vm_area_struct *vma)
 			__func__, vmr->emm->id, vmr->emm->num_vmrs, emp_vmr_dbgid(vmr),
 			(unsigned long) vma, vma->vm_start, (unsigned long) vmr,
 			(unsigned long) vmr->descs,
-			(int) (vmr->descs ? atomic_read(&vmr->descs->refcount) : -1));
+			(int) (vmr->descs ? emp_vmdesc_refcount(vmr->descs) : -1));
 
 	/* vmr->vmr_closing may be set by mmu notifier */
 	if (vmr->vmr_closing == false) {
@@ -780,7 +780,7 @@ __split_gpadesc(struct emp_vmr *new_vmr, struct emp_vmr *prev_vmr,
 		for (sb_index = 0, gpa = head; sb_index < num_subblock; sb_index++, gpa++) {
 			debug_assert(gpa->local_page);
 			debug_assert(emp_lp_owner(gpa->local_page)); /* ACTIVE or INACTIVE */
-			if (gpa == boundary && is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)
+			if (gpa == boundary && is_gpa_flags_set_partial_map(gpa)
 						&& boundary_addr != boundary_gpa_addr) {
 				/* a new partial map gpa */
 				pmd = emp_lp_lookup_pmd(gpa, prev_vmr);
@@ -1845,13 +1845,13 @@ register_kvm(struct emp_mm *bvma, int kvm_fd, int kvm_max_vcpus)
 		return -ENOENT;
 
 #ifndef CONFIG_EMP_DONT_RESTRICT_LOW_MEMORY_REGION
-	if (bvma->config.subblock_order > LOW_MEMORY_MAX_ORDER) {
+	if (bvma_subblock_order(bvma) > LOW_MEMORY_MAX_ORDER) {
 		printk(KERN_ERR "ERROR: [emp] the maximum subblock order for VM"
 				" should be less than or equal to"
 				" LOW_MEMORY_MAX_ORDER(%d), but the subblock"
 				" order is %d\n",
 			LOW_MEMORY_MAX_ORDER,
-			bvma->config.subblock_order);
+			bvma_subblock_order(bvma));
 		return -EINVAL;
 	}
 #endif

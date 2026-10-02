@@ -26,8 +26,8 @@ enum {
 	RET_PF_INVALID = 2,
 };
 
-static inline void *get_kvm_emp_mm(struct kvm *kvm) {
-	return container_of(kvm, struct kvm_emp_container, kvm)->emp_mm;	
+static inline struct emp_mm *get_kvm_emp_mm(struct kvm *kvm) {
+	return (struct emp_mm *) container_of(kvm, struct kvm_emp_container, kvm)->emp_mm;
 }
 #endif
 
@@ -860,7 +860,7 @@ static u64 emp_map_prefetch_sptes(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 	int i, map_spte_count;
 	long offset;
 	unsigned int sb_order, sb_mask;
-	bool cpf_prefetched = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool cpf_prefetched = is_gpa_flags_set_prefetched_cpf(head);
 
 	sb_order = gpa_subblock_order(demand);
 	sb_mask = gpa_subblock_mask(demand);
@@ -1062,7 +1062,7 @@ static void emp_map_prefetch_sptes2(struct kvm_vcpu *vcpu, struct emp_gpa *head,
 static void wait_fetching_except(struct emp_mm *b, struct vcpu_var *cpu, 
 				 struct emp_gpa *head, struct emp_gpa *except)
 {
-	bool pf_mapped = is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK);
+	bool pf_mapped = is_gpa_flags_set_prefetched_csf(head);
 	struct emp_gpa *g;
 
 	for_each_gpas(g, head) {
@@ -1390,11 +1390,13 @@ static int install_sptes_for_subblock(struct kvm_vcpu *kvm_vcpu,
 	unsigned int sb_offset;
 	int ret = 0;
 	struct page *demand_p;
+#ifdef CONFIG_EMP_BLOCK
 	struct emp_gpa *head = emp_get_block_head(demand);
-	bool cpf = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool cpf = is_gpa_flags_set_prefetched_cpf(head);
 	int vcpu_id = kvm_vcpu->vcpu_id + VCPU_START_ID;
 	struct vcpu_var *vcpu = &bvma->vcpus[vcpu_id];
 	bool enable_transition_csf = bvma_transition_csf(bvma);
+#endif
 
 	sb_offset = demand_off & gpa_subblock_mask(demand);
 	demand_p = demand->local_page->page + sb_offset;
@@ -1406,6 +1408,7 @@ static int install_sptes_for_subblock(struct kvm_vcpu *kvm_vcpu,
 			false, write_fault, writable, slot, &sptep);
 	debug_check_sptep(sptep);
 
+#ifdef CONFIG_EMP_BLOCK
 	if (cpf) {
 		/* if the work request is completed, change the block to CSF */
 		if (enable_transition_csf &&
@@ -1417,7 +1420,9 @@ static int install_sptes_for_subblock(struct kvm_vcpu *kvm_vcpu,
 			set_gpa_flags_if_unset(head, GPA_PREFETCHED_CSF_MASK);
 			emp_stat_inc(bvma, cpf_to_csf_transition);
 		}
-	} else {
+	} else
+#endif /* CONFIG_EMP_BLOCK */
+		{
 		/* demand sub-block install */
 		map_sptes_in_subblock(kvm_vcpu, bvma, demand,
 				      demand_off, gpa, sptep);
@@ -1457,8 +1462,8 @@ static int emp_install_sptes(struct kvm_vcpu *vcpu, struct emp_mm *bvma,
 	bool multiple_ms = false;
 	unsigned int sb_order, sb_mask;
 	int ret;
-	bool csf = is_gpa_flags_set(head, GPA_PREFETCHED_CSF_MASK);
-	bool cpf = is_gpa_flags_set(head, GPA_PREFETCHED_CPF_MASK);
+	bool csf = is_gpa_flags_set_prefetched_csf(head);
+	bool cpf = is_gpa_flags_set_prefetched_cpf(head);
 
 	sb_order = gpa_subblock_order(demand);
 	sb_mask = gpa_subblock_mask(demand);
@@ -1894,7 +1899,7 @@ emp_page_fault_gpa(struct kvm_vcpu *kvm_vcpu, const unsigned long hva,
 	debug_emp_install_sptes2(bvma, head, demand);
 
 #ifdef CONFIG_EMP_USER
-	debug_BUG_ON(is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK));
+	debug_BUG_ON(is_gpa_flags_set_partial_map(head));
 #endif
 	if (!is_gpa_flags_set(head, GPA_HPT_MASK)
 			&& emp_lp_owner(head->local_page) != vmr) {
@@ -2000,7 +2005,6 @@ lock_failed:
 void COMPILER_DEBUG emp_unlock_range_pmd(struct kvm *kvm,
 			void *locked_vmr, void *locked_index)
 {
-	struct emp_mm *emm = get_kvm_emp_mm(kvm);
 	struct emp_gpa *head;
 	struct emp_vmr *vmr = (struct emp_vmr *) locked_vmr;
 	unsigned long start = (unsigned long) locked_index;
@@ -2011,7 +2015,7 @@ void COMPILER_DEBUG emp_unlock_range_pmd(struct kvm *kvm,
 
 	/* TODO: set unlink flag */
 
-	gpa_index_order = bvma_subblock_order(emm);
+	gpa_index_order = bvma_subblock_order(get_kvm_emp_mm(kvm));
 	idx = start;
 	end = start + (PTRS_PER_PMD >> gpa_index_order);
 	while (idx < end) {

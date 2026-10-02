@@ -115,7 +115,7 @@ static inline unsigned long __gpn_offset(struct emp_mm *bvma, unsigned long gpn)
 
 #define ____gpa_to_hva_len_off(vmr, g, idx, hva, len, off) do { \
 	(hva) = GPN_OFFSET_TO_HVA(vmr, idx, gpa_subblock_order(g)); \
-	if (likely(!__is_gpa_flags_set(g, GPA_PARTIAL_MAP_MASK))) { \
+	if (likely(!__is_gpa_flags_set_partial_map(g))) { \
 		(len) = 1 << gpa_subblock_order(g); \
 		(off) = 0; \
 	} else \
@@ -142,7 +142,7 @@ __gpa_to_page_len(struct emp_vmr *vmr, struct emp_gpa *gpa, unsigned long idx)
 	unsigned long hva;
 	unsigned int len, off;
 
-	if (likely(!__is_gpa_flags_set(gpa, GPA_PARTIAL_MAP_MASK)))
+	if (likely(!__is_gpa_flags_set_partial_map(gpa)))
 		return 1 << gpa_subblock_order(gpa);
 	____gpa_to_hva_len_off(vmr, gpa, idx, hva, len, off);
 	return len;
@@ -179,7 +179,7 @@ static inline int
 __local_block_to_page_len(struct emp_vmr *vmr, struct emp_gpa *head)
 {
 	debug_assert(head->local_page);
-	if (likely(!__is_gpa_flags_set(head, GPA_PARTIAL_MAP_MASK)))
+	if (likely(!__is_gpa_flags_set_partial_map(head)))
 		return gpa_block_size(head);
 	else {
 		unsigned long hva;

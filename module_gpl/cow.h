@@ -1,6 +1,6 @@
-#ifdef CONFIG_EMP_USER
 #ifndef __COW_H__
 #define __COW_H__
+#ifdef CONFIG_EMP_USER
 #include "config.h"
 #include "emp_type.h"
 #include "vm.h"
@@ -38,5 +38,7 @@ long emp_get_mmu_notifier(struct emp_vmr *vmr);
 void emp_put_mmu_notifier(struct emp_vmr *vmr);
 void cow_init(struct emp_mm *emm);
 void cow_exit(struct emp_mm *emm);
+#else /* !CONFIG_EMP_USER */
+#define __is_cow_gpa(gpa) (false)
+#endif /* !CONFIG_EMP_USER */
 #endif /* __COW_H__ */
-#endif /* CONFIG_EMP_USER */
